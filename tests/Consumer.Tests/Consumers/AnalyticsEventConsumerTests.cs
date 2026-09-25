@@ -98,6 +98,42 @@ public class AnalyticsEventConsumerTests
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Start_WhenMessageContentEncodingIsUnsupported_ShouldLogErrorAndNotDeleteMessage()
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(MessageThenWait(CreateMessage(Body(), "br")));
+        var logger = new RecordingLogger<AnalyticsEventConsumer>();
+        var subject = CreateSubject(sqsClient, logger);
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Analytics event consumption failed", TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        await sqsClient
+            .DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Start_WhenReceivingMessageFails_ShouldLogError()
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(FailureThenWait(new InvalidOperationException("SQS receive failed")));
+        var logger = new RecordingLogger<AnalyticsEventConsumer>();
+        var subject = CreateSubject(sqsClient, logger);
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Analytics event consumption failed", TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.Contains(logger.Messages, message => message == "Analytics event consumption failed");
+    }
+
     private static AnalyticsEventConsumer CreateSubject(
         IAmazonSQS sqsClient,
         ILogger<AnalyticsEventConsumer>? logger = null,
@@ -127,6 +163,24 @@ public class AnalyticsEventConsumerTests
             if (Interlocked.Increment(ref receivedCount) == 1)
             {
                 return Task.FromResult(new ReceiveMessageResponse { Messages = [message] });
+            }
+
+            var cancellationToken = call.ArgAt<CancellationToken>(1);
+
+            return Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken)
+                .ContinueWith(_ => new ReceiveMessageResponse(), CancellationToken.None);
+        };
+    }
+
+    private static Func<CallInfo, Task<ReceiveMessageResponse>> FailureThenWait(Exception exception)
+    {
+        var receivedCount = 0;
+
+        return call =>
+        {
+            if (Interlocked.Increment(ref receivedCount) == 1)
+            {
+                return Task.FromException<ReceiveMessageResponse>(exception);
             }
 
             var cancellationToken = call.ArgAt<CancellationToken>(1);
