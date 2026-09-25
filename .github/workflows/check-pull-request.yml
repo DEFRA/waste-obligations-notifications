@@ -54,9 +54,14 @@ jobs:
           tags: waste-obligations-notifications:latest
       - name: Check with Trivy
         id: trivy
-        run: |
-          mkdir -p TestResults
-          docker run -v /var/run/docker.sock:/var/run/docker.sock -v "$GITHUB_WORKSPACE/TestResults:/reports" aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 image waste-obligations-notifications:latest --ignore-unfixed --severity HIGH,CRITICAL --format json --output /reports/trivy.json
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: waste-obligations-notifications:latest
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: json
+          output: TestResults/trivy.json
       - name: Upload CI reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
