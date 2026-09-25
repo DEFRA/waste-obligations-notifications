@@ -267,3 +267,6 @@ __pycache__/
 
 library.db
 .envrc
+# Verify
+*.received.*
+*.received/

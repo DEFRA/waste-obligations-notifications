@@ -3,30 +3,65 @@ name: Publish Hot Fix
 on:
   workflow_dispatch:
 
-concurrency:
-  group: $${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: false
-  queue: max
-
 permissions:
-  id-token: write
-  contents: write
-  pull-requests: write
-
-env:
-  AWS_REGION: eu-west-2
-  AWS_ACCOUNT_ID: "094954420758"
+  contents: read
 
 jobs:
   build:
+    if: github.run_number != 1
     name: CDP-build-hotfix-workflow
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0 # Depth 0 required for branch-based versioning
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 10.0
+      - name: Run Consumer tests
+        run: |
+          dotnet build tests/Consumer.Tests/Consumer.Tests.csproj
+          dotnet test --test-modules tests/Consumer.Tests/bin/Debug/net10.0/Consumer.Tests.dll --no-build
+      - name: Run Consumer integration tests
+        run: |
+          docker compose up -d --wait
+          dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build
+      - name: Docker Compose logs
+        if: always()
+        run: docker compose logs
+      - name: Stop local environment
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  sonarcloud-scan:
+    name: CDP SonarCloud Scan
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/sonarcloud.yml
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  publish:
+    name: CDP-publish-hotfix-workflow
+    needs: [build, sonarcloud-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      AWS_REGION: eu-west-2
+      AWS_ACCOUNT_ID: "094954420758"
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
       - name: Publish Hot Fix
-        uses: DEFRA/cdp-build-action/build-hotfix@main
+        uses: DEFRA/cdp-build-action/build-hotfix@dfb527d1bca7591fbbfd32ac007557745e888cf2 # main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}

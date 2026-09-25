@@ -1,0 +1,14 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/Consumer/Consumer.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj" />
+    <Project Path="tests/Consumer.Tests/Consumer.Tests.csproj" />
+  </Folder>
+</Solution>

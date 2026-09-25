@@ -1,0 +1,59 @@
+version: 2
+
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    open-pull-requests-limit: 10
+    schedule:
+      interval: daily
+      time: '10:30'
+      timezone: Europe/London
+    groups:
+      nuget-aws-sdk:
+        applies-to: version-updates
+        patterns:
+          - AWSSDK.*
+        update-types:
+          - minor
+          - patch
+      nuget-test-support:
+        applies-to: version-updates
+        patterns:
+          - Microsoft.Testing.*
+          - NSubstitute
+          - Verify.*
+          - xunit*
+        update-types:
+          - minor
+          - patch
+      nuget-observability:
+        applies-to: version-updates
+        patterns:
+          - Elastic.*
+          - Serilog.*
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      time: '10:30'
+      timezone: Europe/London
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      time: '10:30'
+      timezone: Europe/London
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+    schedule:
+      interval: weekly
+      time: '10:30'
+      timezone: Europe/London

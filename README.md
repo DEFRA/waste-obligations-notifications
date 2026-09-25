@@ -1,99 +1,60 @@
-# waste-obligations-notifications
+# Waste Obligations Notifications
 
-Core delivery C# ASP.NET backend template.
+A CDP consumer service for analytics events published by Waste Obligations.
 
-* [Install MongoDB](#install-mongodb)
-* [Inspect MongoDB](#inspect-mongodb)
-* [Testing](#testing)
-* [Running](#running)
-* [Dependabot](#dependabot)
+## Scope
 
+The service receives every message from its service-owned SQS subscription to the
+`waste_obligations_analytics_events` SNS topic. It logs the analytics event ID and
+entity ID, then deletes the successfully processed message. It deliberately does
+not send notifications, persist data, or act on the event payload.
 
-### Docker Compose
+Malformed messages, messages without `eventId` or `entityId`, and unsupported
+content encodings are not deleted. The service-owned SQS queue's CDP redrive
+configuration routes them to its convention-led dead-letter queue after the
+configured receive attempts are exhausted.
 
-A Docker Compose template is in [compose.yml](compose.yml).
+## Prerequisites
 
-A local environment with:
+- .NET 10 SDK
+- Docker or a compatible container runtime
 
-- Localstack for AWS services (S3, SQS)
-- Redis
-- MongoDB
-- This service.
-- A commented out frontend example.
+## Run locally
 
-```bash
-docker compose up --build -d
-```
-
-A more extensive setup is available in [github.com/DEFRA/cdp-local-environment](https://github.com/DEFRA/cdp-local-environment)
-
-### MongoDB
-
-#### MongoDB via Docker
-
-See above.
-
-```
-docker compose up -d mongodb
-```
-
-#### MongoDB locally
-
-Alternatively install MongoDB locally:
-
-- Install [MongoDB](https://www.mongodb.com/docs/manual/tutorial/#installation) on your local machine
-- Start MongoDB:
-```bash
-sudo mongod --dbpath ~/mongodb-cdp
-```
-
-#### MongoDB in CDP environments
-
-In CDP environments a MongoDB instance is already set up
-and the credentials exposed as enviromment variables.
-
-
-### Inspect MongoDB
-
-To inspect the Database and Collections locally:
-```bash
-mongosh
-```
-
-You can use the CDP Terminal to access the environments' MongoDB.
-
-### Testing
-
-Run the tests with:
-
-Tests run by running a full `WebApplication` backed by [Ephemeral MongoDB](https://github.com/asimmon/ephemeral-mongo).
-Tests do not use mocking of any sort and read and write from the in-memory database.
+Start the Consumer and local Floci SNS/SQS resources:
 
 ```bash
-dotnet test
-````
-
-### Running
-
-Run CDP-Deployments application:
-```bash
-dotnet run --project WasteObligationsNotifications --launch-profile Development
+docker compose up --build
 ```
 
-### SonarCloud
+The local bootstrap creates `waste_obligations_analytics_events` and subscribes
+`waste_obligations_notifications_analytics_events_queue` with raw message delivery.
 
-Example SonarCloud configuration are available in the GitHub Action workflows.
+The Consumer health endpoint is available at `http://localhost:8085/health`.
 
-### Dependabot
+## Test
 
-We have added an example dependabot configuration file to the repository. You can enable it by renaming
-the [.github/example.dependabot.yml](.github/example.dependabot.yml) to `.github/dependabot.yml`
+```bash
+dotnet build tests/Consumer.Tests/Consumer.Tests.csproj
+dotnet test --test-modules tests/Consumer.Tests/bin/Debug/net10.0/Consumer.Tests.dll --no-build
 
+docker compose up --build -d --wait
+dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj
+dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build
+docker compose down -v --remove-orphans
+```
 
-### About the licence
+## Configuration
 
-The Open Government Licence (OGL) was developed by the Controller of Her Majesty's Stationery Office (HMSO) to enable
-information providers in the public sector to license the use and re-use of their information under a common open
-licence.
+`AnalyticsEventConsumer` is disabled by default. CDP deployment configuration must
+set `AnalyticsEventConsumer__ProcessingEnabled` to `true` and provide the
+service-owned `AnalyticsEventConsumer__QueueUrl`. The deployed queue must be a
+separate subscription from the producer queue and must have the CDP dead-letter
+queue convention configured.
 
-It is designed to encourage use and re-use of information freely and flexibly, with only a few conditions.
+## Code quality and delivery
+
+GitHub Actions runs Consumer tests, validates Compose, builds and scans the
+container image, and sends coverage to SonarCloud under
+`DEFRA_waste-obligations-notifications`. Dependabot manages NuGet, actions, and
+container dependency updates. Journey tests are not currently part of this service.
