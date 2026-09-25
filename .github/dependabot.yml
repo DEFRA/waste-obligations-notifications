@@ -8,6 +8,11 @@ updates:
       interval: daily
       time: '10:30'
       timezone: Europe/London
+    # Do not update Verify beyond major version 32: newer major versions require a licence.
+    ignore:
+      - dependency-name: Verify.XunitV3
+        update-types:
+          - version-update:semver-major
     groups:
       nuget-aws-sdk:
         applies-to: version-updates
@@ -21,7 +26,6 @@ updates:
         patterns:
           - Microsoft.Testing.*
           - NSubstitute
-          - Verify.*
           - xunit*
         update-types:
           - minor
