@@ -44,11 +44,15 @@ public sealed class AnalyticsEventConsumer(
                 foreach (var message in response.Messages ?? [])
                 {
                     var analyticsEvent = ReadMessage(message);
-                    logger.LogInformation(
-                        "Consumed analytics event {EventId} for {EntityId}",
-                        analyticsEvent.EventId,
-                        analyticsEvent.EntityId
-                    );
+
+                    if (logger.IsEnabled(LogLevel.Information))
+                    {
+                        logger.LogInformation(
+                            "Consumed analytics event {EventId} for {EntityId}",
+                            analyticsEvent.EventId,
+                            analyticsEvent.EntityId
+                        );
+                    }
 
                     await sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, stoppingToken);
                 }

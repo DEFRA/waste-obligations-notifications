@@ -36,5 +36,7 @@ WORKDIR /app
 
 COPY --from=build /app/publish .
 
+USER app
+
 EXPOSE 8085
 ENTRYPOINT ["dotnet", "Consumer.dll"]
