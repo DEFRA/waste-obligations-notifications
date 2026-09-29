@@ -37,17 +37,19 @@ It also creates isolated FIFO command and command dead-letter queues, plus Mongo
 
 The Consumer health endpoint is available at `http://localhost:8085/health`.
 
+## Documentation
+
+- [Coding standards](CODING_STANDARDS.md): code structure, style, security, and test conventions.
+- [Contributing](CONTRIBUTING.md): formatting, required checks, and change workflow.
+- [Service behaviour](docs/service-behaviour.md): message contracts, processing rules, and deployment ownership.
+- [Context](CONTEXT.md): notification-delivery terminology.
+- Proposed ADRs: [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
+- [Agent guidelines](AGENTS.md): entry points and sandbox build guidance for coding agents.
+
 ## Test
 
-```bash
-dotnet build tests/Consumer.Tests/Consumer.Tests.csproj
-dotnet test --test-modules tests/Consumer.Tests/bin/Debug/net10.0/Consumer.Tests.dll --no-build
-
-docker compose up --build -d --wait
-dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj
-dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build
-docker compose down -v --remove-orphans
-```
+See [Contributing](CONTRIBUTING.md#required-checks) for the required local build,
+unit tests, integration tests, and Compose teardown.
 
 ## Configuration
 
