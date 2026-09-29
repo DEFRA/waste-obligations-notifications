@@ -32,12 +32,25 @@ services:
       timeout: 2s
       retries: 10
 
+  mongo:
+    image: mongo:7.0.43@sha256:9854f7139445d766a9523571d6f047530c45547460ffcf8259eb2bf4264632ca
+    ports:
+      - '27017:27017'
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
   consumer:
     build: .
     ports:
       - '8085:8085'
     depends_on:
       floci-init:
+        condition: service_healthy
+      mongo:
         condition: service_healthy
     env_file:
       - compose/aws.env

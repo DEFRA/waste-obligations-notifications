@@ -1,6 +1,7 @@
 using Amazon.Runtime;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using MongoDB.Driver;
 
 namespace Defra.WasteObligations.Consumer.IntegrationTests;
 
@@ -10,6 +11,8 @@ public abstract class IntegrationTestBase : IAsyncLifetime
 {
     protected const string AnalyticsEventsQueueUrl =
         "http://localhost:4566/000000000000/waste_obligations_notifications_analytics_events_queue";
+    protected const string CommandQueueUrl =
+        "http://localhost:4566/000000000000/waste_obligations_notifications_commands.fifo";
 
     private static readonly Uri s_consumerBaseAddress = new("http://localhost:8085");
 
@@ -18,6 +21,10 @@ public abstract class IntegrationTestBase : IAsyncLifetime
         using var sqsClient = CreateSqsClient();
         await sqsClient.GetQueueAttributesAsync(
             new GetQueueAttributesRequest { QueueUrl = AnalyticsEventsQueueUrl, AttributeNames = ["QueueArn"] },
+            TestContext.Current.CancellationToken
+        );
+        await sqsClient.GetQueueAttributesAsync(
+            new GetQueueAttributesRequest { QueueUrl = CommandQueueUrl, AttributeNames = ["QueueArn"] },
             TestContext.Current.CancellationToken
         );
 
@@ -47,6 +54,8 @@ public abstract class IntegrationTestBase : IAsyncLifetime
         };
         return new AmazonSQSClient(new BasicAWSCredentials("test", "test"), configuration);
     }
+
+    protected static IMongoClient CreateMongoClient() => new MongoClient("mongodb://localhost:27017");
 
     protected static async Task WaitForAsync(Func<Task> assertion, TimeSpan? timeout = null)
     {

@@ -1,6 +1,6 @@
 # Waste Obligations Notifications
 
-A CDP consumer service for analytics events published by Waste Obligations.
+A CDP consumer service for analytics events and notification commands published by Waste Obligations.
 
 ## Scope
 
@@ -8,6 +8,10 @@ The service receives every message from its service-owned SQS subscription to th
 `waste_obligations_analytics_events` SNS topic. It logs the analytics event ID and
 entity ID, then deletes the successfully processed message. It deliberately does
 not send notifications, persist data, or act on the event payload.
+
+The command consumer records pre-cutover commands as `delivery-suppressed` and
+deletes them without sending to GOV.UK Notify. Post-cutover delivery belongs to
+the next implementation ticket.
 
 Malformed messages, messages without `eventId` or `entityId`, and unsupported
 content encodings are not deleted. The service-owned SQS queue's CDP redrive
@@ -29,6 +33,7 @@ docker compose up --build
 
 The local bootstrap creates `waste_obligations_analytics_events` and subscribes
 `waste_obligations_notifications_analytics_events_queue` with raw message delivery.
+It also creates isolated FIFO command and command dead-letter queues, plus MongoDB.
 
 The Consumer health endpoint is available at `http://localhost:8085/health`.
 
@@ -51,6 +56,11 @@ set `AnalyticsEventConsumer__ProcessingEnabled` to `true` and provide the
 service-owned `AnalyticsEventConsumer__QueueUrl`. The deployed queue must be a
 separate subscription from the producer queue and must have the CDP dead-letter
 queue convention configured.
+
+`NotificationCommandDelivery` is deployment-owned. Before enabling it, CDP must
+provide its FIFO queue URL, MongoDB connection and database, cutover timestamp,
+and distinct evidence-digest and recipient-lane secrets. Do not put those secrets
+in source control or logs.
 
 ## Code quality and delivery
 

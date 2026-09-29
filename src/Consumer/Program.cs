@@ -1,4 +1,5 @@
 using Defra.WasteObligations.Consumer.Consumers;
+using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Utils;
 using Defra.WasteObligations.Consumer.Utils.Health;
 using Defra.WasteObligations.Consumer.Utils.Logging;
@@ -15,8 +16,9 @@ try
     builder.ConfigureLoggingAndTracing();
     builder.Services.AddProblemDetails();
     builder.Services.AddAuthorization();
-    builder.Services.AddHealth();
+    builder.Services.AddHealth(builder.Configuration);
     builder.Services.AddAnalyticsEventConsumer(builder.Configuration);
+    builder.Services.AddNotificationCommandDelivery(builder.Configuration);
 
     var app = builder.Build();
 
