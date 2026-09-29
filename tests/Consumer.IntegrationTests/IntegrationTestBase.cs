@@ -13,6 +13,8 @@ public abstract class IntegrationTestBase : IAsyncLifetime
         "http://localhost:4566/000000000000/waste_obligations_notifications_analytics_events_queue";
     protected const string CommandQueueUrl =
         "http://localhost:4566/000000000000/waste_obligations_notifications_commands.fifo";
+    protected const string CommandDeadLetterQueueUrl =
+        "http://localhost:4566/000000000000/waste_obligations_notifications_commands_dlq.fifo";
 
     private static readonly Uri s_consumerBaseAddress = new("http://localhost:8085");
 
