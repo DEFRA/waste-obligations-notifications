@@ -43,6 +43,7 @@ public sealed class AnalyticsEventConsumer(
 
                 foreach (var message in response.Messages ?? [])
                 {
+                    // A future PR will add audit-history lookup and notification-command publication before deletion.
                     var analyticsEvent = ReadMessage(message);
 
                     if (logger.IsEnabled(LogLevel.Information))

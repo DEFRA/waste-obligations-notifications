@@ -27,6 +27,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         _migrationReadiness = migrationReadiness;
     }
 
+    // A future PR will add delivery claims and leases; this path only records terminal suppression.
     public async Task<SuppressionClaimResult> RecordSuppression(
         NotificationCommand command,
         CancellationToken cancellationToken
