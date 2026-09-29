@@ -20,6 +20,7 @@ public abstract class IntegrationTestBase : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
+        Data.ServiceCollectionExtensions.RegisterConventions();
         using var sqsClient = CreateSqsClient();
         await sqsClient.GetQueueAttributesAsync(
             new GetQueueAttributesRequest { QueueUrl = AnalyticsEventsQueueUrl, AttributeNames = ["QueueArn"] },

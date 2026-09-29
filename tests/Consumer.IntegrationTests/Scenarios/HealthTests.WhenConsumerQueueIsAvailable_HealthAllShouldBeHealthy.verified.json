@@ -11,7 +11,7 @@
     },
     "NotificationDeliveryRecordStore": {
       "status": "Healthy",
-      "description": "Connected to MongoDB database: notifications"
+      "description": "Connected to MongoDB database: waste-obligations-notifications"
     }
   }
 }

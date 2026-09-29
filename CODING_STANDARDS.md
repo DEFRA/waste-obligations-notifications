@@ -48,6 +48,18 @@ preferences. See [CONTRIBUTING.md](CONTRIBUTING.md) for formatting and checks.
 - Add health checks for deployed dependencies. Keep routine health checks light
   and avoid logging them at information level.
 
+## Mongo entities and conventions
+
+Keep persisted entities in `Consumer/Data/Entities`, under the matching namespace.
+Register the Waste Obligations Mongo conventions before mapping any entities:
+camel-case element names and string enum representations. Prefer these conventions
+to per-property BSON attributes unless a field needs a different storage contract.
+
+Use the entity type name for entity collections, for example
+`NotificationDeliveryRecord`. Match Waste Obligations for supporting collections:
+use underscore-separated names with a leading underscore, such as
+`_migrations_lease`. The migration engine stores its history in `_migrations`.
+
 ## Tests
 
 - Use xUnit v3 and the existing assertion style in the surrounding test. Do

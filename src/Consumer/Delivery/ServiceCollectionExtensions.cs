@@ -1,8 +1,6 @@
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
-using Microsoft.Extensions.Options;
-using MongoDB.Driver;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
 
@@ -20,20 +18,7 @@ public static class ServiceCollectionExtensions
             .ValidateOnStart();
 
         services.AddAWSService<IAmazonSQS>();
-        services.AddSingleton<IMongoClient>(serviceProvider => new MongoClient(
-            serviceProvider
-                .GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>()
-                .Value.MongoConnectionString
-        ));
-        services.AddSingleton(serviceProvider =>
-            serviceProvider
-                .GetRequiredService<IMongoClient>()
-                .GetDatabase(
-                    serviceProvider
-                        .GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>()
-                        .Value.MongoDatabaseName
-                )
-        );
+        services.AddMongo(configuration);
         services.AddMongoMigrations(configuration);
         services.AddSingleton<INotificationCommandDigest, NotificationCommandDigest>();
         services.AddSingleton<INotificationDeliveryRecordStore, MongoNotificationDeliveryRecordStore>();

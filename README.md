@@ -60,13 +60,13 @@ separate subscription from the producer queue and must have the CDP dead-letter
 queue convention configured.
 
 `NotificationCommandDelivery` is deployment-owned. Before enabling it, CDP must
-provide its FIFO queue URL, MongoDB connection and database, cutover timestamp,
+provide its FIFO queue URL, cutover timestamp,
 and distinct evidence-digest and recipient-lane secrets. Do not put those secrets
 in source control or logs.
 
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
-index on `notificationDeliveryRecords`, preserving an existing matching index.
+index on `NotificationDeliveryRecord`, preserving an existing matching index.
 Command writes wait until migrations succeed; analytics consumption continues
 independently. Failures are retried up to `MongoMigrations__MaximumAttempts`;
 after exhaustion, command writes remain blocked until the host restarts.
@@ -76,6 +76,29 @@ retry delay and lease-acquisition alert threshold in seconds. The defaults are
 60, 15, 300, 30 and 300 respectively, with three attempts. Renewal must be no
 more than half the lease duration. CDP can override these defaults separately
 from local Compose configuration.
+
+Mongo connection settings use `Mongo__DatabaseUri` and `Mongo__DatabaseName`,
+matching Waste Obligations. The default database is
+`waste-obligations-notifications`, including in local Compose.
+These replace
+`NotificationCommandDelivery__MongoConnectionString` and
+`NotificationCommandDelivery__MongoDatabaseName`; update CDP configuration before
+rolling out this change. Keep the database separate from the Waste Obligations
+API database so migration histories and leases remain service-owned.
+
+For CDP, supply the complete Mongo URI with `authSource=$external` and
+`authMechanism=MONGODB-AWS`, plus the platform-required TLS and topology options.
+The AWS authentication provider obtains credentials from the task's credential
+chain; do not put credentials in the URI. The task role must be authorised for
+this service's database, including migration metadata, leases and index creation.
+`TRUSTSTORE_` certificate variables are loaded before Mongo clients are created.
+The client identifies itself as `waste-obligiations-notifications-consumer` and uses primary
+reads for delivery evidence, even if the URI specifies another read preference.
+
+Local Compose uses unauthenticated standalone Mongo and cannot verify CDP IAM or
+TLS. Before enabling command processing in CDP, verify authentication, certificate
+loading, database permissions, migration completion and `/health/all`. Mongo
+migrations and health checks remain conditional on command processing being enabled.
 
 ## Code quality and delivery
 

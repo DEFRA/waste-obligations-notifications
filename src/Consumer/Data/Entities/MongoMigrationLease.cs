@@ -1,4 +1,4 @@
-namespace Defra.WasteObligations.Consumer.Data;
+namespace Defra.WasteObligations.Consumer.Data.Entities;
 
 public sealed record MongoMigrationLease
 {

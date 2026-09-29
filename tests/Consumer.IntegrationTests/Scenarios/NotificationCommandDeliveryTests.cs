@@ -30,8 +30,8 @@ public sealed class NotificationCommandDeliveryTests : IntegrationTestBase
         );
         using var mongoClient = CreateMongoClient();
         var records = mongoClient
-            .GetDatabase("notifications")
-            .GetCollection<BsonDocument>("notificationDeliveryRecords");
+            .GetDatabase("waste-obligations-notifications")
+            .GetCollection<BsonDocument>("NotificationDeliveryRecord");
 
         await WaitForAsync(async () =>
         {
@@ -68,8 +68,8 @@ public sealed class NotificationCommandDeliveryTests : IntegrationTestBase
         using var sqsClient = CreateSqsClient();
         using var mongoClient = CreateMongoClient();
         var records = mongoClient
-            .GetDatabase("notifications")
-            .GetCollection<BsonDocument>("notificationDeliveryRecords");
+            .GetDatabase("waste-obligations-notifications")
+            .GetCollection<BsonDocument>("NotificationDeliveryRecord");
         var filter = NotificationKeyFilter(DuplicateIdempotencyKey);
 
         await SendCommand(
@@ -115,8 +115,8 @@ public sealed class NotificationCommandDeliveryTests : IntegrationTestBase
         using var sqsClient = CreateSqsClient();
         using var mongoClient = CreateMongoClient();
         var records = mongoClient
-            .GetDatabase("notifications")
-            .GetCollection<BsonDocument>("notificationDeliveryRecords");
+            .GetDatabase("waste-obligations-notifications")
+            .GetCollection<BsonDocument>("NotificationDeliveryRecord");
         var filter = NotificationKeyFilter(ConflictingIdempotencyKey);
 
         await SendCommand(

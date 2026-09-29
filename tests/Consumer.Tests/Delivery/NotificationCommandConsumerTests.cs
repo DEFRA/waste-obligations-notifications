@@ -220,8 +220,6 @@ public class NotificationCommandConsumerTests
                     EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
                     EvidenceDigestSecret = "test-evidence-secret",
                     RecipientLaneSecret = "test-recipient-lane-secret",
-                    MongoConnectionString = "mongodb://localhost:27017",
-                    MongoDatabaseName = "notifications",
                     WaitTimeSeconds = 0,
                     PollIntervalSeconds = 1,
                 }

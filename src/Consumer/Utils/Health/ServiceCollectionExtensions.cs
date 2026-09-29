@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Consumers;
+using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -49,9 +50,7 @@ public static class ServiceCollectionExtensions
                         "NotificationDeliveryRecordStore",
                         serviceProvider => new MongoHealthCheck(
                             serviceProvider.GetRequiredService<MongoDB.Driver.IMongoClient>(),
-                            serviceProvider
-                                .GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>()
-                                .Value.MongoDatabaseName
+                            serviceProvider.GetRequiredService<IOptions<MongoDbOptions>>().Value.DatabaseName
                         ),
                         HealthStatus.Unhealthy,
                         tags: [WebApplicationExtensions.Extended],

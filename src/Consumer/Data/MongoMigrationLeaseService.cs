@@ -1,3 +1,4 @@
+using Defra.WasteObligations.Consumer.Data.Entities;
 using MongoDB.Driver;
 
 namespace Defra.WasteObligations.Consumer.Data;

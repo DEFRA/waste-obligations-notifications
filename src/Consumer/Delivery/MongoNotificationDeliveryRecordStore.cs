@@ -1,5 +1,6 @@
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Data.Entities;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
@@ -7,21 +8,21 @@ namespace Defra.WasteObligations.Consumer.Delivery;
 
 public sealed class MongoNotificationDeliveryRecordStore : INotificationDeliveryRecordStore
 {
-    internal const string CollectionName = "notificationDeliveryRecords";
+    internal const string CollectionName = nameof(NotificationDeliveryRecord);
     private readonly INotificationCommandDigest _digest;
     private readonly MongoMigrationReadiness _migrationReadiness;
     private readonly IMongoCollection<NotificationDeliveryRecord> _records;
 
     public MongoNotificationDeliveryRecordStore(
         IMongoClient mongoClient,
-        IOptions<NotificationCommandDeliveryOptions> options,
+        IOptions<MongoDbOptions> options,
         INotificationCommandDigest digest,
         MongoMigrationReadiness migrationReadiness
     )
     {
         _digest = digest;
         _records = mongoClient
-            .GetDatabase(options.Value.MongoDatabaseName)
+            .GetDatabase(options.Value.DatabaseName)
             .GetCollection<NotificationDeliveryRecord>(CollectionName);
         _migrationReadiness = migrationReadiness;
     }

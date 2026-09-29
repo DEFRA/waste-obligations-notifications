@@ -1,4 +1,5 @@
 using AdaskoTheBeAsT.MongoDbMigrations.Abstractions;
+using Defra.WasteObligations.Consumer.Data.Entities;
 using Defra.WasteObligations.Consumer.Delivery;
 using MongoDB.Driver;
 using MigrationVersion = AdaskoTheBeAsT.MongoDbMigrations.Abstractions.Version;

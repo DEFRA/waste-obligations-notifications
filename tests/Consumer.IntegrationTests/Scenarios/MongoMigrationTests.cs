@@ -52,7 +52,7 @@ public sealed class MongoMigrationTests : IntegrationTestBase
             await runner.Run(cancellationToken);
             await readiness.Wait(cancellationToken);
             await runner.Run(cancellationToken);
-            var records = database.GetCollection<BsonDocument>("notificationDeliveryRecords");
+            var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
             using var cursor = await records.Indexes.ListAsync(cancellationToken);
             var indexes = await cursor.ToListAsync(cancellationToken);
             var index = Assert.Single(indexes, index => index["name"] == "notificationKey_unique");

@@ -20,12 +20,6 @@ public sealed record NotificationCommandDeliveryOptions
     [Required]
     public required string RecipientLaneSecret { get; init; }
 
-    [Required]
-    public required string MongoConnectionString { get; init; }
-
-    [Required]
-    public required string MongoDatabaseName { get; init; }
-
     [Range(1, 1)]
     public int BatchSize { get; init; } = 1;
 
