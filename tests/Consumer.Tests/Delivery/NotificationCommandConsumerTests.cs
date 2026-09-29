@@ -112,6 +112,27 @@ public class NotificationCommandConsumerTests
     }
 
     [Fact]
+    public async Task Start_WhenContentEncodingHasNoStringValue_ShouldNotDeleteMessage()
+    {
+        var message = CreateMessage(CommandBody("2026-09-28T10:00:00Z"));
+        message.MessageAttributes["Content-Encoding"] = new() { DataType = "String" };
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(MessageThenWait(message));
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        var subject = CreateSubject(sqsClient, Substitute.For<INotificationDeliveryRecordStore>(), logger);
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Notification command consumption failed", TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        await sqsClient
+            .DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Start_WhenIdempotencyKeyConflicts_ShouldNotDeleteMessage()
     {
         var sqsClient = Substitute.For<IAmazonSQS>();

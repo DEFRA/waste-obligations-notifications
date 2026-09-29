@@ -27,7 +27,6 @@ public static class NotificationCommandMessageReader
         if (
             message.MessageAttributes is null
             || !message.MessageAttributes.TryGetValue(ContentEncodingHeader, out var contentEncoding)
-            || contentEncoding.StringValue is null
         )
         {
             return message.Body;
