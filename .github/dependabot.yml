@@ -1,0 +1,63 @@
+version: 2
+
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    open-pull-requests-limit: 10
+    schedule:
+      interval: daily
+      time: '10:30'
+      timezone: Europe/London
+    # Do not update Verify beyond major version 32: newer major versions require a licence.
+    ignore:
+      - dependency-name: Verify.XunitV3
+        update-types:
+          - version-update:semver-major
+    groups:
+      nuget-aws-sdk:
+        applies-to: version-updates
+        patterns:
+          - AWSSDK.*
+        update-types:
+          - minor
+          - patch
+      nuget-test-support:
+        applies-to: version-updates
+        patterns:
+          - Microsoft.Testing.*
+          - NSubstitute
+          - xunit*
+        update-types:
+          - minor
+          - patch
+      nuget-observability:
+        applies-to: version-updates
+        patterns:
+          - Elastic.*
+          - Serilog.*
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      time: '10:30'
+      timezone: Europe/London
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      time: '10:30'
+      timezone: Europe/London
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+    schedule:
+      interval: weekly
+      time: '10:30'
+      timezone: Europe/London

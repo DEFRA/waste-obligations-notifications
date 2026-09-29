@@ -10,41 +10,163 @@ on:
       - reopened
       - synchronize
       - ready_for_review
+  workflow_dispatch:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   pr-validator:
     name: Run Pull Request Checks
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      id-token: write
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      docker-build: ${{ steps.docker-build.outcome }}
+      trivy: ${{ steps.trivy.outcome }}
     steps:
       - name: Check out code
-        uses: actions/checkout@v5
-      - name: Test
-        uses: actions/setup-dotnet@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
-          dotnet-version: |
-            10.0
-      - run: dotnet test
-    ## SonarCloud
-    ## Uncomment to unable SonarCloud scan
-    ## Requires project to be set up in SonarCloud
-    ## and the SonarCloud token to be set in the repository secrets
-  # sonarcloud-scan:
-  #   name: CDP SonarCloud Scan
-  #   permissions:
-  #     id-token: write
-  #     pull-requests: write
-  #     contents: read
-  #     packages: read
-  #   uses: ./.github/workflows/sonarcloud.yml
-  #   needs: pr-validator
-  #   secrets:
-  #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          dotnet-version: 10.0
+      - name: Run Consumer tests
+        run: |
+          dotnet build tests/Consumer.Tests/Consumer.Tests.csproj
+          dotnet test --test-modules tests/Consumer.Tests/bin/Debug/net10.0/Consumer.Tests.dll --no-build --results-directory TestResults/Consumer.Tests -- --report-trx --report-trx-filename Consumer.Tests.trx
+      - name: Run Consumer integration tests
+        run: |
+          docker compose up -d --wait
+          dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/Consumer.IntegrationTests -- --report-trx --report-trx-filename Consumer.IntegrationTests.trx
+      - name: Docker Compose logs
+        if: always()
+        run: docker compose logs
+      - name: Stop local environment
+        if: always()
+        run: docker compose down -v --remove-orphans
+      - name: Check Dockerfile Builds
+        id: docker-build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: waste-obligations-notifications:latest
+      - name: Check with Trivy
+        id: trivy
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: waste-obligations-notifications:latest
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: json
+          output: TestResults/trivy.json
+      - name: Upload CI reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ci-reports
+          path: TestResults
+          if-no-files-found: warn
+          retention-days: 7
+
+  report:
+    name: Publish CI Report
+    needs: pr-validator
+    if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Download CI reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ci-reports
+          path: TestResults
+      - name: Create CI report
+        env:
+          DOCKER_BUILD: ${{ needs.pr-validator.outputs.docker-build }}
+          PR_VALIDATOR: ${{ needs.pr-validator.result }}
+          TRIVY: ${{ needs.pr-validator.outputs.trivy }}
+        run: |
+          test_summary() {
+            local report="$1"
+            local counters
+
+            if [ ! -f "$report" ]; then
+              printf '⚪ Not run'
+              return
+            fi
+
+            counters=$(grep -o '<Counters[^>]*/>' "$report")
+            total=$(printf '%s' "$counters" | sed -n 's/.* total="\([^"]*\)".*/\1/p')
+            passed=$(printf '%s' "$counters" | sed -n 's/.* passed="\([^"]*\)".*/\1/p')
+            failed=$(printf '%s' "$counters" | sed -n 's/.* failed="\([^"]*\)".*/\1/p')
+
+            if [ "$failed" = "0" ]; then
+              printf '✅ %s/%s passed' "$passed" "$total"
+            else
+              printf '❌ %s/%s passed, %s failed' "$passed" "$total" "$failed"
+            fi
+          }
+
+          step_summary() {
+            case "$1" in
+              success) printf '✅ Passed' ;;
+              failure) printf '❌ Failed' ;;
+              *) printf '⚪ Not run' ;;
+            esac
+          }
+
+          trivy_summary() {
+            if [ ! -f TestResults/trivy.json ]; then
+              printf '⚪ Not run'
+              return
+            fi
+
+            critical=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' TestResults/trivy.json)
+            high=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' TestResults/trivy.json)
+
+            if [ "$critical" = "0" ] && [ "$high" = "0" ]; then
+              printf '✅ 0 Critical, 0 High'
+            else
+              printf '❌ %s Critical, %s High' "$critical" "$high"
+            fi
+          }
+
+          {
+            echo '<!-- ci-report -->'
+            echo '## CI report'
+            echo
+            echo '| Check | Result |'
+            echo '| --- | --- |'
+            printf '| Unit tests | %s |\n' "$(test_summary TestResults/Consumer.Tests/Consumer.Tests.trx)"
+            printf '| Integration tests | %s |\n' "$(test_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx)"
+            printf '| Docker image | %s |\n' "$(step_summary "$DOCKER_BUILD")"
+            printf '| Trivy (Critical/High) | %s |\n' "$(trivy_summary)"
+            echo
+            printf '_PR validation: %s. Reports are retained as a workflow artifact for seven days._\n' "$(step_summary "$PR_VALIDATOR")"
+          } > ci-report.md
+      - name: Update pull request comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          comment_id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- ci-report -->"))) | .id' | head -n 1)
+
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --raw-field body="$(<ci-report.md)" > /dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --raw-field body="$(<ci-report.md)" > /dev/null
+          fi
+
+  sonarcloud-scan:
+    name: CDP SonarCloud Scan
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/sonarcloud.yml
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

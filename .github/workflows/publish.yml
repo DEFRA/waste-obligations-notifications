@@ -5,49 +5,62 @@ on:
     branches:
       - main
 
-concurrency:
-  group: $${{ github.workflow }}
-  cancel-in-progress: false
-  queue: max
-
 permissions:
   contents: read
-  packages: read
-
-env:
-  AWS_REGION: eu-west-2
-  AWS_ACCOUNT_ID: "094954420758"
 
 jobs:
   build:
     if: github.run_number != 1
     name: CDP-build-workflow
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: write
-      pull-requests: write
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Check out code
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 10.0
+      - name: Run Consumer tests
+        run: |
+          dotnet build tests/Consumer.Tests/Consumer.Tests.csproj
+          dotnet test --test-modules tests/Consumer.Tests/bin/Debug/net10.0/Consumer.Tests.dll --no-build
+      - name: Run Consumer integration tests
+        run: |
+          docker compose up -d --wait
+          dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build
+      - name: Docker Compose logs
+        if: always()
+        run: docker compose logs
+      - name: Stop local environment
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  sonarcloud-scan:
+    name: CDP SonarCloud Scan
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/sonarcloud.yml
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  publish:
+    name: CDP-publish-workflow
+    needs: [build, sonarcloud-scan]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      AWS_REGION: eu-west-2
+      AWS_ACCOUNT_ID: "094954420758"
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Build and Publish
-        uses: DEFRA/cdp-build-action/build@main
+        uses: DEFRA/cdp-build-action/build@dfb527d1bca7591fbbfd32ac007557745e888cf2 # main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-  ## SonarCloud
-  ## Uncomment to enable SonarCloud scan
-  ## Requires project to be set up in SonarCloud
-  ## and the SonarCloud token to be set in the repository secrets
-  # sonarcloud-scan:
-  #   name: CDP SonarCloud Scan
-  #   permissions:
-  #     id-token: write
-  #     pull-requests: write
-  #     contents: read
-  #     packages: read
-  #   uses: ./.github/workflows/sonarcloud.yml
-  #   needs: build
-  #   secrets:
-  #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
