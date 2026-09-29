@@ -64,12 +64,15 @@ public sealed class NotificationCommandConsumer(
 
                     var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
                     metrics.RecordOutcome(command.NotificationType, outcome);
-                    logger.LogInformation(
-                        "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId}",
-                        outcome,
-                        command.NotificationType,
-                        message.MessageId
-                    );
+                    if (logger.IsEnabled(LogLevel.Information))
+                    {
+                        logger.LogInformation(
+                            "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId}",
+                            outcome,
+                            command.NotificationType,
+                            message.MessageId
+                        );
+                    }
                     await sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, stoppingToken);
                 }
             }

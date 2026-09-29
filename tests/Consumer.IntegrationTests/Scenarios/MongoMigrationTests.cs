@@ -73,7 +73,21 @@ public sealed class MongoMigrationTests : IntegrationTestBase
             var context = new MigrationContext(database, null!, cancellationToken);
             await migration.UpAsync(context);
             await migration.DownAsync(context);
+            await migration.DownAsync(context);
+            await records.DeleteManyAsync(new BsonDocument(), cancellationToken);
+            await records.Indexes.CreateOneAsync(
+                new CreateIndexModel<BsonDocument>(
+                    Builders<BsonDocument>.IndexKeys.Ascending("wrongField"),
+                    new CreateIndexOptions { Name = "notificationKey_unique" }
+                ),
+                cancellationToken: cancellationToken
+            );
             await migration.UpAsync(context);
+            using var repairedCursor = await records.Indexes.ListAsync(cancellationToken);
+            var repairedIndexes = await repairedCursor.ToListAsync(cancellationToken);
+            var repairedIndex = Assert.Single(repairedIndexes, item => item["name"] == "notificationKey_unique");
+            Assert.True(repairedIndex["unique"].AsBoolean);
+            Assert.Equal(new BsonDocument("notificationKey", 1), repairedIndex["key"].AsBsonDocument);
         }
         finally
         {

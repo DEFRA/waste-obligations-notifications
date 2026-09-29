@@ -23,7 +23,7 @@ public sealed class MongoMigrationRunner(
             .UseAfterMigration(
                 (migration, success) =>
                 {
-                    if (success)
+                    if (success && logger.IsEnabled(LogLevel.Information))
                     {
                         logger.LogInformation(
                             "Mongo migration {MigrationName} version {MigrationVersion} completed.",
@@ -31,7 +31,7 @@ public sealed class MongoMigrationRunner(
                             migration.Version
                         );
                     }
-                    else
+                    else if (!success && logger.IsEnabled(LogLevel.Error))
                     {
                         logger.LogError(
                             "Mongo migration {MigrationName} version {MigrationVersion} failed.",
@@ -50,10 +50,13 @@ public sealed class MongoMigrationRunner(
 
         readiness.MarkCompleted();
 
-        logger.LogInformation(
-            "Mongo migrations completed. Current version is {CurrentVersion}. Applied {AppliedMigrationCount} migration(s).",
-            result.CurrentVersion,
-            result.InterimSteps.Count
-        );
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            logger.LogInformation(
+                "Mongo migrations completed. Current version is {CurrentVersion}. Applied {AppliedMigrationCount} migration(s).",
+                result.CurrentVersion,
+                result.InterimSteps.Count
+            );
+        }
     }
 }
