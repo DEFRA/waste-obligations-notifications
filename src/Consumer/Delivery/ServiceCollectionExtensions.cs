@@ -1,5 +1,6 @@
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Data;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
@@ -24,6 +25,16 @@ public static class ServiceCollectionExtensions
                 .GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>()
                 .Value.MongoConnectionString
         ));
+        services.AddSingleton(serviceProvider =>
+            serviceProvider
+                .GetRequiredService<IMongoClient>()
+                .GetDatabase(
+                    serviceProvider
+                        .GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>()
+                        .Value.MongoDatabaseName
+                )
+        );
+        services.AddMongoMigrations(configuration);
         services.AddSingleton<INotificationCommandDigest, NotificationCommandDigest>();
         services.AddSingleton<INotificationDeliveryRecordStore, MongoNotificationDeliveryRecordStore>();
         services.AddSingleton<INotificationDeliveryRecordStoreFactory, NotificationDeliveryRecordStoreFactory>();

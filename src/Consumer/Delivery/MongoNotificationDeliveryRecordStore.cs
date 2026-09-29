@@ -1,4 +1,5 @@
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Data;
 using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 
@@ -6,23 +7,23 @@ namespace Defra.WasteObligations.Consumer.Delivery;
 
 public sealed class MongoNotificationDeliveryRecordStore : INotificationDeliveryRecordStore
 {
-    private const string CollectionName = "notificationDeliveryRecords";
-    private const string NotificationKeyIndexName = "notificationKey_unique";
+    internal const string CollectionName = "notificationDeliveryRecords";
     private readonly INotificationCommandDigest _digest;
-    private readonly Lazy<Task> _indexCreation;
+    private readonly MongoMigrationReadiness _migrationReadiness;
     private readonly IMongoCollection<NotificationDeliveryRecord> _records;
 
     public MongoNotificationDeliveryRecordStore(
         IMongoClient mongoClient,
         IOptions<NotificationCommandDeliveryOptions> options,
-        INotificationCommandDigest digest
+        INotificationCommandDigest digest,
+        MongoMigrationReadiness migrationReadiness
     )
     {
         _digest = digest;
         _records = mongoClient
             .GetDatabase(options.Value.MongoDatabaseName)
             .GetCollection<NotificationDeliveryRecord>(CollectionName);
-        _indexCreation = new Lazy<Task>(CreateIndexes);
+        _migrationReadiness = migrationReadiness;
     }
 
     public async Task<SuppressionClaimResult> RecordSuppression(
@@ -30,7 +31,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
-        await _indexCreation.Value.WaitAsync(cancellationToken);
+        await _migrationReadiness.Wait(cancellationToken);
         var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
         var record = new NotificationDeliveryRecord
@@ -66,12 +67,4 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                 : SuppressionClaimResult.Conflict;
         }
     }
-
-    private Task CreateIndexes() =>
-        _records.Indexes.CreateOneAsync(
-            new CreateIndexModel<NotificationDeliveryRecord>(
-                Builders<NotificationDeliveryRecord>.IndexKeys.Ascending(record => record.NotificationKey),
-                new CreateIndexOptions { Name = NotificationKeyIndexName, Unique = true }
-            )
-        );
 }

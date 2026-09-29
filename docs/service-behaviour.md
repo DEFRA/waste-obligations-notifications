@@ -40,6 +40,9 @@ the next implementation ticket.
   only where the command contract requires it.
 - Use the idempotency key as the FIFO message-deduplication ID and a
   non-reversible per-recipient digest as the FIFO message-group ID.
+- Run versioned Mongo migrations under a renewable exclusive lease when command
+  processing is enabled. Command persistence must wait for successful migration
+  completion so the unique notification-key index exists before any write.
 - Persist only the minimal, versioned HMAC evidence needed for command
   idempotency and outcomes. Do not persist recipient addresses,
   personalisation, template content, rendered content, or full GOV.UK Notify

@@ -64,6 +64,19 @@ provide its FIFO queue URL, MongoDB connection and database, cutover timestamp,
 and distinct evidence-digest and recipient-lane secrets. Do not put those secrets
 in source control or logs.
 
+When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
+Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
+index on `notificationDeliveryRecords`, preserving an existing matching index.
+Command writes wait until migrations succeed; analytics consumption continues
+independently. Failures are retried up to `MongoMigrations__MaximumAttempts`;
+after exhaustion, command writes remain blocked until the host restarts.
+
+`MongoMigrations` configures lease duration, renewal interval, attempt timeout,
+retry delay and lease-acquisition alert threshold in seconds. The defaults are
+60, 15, 300, 30 and 300 respectively, with three attempts. Renewal must be no
+more than half the lease duration. CDP can override these defaults separately
+from local Compose configuration.
+
 ## Code quality and delivery
 
 GitHub Actions runs Consumer tests, validates Compose, builds and scans the
