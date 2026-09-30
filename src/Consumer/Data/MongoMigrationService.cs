@@ -122,7 +122,7 @@ public sealed class MongoMigrationService(
     private async Task<bool> RunMigrationsWithLease(TimeSpan leaseDuration, CancellationToken stoppingToken)
     {
         using var migrationCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        using var renewalCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        using var renewalCancellationTokenSource = new CancellationTokenSource();
         var renewalTask = RenewLease(
             leaseDuration,
             migrationCancellationTokenSource,

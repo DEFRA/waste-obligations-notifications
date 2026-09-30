@@ -107,8 +107,9 @@ attempt budget. After exhaustion,
 the host releases the lease and continues checking for completion by another host.
 It needs a restart to make further migration attempts itself. Failed attempts,
 exhaustion and prolonged readiness waits produce error logs for support alerts.
-An attempt timeout requests cancellation and retains the lease until execution
-stops; a migration that does not stop needs support intervention.
+An attempt timeout or host shutdown requests cancellation and continues renewing
+the lease until execution stops; a migration that does not stop needs support
+intervention.
 
 `MongoMigrations` configures lease duration, renewal interval, attempt timeout,
 retry delay and readiness-wait alert threshold in seconds (the latter uses

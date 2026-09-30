@@ -34,8 +34,10 @@ Exhausted hosts
 release the lease and continue checking for completion by another host; they
 need a restart to execute further migration attempts themselves. Failed attempts,
 exhaustion and prolonged readiness waits produce error logs for support alerts.
-A timed-out migration that does not stop retains its lease and requires support
-intervention. Commands remain on SQS until the required migration is in place.
+An attempt timeout or host shutdown cancels the engine while lease renewal
+continues until execution stops. A migration that does not stop retains its lease
+and requires support intervention. Commands remain on SQS until the required
+migration is in place.
 Mongo migrations must use the notifications database; they must not share the
 Waste Obligations database.
 

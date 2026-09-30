@@ -63,6 +63,8 @@ restore a command's original recipient-lane position.
   after the local host exhausts its migration attempts. A lease-renewal failure
   cancels the engine; only after it stops can the host release and reacquire
   the lease. Attempts share a bounded host-wide budget across acquisitions.
+  Host shutdown cancels the migration engine but continues renewing its lease
+  until execution stops.
   Migration failures and
   prolonged readiness waits produce error logs; `/health` and analytics
   consumption remain independent of migration readiness.
