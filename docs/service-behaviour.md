@@ -44,7 +44,10 @@ the next implementation ticket.
   processing is enabled. Each host must verify the required migration version
   and unique notification-key index before receiving commands from SQS or
   persisting them. Completion by another host can satisfy this check, including
-  after the local host exhausts its migration attempts. Migration failures and
+  after the local host exhausts its migration attempts. A lease-renewal failure
+  cancels the engine; only after it stops can the host release and reacquire
+  the lease. Attempts share a bounded host-wide budget across acquisitions.
+  Migration failures and
   prolonged readiness waits produce error logs; `/health` and analytics
   consumption remain independent of migration readiness.
 - Persist only the minimal, versioned HMAC evidence needed for command

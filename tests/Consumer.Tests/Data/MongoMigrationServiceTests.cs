@@ -201,6 +201,155 @@ public sealed class MongoMigrationServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task WhenLeaseRenewalFailsWithAttemptsRemaining_ShouldReacquireAndComplete(bool throws)
+    {
+        var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        var lease = Substitute.For<IMongoMigrationLeaseService>();
+        lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
+        lease
+            .TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+                throws
+                    ? Task.FromException<bool>(new InvalidOperationException("Renewal failed"))
+                    : Task.FromResult(false)
+            );
+        var runner = Substitute.For<IMongoMigrationRunner>();
+        runner
+            .Run(Arg.Any<CancellationToken>())
+            .Returns(
+                call => Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>()),
+                _ => Task.CompletedTask
+            );
+        using var service = CreateService(
+            lease,
+            runner,
+            new MongoMigrationOptions
+            {
+                LeaseRenewalIntervalSeconds = 1,
+                AttemptTimeoutSeconds = 10,
+                MaximumAttempts = 2,
+            },
+            logger
+        );
+
+        await service.StartAsync(TestContext.Current.CancellationToken);
+        await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        await runner.Received(2).Run(Arg.Any<CancellationToken>());
+        await lease.Received(2).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+        await lease.Received(2).Release(Arg.Any<CancellationToken>());
+        AssertErrorLogged(logger, throws ? "lease renewal failed" : "lease was not renewed");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenRenewalCancellationDoesNotStopEngine_ShouldNotReleaseOrReacquireUntilItStops(bool throws)
+    {
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lease = Substitute.For<IMongoMigrationLeaseService>();
+        lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
+        lease
+            .TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+                throws
+                    ? Task.FromException<bool>(new InvalidOperationException("Renewal failed"))
+                    : Task.FromResult(false)
+            );
+        var runner = Substitute.For<IMongoMigrationRunner>();
+        runner
+            .Run(Arg.Any<CancellationToken>())
+            .Returns(
+                async call =>
+                {
+                    var token = call.Arg<CancellationToken>();
+                    using var registration = token.Register(() => cancelled.TrySetResult());
+                    await finish.Task;
+                    token.ThrowIfCancellationRequested();
+                },
+                _ => Task.CompletedTask
+            );
+        using var service = CreateService(
+            lease,
+            runner,
+            new MongoMigrationOptions
+            {
+                LeaseRenewalIntervalSeconds = 1,
+                AttemptTimeoutSeconds = 10,
+                MaximumAttempts = 2,
+            }
+        );
+
+        try
+        {
+            await service.StartAsync(TestContext.Current.CancellationToken);
+            await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            await lease.DidNotReceive().Release(Arg.Any<CancellationToken>());
+            await lease.Received(1).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            await runner.Received(1).Run(Arg.Any<CancellationToken>());
+            Assert.False(service.ExecuteTask!.IsCompleted);
+
+            finish.TrySetResult();
+            await service.ExecuteTask.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+            await lease.Received(2).Release(Arg.Any<CancellationToken>());
+            await lease.Received(2).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            await runner.Received(2).Run(Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            finish.TrySetResult();
+            await service.StopAsync(TestContext.Current.CancellationToken);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenRenewalsExhaustAttemptsAcrossAcquisitions_ShouldOnlyObservePeerCompletion(bool throws)
+    {
+        var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        var lease = Substitute.For<IMongoMigrationLeaseService>();
+        lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
+        lease
+            .TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+                throws
+                    ? Task.FromException<bool>(new InvalidOperationException("Renewal failed"))
+                    : Task.FromResult(false)
+            );
+        var runner = Substitute.For<IMongoMigrationRunner>();
+        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, false, false, true);
+        runner
+            .Run(Arg.Any<CancellationToken>())
+            .Returns(call => Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>()));
+        using var service = CreateService(
+            lease,
+            runner,
+            new MongoMigrationOptions
+            {
+                LeaseRenewalIntervalSeconds = 1,
+                AttemptTimeoutSeconds = 10,
+                MaximumAttempts = 2,
+            },
+            logger
+        );
+
+        await service.StartAsync(TestContext.Current.CancellationToken);
+        await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+
+        await runner.Received(2).Run(Arg.Any<CancellationToken>());
+        await lease.Received(2).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+        await lease.Received(2).Release(Arg.Any<CancellationToken>());
+        await runner.Received(4).CheckReadiness(Arg.Any<CancellationToken>());
+        AssertErrorLogged(logger, "did not complete after 2 attempt(s)");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task WhenLeaseReleaseFails_ShouldCompleteWithoutRetryingMigration(bool cancelled)
     {
         var lease = Substitute.For<IMongoMigrationLeaseService>();

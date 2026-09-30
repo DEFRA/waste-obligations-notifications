@@ -12,6 +12,7 @@ public sealed class MongoMigrationService(
 {
     private static readonly TimeSpan ReadinessCheckInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan LeaseReleaseTimeout = TimeSpan.FromSeconds(10);
+    private int _attemptCount;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -22,7 +23,6 @@ public sealed class MongoMigrationService(
             var failedChecks = 0;
             var readinessStartedAt = timeProvider.GetUtcNow();
             var readinessAlertLogged = false;
-            var runMigrations = true;
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -34,7 +34,9 @@ public sealed class MongoMigrationService(
                     if (await migrationRunner.CheckReadiness(stoppingToken))
                         return;
 
-                    acquired = runMigrations && await leaseService.TryAcquire(leaseDuration, stoppingToken);
+                    acquired =
+                        _attemptCount < options.Value.MaximumAttempts
+                        && await leaseService.TryAcquire(leaseDuration, stoppingToken);
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
@@ -67,7 +69,13 @@ public sealed class MongoMigrationService(
                 if (await RunMigrationsWithLease(leaseDuration, stoppingToken))
                     return;
 
-                runMigrations = false;
+                if (_attemptCount >= options.Value.MaximumAttempts)
+                {
+                    logger.LogError(
+                        "Mongo migrations did not complete after {AttemptCount} attempt(s). No further attempts will be made by this host; checking for completion by another host.",
+                        _attemptCount
+                    );
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -120,8 +128,9 @@ public sealed class MongoMigrationService(
         {
             var maximumAttempts = options.Value.MaximumAttempts;
 
-            for (var attempt = 1; attempt <= maximumAttempts; attempt++)
+            while (_attemptCount < maximumAttempts && !migrationCancellationTokenSource.IsCancellationRequested)
             {
+                var attempt = ++_attemptCount;
                 if (await RunMigrationAttempt(attempt, migrationCancellationTokenSource.Token, stoppingToken))
                     return true;
 
@@ -148,11 +157,6 @@ public sealed class MongoMigrationService(
                     }
                 }
             }
-
-            logger.LogError(
-                "Mongo migrations did not complete after {AttemptCount} attempt(s). No further attempts will be made by this host; checking for completion by another host.",
-                maximumAttempts
-            );
         }
         finally
         {

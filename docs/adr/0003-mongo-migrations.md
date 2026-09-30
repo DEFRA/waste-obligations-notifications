@@ -27,7 +27,10 @@ and `/health` do not depend on migrations.
 
 Migration versions and the lease are stored in the configured notifications
 database. Hosts coordinate through the lease and retain it until a cancelled
-migration attempt stops. Failures receive bounded retries. Exhausted hosts
+migration attempt stops. Failures receive bounded retries using one host-wide
+attempt budget across lease acquisitions. Renewal failures cancel the engine;
+after it stops the host may reacquire the lease and use its remaining attempts.
+Exhausted hosts
 release the lease and continue checking for completion by another host; they
 need a restart to execute further migration attempts themselves. Failed attempts,
 exhaustion and prolonged readiness waits produce error logs for support alerts.

@@ -71,7 +71,10 @@ Each host checks migration history and the required unique index before command
 consumption starts. A host can become ready after another host applies migrations
 without acquiring the lease itself. Commands stay on SQS while migrations are
 incomplete; analytics consumption and `/health` continue independently.
-Failures are retried up to `MongoMigrations__MaximumAttempts`; after exhaustion,
+Failures are retried up to `MongoMigrations__MaximumAttempts` across all lease
+acquisitions on the host. A renewal error cancels the attempt; once the engine
+stops, the host releases the lease and can reacquire it using the remaining
+attempt budget. After exhaustion,
 the host releases the lease and continues checking for completion by another host.
 It needs a restart to make further migration attempts itself. Failed attempts,
 exhaustion and prolonged readiness waits produce error logs for support alerts.
