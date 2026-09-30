@@ -28,12 +28,14 @@ public sealed class MongoMigrationService(
             {
                 var leaseDuration = TimeSpan.FromSeconds(options.Value.LeaseDurationSeconds);
                 bool acquired;
+                long leaseRequestStartedAt;
 
                 try
                 {
                     if (await migrationRunner.CheckReadiness(stoppingToken))
                         return;
 
+                    leaseRequestStartedAt = timeProvider.GetTimestamp();
                     acquired =
                         _attemptCount < options.Value.MaximumAttempts
                         && await leaseService.TryAcquire(leaseDuration, stoppingToken);
@@ -66,7 +68,7 @@ public sealed class MongoMigrationService(
                     continue;
                 }
 
-                if (await RunMigrationsWithLease(leaseDuration, stoppingToken))
+                if (await RunMigrationsWithLease(leaseDuration, leaseRequestStartedAt, stoppingToken))
                     return;
 
                 LogAttemptExhaustionIfRequired();
@@ -119,13 +121,39 @@ public sealed class MongoMigrationService(
         return readinessAlertLogged;
     }
 
-    private async Task<bool> RunMigrationsWithLease(TimeSpan leaseDuration, CancellationToken stoppingToken)
+    private async Task<bool> RunMigrationsWithLease(
+        TimeSpan leaseDuration,
+        long leaseRequestStartedAt,
+        CancellationToken stoppingToken
+    )
     {
-        using var migrationCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var remainingLeaseTime = GetRemainingLeaseTime(leaseDuration, leaseRequestStartedAt);
+        if (remainingLeaseTime <= TimeSpan.Zero)
+        {
+            logger.LogError(
+                "Mongo migration lease acquisition was not confirmed in time. Retrying without starting the engine."
+            );
+            await ReleaseLease();
+
+            return false;
+        }
+
+        using var leaseExpiryCancellationTokenSource = new CancellationTokenSource(remainingLeaseTime, timeProvider);
+        using var expiryRegistration = leaseExpiryCancellationTokenSource.Token.Register(() =>
+            logger.LogError(
+                "Mongo migration lease renewal was not confirmed before its deadline. Cancelling the migration engine."
+            )
+        );
+        using var migrationCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+            stoppingToken,
+            leaseExpiryCancellationTokenSource.Token
+        );
         using var renewalCancellationTokenSource = new CancellationTokenSource();
         var renewalTask = RenewLease(
             leaseDuration,
+            leaseRequestStartedAt,
             migrationCancellationTokenSource,
+            leaseExpiryCancellationTokenSource,
             renewalCancellationTokenSource.Token
         );
 
@@ -238,25 +266,73 @@ public sealed class MongoMigrationService(
 
     private async Task RenewLease(
         TimeSpan leaseDuration,
+        long confirmedRequestStartedAt,
         CancellationTokenSource migrationCancellationTokenSource,
+        CancellationTokenSource leaseExpiryCancellationTokenSource,
         CancellationToken renewalCancellationToken
     )
     {
-        using var renewalTimer = new PeriodicTimer(TimeSpan.FromSeconds(options.Value.LeaseRenewalIntervalSeconds));
+        using var renewalTimer = new PeriodicTimer(
+            TimeSpan.FromSeconds(options.Value.LeaseRenewalIntervalSeconds),
+            timeProvider
+        );
+        using var requestCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+            renewalCancellationToken,
+            leaseExpiryCancellationTokenSource.Token
+        );
 
         try
         {
-            while (await renewalTimer.WaitForNextTickAsync(renewalCancellationToken))
+            while (await renewalTimer.WaitForNextTickAsync(requestCancellationTokenSource.Token))
             {
-                if (await leaseService.TryRenew(leaseDuration, renewalCancellationToken))
+                if (GetRemainingLeaseTime(leaseDuration, confirmedRequestStartedAt) <= TimeSpan.Zero)
+                {
+                    await leaseExpiryCancellationTokenSource.CancelAsync();
+
+                    return;
+                }
+
+                var requestStartedAt = timeProvider.GetTimestamp();
+                var renewed = await leaseService.TryRenew(leaseDuration, requestCancellationTokenSource.Token);
+                if (renewalCancellationToken.IsCancellationRequested)
+                    return;
+
+                if (
+                    leaseExpiryCancellationTokenSource.IsCancellationRequested
+                    || GetRemainingLeaseTime(leaseDuration, confirmedRequestStartedAt) <= TimeSpan.Zero
+                )
+                {
+                    await leaseExpiryCancellationTokenSource.CancelAsync();
+
+                    return;
+                }
+
+                if (renewed)
+                {
+                    var remainingLeaseTime = GetRemainingLeaseTime(leaseDuration, requestStartedAt);
+                    if (remainingLeaseTime <= TimeSpan.Zero)
+                    {
+                        await leaseExpiryCancellationTokenSource.CancelAsync();
+
+                        return;
+                    }
+
+                    confirmedRequestStartedAt = requestStartedAt;
+                    leaseExpiryCancellationTokenSource.CancelAfter(remainingLeaseTime);
                     continue;
+                }
 
                 logger.LogError("Mongo migration lease was not renewed. Cancelling the migration engine.");
 
                 await migrationCancellationTokenSource.CancelAsync();
+
+                return;
             }
         }
-        catch (OperationCanceledException) when (renewalCancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
+            when (renewalCancellationToken.IsCancellationRequested
+                || leaseExpiryCancellationTokenSource.IsCancellationRequested
+            )
         {
             // Expected when migration processing stops.
         }
@@ -267,6 +343,11 @@ public sealed class MongoMigrationService(
             await migrationCancellationTokenSource.CancelAsync();
         }
     }
+
+    private TimeSpan GetRemainingLeaseTime(TimeSpan leaseDuration, long requestStartedAt) =>
+        leaseDuration
+        - TimeSpan.FromSeconds(options.Value.LeaseRenewalIntervalSeconds / 2.0)
+        - timeProvider.GetElapsedTime(requestStartedAt);
 
     private async Task ReleaseLease()
     {

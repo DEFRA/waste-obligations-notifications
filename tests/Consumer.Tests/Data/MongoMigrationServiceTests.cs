@@ -256,6 +256,293 @@ public sealed class MongoMigrationServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task WhenRenewalStalls_ShouldCancelEngineBeforeExpiryAndIgnoreLateSuccess(bool ignoresCancellation)
+    {
+        var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        var renewalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var engineCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishRenewal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lease = Substitute.For<IMongoMigrationLeaseService>();
+        lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
+        lease
+            .TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                var token = call.Arg<CancellationToken>();
+                using var registration = token.Register(() => renewalCancelled.TrySetResult());
+                renewalStarted.TrySetResult();
+                if (ignoresCancellation)
+                    await finishRenewal.Task;
+                else
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+
+                return true;
+            });
+        var runner = Substitute.For<IMongoMigrationRunner>();
+        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
+        runner
+            .Run(Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                var token = call.Arg<CancellationToken>();
+                using var registration = token.Register(() => engineCancelled.TrySetResult());
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            });
+        using var service = CreateService(
+            lease,
+            runner,
+            new MongoMigrationOptions
+            {
+                LeaseDurationSeconds = 3,
+                LeaseRenewalIntervalSeconds = 1,
+                AttemptTimeoutSeconds = 10,
+                MaximumAttempts = 1,
+            },
+            logger
+        );
+
+        try
+        {
+            await service.StartAsync(TestContext.Current.CancellationToken);
+            await renewalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            await engineCancelled.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+            await renewalCancelled.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+
+            if (ignoresCancellation)
+            {
+                Assert.False(service.ExecuteTask!.IsCompleted);
+                await lease.DidNotReceive().Release(Arg.Any<CancellationToken>());
+                finishRenewal.TrySetResult();
+            }
+            await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            await runner.Received(1).Run(Arg.Any<CancellationToken>());
+            await lease.Received(1).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            await lease.Received(1).TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            await lease.Received(1).Release(Arg.Any<CancellationToken>());
+            AssertErrorLogged(logger, "not confirmed before its deadline");
+        }
+        finally
+        {
+            finishRenewal.TrySetResult();
+            await service.StopAsync(TestContext.Current.CancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task WhenRenewalResponseIsDelayed_ShouldMeasureNewDeadlineFromRequestStart()
+    {
+        var confirmed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lease = Substitute.For<IMongoMigrationLeaseService>();
+        lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
+        lease
+            .TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(
+                async call =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2), call.Arg<CancellationToken>());
+                    confirmed.TrySetResult();
+
+                    return true;
+                },
+                async call =>
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+
+                    return false;
+                }
+            );
+        var runner = Substitute.For<IMongoMigrationRunner>();
+        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
+        runner
+            .Run(Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                var token = call.Arg<CancellationToken>();
+                using var registration = token.Register(() => cancelled.TrySetResult());
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            });
+        using var service = CreateService(
+            lease,
+            runner,
+            new MongoMigrationOptions
+            {
+                LeaseDurationSeconds = 4,
+                LeaseRenewalIntervalSeconds = 1,
+                AttemptTimeoutSeconds = 10,
+                MaximumAttempts = 1,
+            }
+        );
+
+        try
+        {
+            await service.StartAsync(TestContext.Current.CancellationToken);
+            await confirmed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(2.5), TestContext.Current.CancellationToken);
+            await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            await lease.Received(2).TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            await runner.Received(1).Run(Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            await service.StopAsync(TestContext.Current.CancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task WhenRenewalIsOverdueAndExpiryCallbackIsDelayed_ShouldCancelInsteadOfExtendingLease()
+    {
+        var timeProvider = new DelayedExpiryTimeProvider();
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lease = Substitute.For<IMongoMigrationLeaseService>();
+        lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
+        lease
+            .TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                timeProvider.Advance(TimeSpan.FromSeconds(2));
+
+                return true;
+            });
+        var runner = Substitute.For<IMongoMigrationRunner>();
+        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
+        runner
+            .Run(Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                var token = call.Arg<CancellationToken>();
+                using var registration = token.Register(() => cancelled.TrySetResult());
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            });
+        using var service = CreateService(
+            lease,
+            runner,
+            new MongoMigrationOptions
+            {
+                LeaseDurationSeconds = 3,
+                LeaseRenewalIntervalSeconds = 1,
+                AttemptTimeoutSeconds = 10,
+                MaximumAttempts = 1,
+            },
+            timeProvider: timeProvider
+        );
+
+        try
+        {
+            await service.StartAsync(TestContext.Current.CancellationToken);
+            await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            await lease.Received(1).TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+            await runner.Received(1).Run(Arg.Any<CancellationToken>());
+        }
+        finally
+        {
+            await service.StopAsync(TestContext.Current.CancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task WhenRenewalIntervalIsHalfLeaseDuration_ShouldAllowConfirmationBeforeDeadline()
+    {
+        var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        var renewed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lease = Substitute.For<IMongoMigrationLeaseService>();
+        lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
+        lease
+            .TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                call.Arg<CancellationToken>().ThrowIfCancellationRequested();
+                renewed.TrySetResult();
+
+                return true;
+            });
+        var runner = Substitute.For<IMongoMigrationRunner>();
+        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false);
+        runner
+            .Run(Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                await finish.Task;
+                call.Arg<CancellationToken>().ThrowIfCancellationRequested();
+            });
+        using var service = CreateService(
+            lease,
+            runner,
+            new MongoMigrationOptions
+            {
+                LeaseDurationSeconds = 2,
+                LeaseRenewalIntervalSeconds = 1,
+                AttemptTimeoutSeconds = 10,
+                MaximumAttempts = 1,
+            },
+            logger
+        );
+
+        try
+        {
+            await service.StartAsync(TestContext.Current.CancellationToken);
+            await renewed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            finish.TrySetResult();
+            await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            Assert.DoesNotContain(logger.ReceivedCalls(), call => call.GetArguments()[0] is LogLevel.Error);
+        }
+        finally
+        {
+            finish.TrySetResult();
+            await service.StopAsync(TestContext.Current.CancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task WhenAcquisitionConfirmationIsTooLate_ShouldReleaseWithoutUsingEngineAttempt()
+    {
+        var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        var lease = Substitute.For<IMongoMigrationLeaseService>();
+        lease
+            .TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(
+                async call =>
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1.8), call.Arg<CancellationToken>());
+
+                    return true;
+                },
+                _ => Task.FromResult(true)
+            );
+        var runner = Substitute.For<IMongoMigrationRunner>();
+        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false);
+        runner.Run(Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
+        using var service = CreateService(
+            lease,
+            runner,
+            new MongoMigrationOptions
+            {
+                LeaseDurationSeconds = 2,
+                LeaseRenewalIntervalSeconds = 1,
+                MaximumAttempts = 1,
+            },
+            logger
+        );
+
+        await service.StartAsync(TestContext.Current.CancellationToken);
+        await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        await lease.Received(2).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
+        await lease.Received(2).Release(Arg.Any<CancellationToken>());
+        await runner.Received(1).Run(Arg.Any<CancellationToken>());
+        AssertErrorLogged(logger, "acquisition was not confirmed in time");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task WhenLeaseRenewalFailsWithAttemptsRemaining_ShouldReacquireAndComplete(bool throws)
     {
         var logger = Substitute.For<ILogger<MongoMigrationService>>();
@@ -489,13 +776,14 @@ public sealed class MongoMigrationServiceTests
         IMongoMigrationLeaseService lease,
         IMongoMigrationRunner runner,
         MongoMigrationOptions options,
-        ILogger<MongoMigrationService>? logger = null
+        ILogger<MongoMigrationService>? logger = null,
+        TimeProvider? timeProvider = null
     ) =>
         new(
             lease,
             runner,
             Options.Create(options),
-            TimeProvider.System,
+            timeProvider ?? TimeProvider.System,
             logger ?? NullLogger<MongoMigrationService>.Instance
         );
 
@@ -507,6 +795,32 @@ public sealed class MongoMigrationServiceTests
                 call.GetArguments() is [LogLevel.Error, _, var state, _, _]
                 && state?.ToString()?.Contains(expected, StringComparison.Ordinal) == true
         );
+    }
+
+    private sealed class DelayedExpiryTimeProvider : TimeProvider
+    {
+        private long _offset;
+
+        public override long TimestampFrequency => TimeProvider.System.TimestampFrequency;
+
+        public override long GetTimestamp() => TimeProvider.System.GetTimestamp() + Interlocked.Read(ref _offset);
+
+        public void Advance(TimeSpan elapsed) =>
+            Interlocked.Add(ref _offset, (long)(elapsed.TotalSeconds * TimestampFrequency));
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            period == Timeout.InfiniteTimeSpan
+                ? new DelayedExpiryTimer()
+                : TimeProvider.System.CreateTimer(callback, state, dueTime, period);
+
+        private sealed class DelayedExpiryTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose() { }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
     }
 
     [Fact]

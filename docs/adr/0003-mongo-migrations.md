@@ -35,9 +35,23 @@ release the lease and continue checking for completion by another host; they
 need a restart to execute further migration attempts themselves. Failed attempts,
 exhaustion and prolonged readiness waits produce error logs for support alerts.
 An attempt timeout or host shutdown cancels the engine while lease renewal
-continues until execution stops. A migration that does not stop retains its lease
-and requires support intervention. Commands remain on SQS until the required
+continues while renewal succeeds until execution stops. A migration that does not
+stop retains its lease while renewal succeeds and requires support intervention.
+Commands remain on SQS until the required
 migration is in place.
+
+Confirmation deadlines use a monotonic clock from the start of each acquisition
+or renewal request, with half a renewal interval reserved before lease expiry.
+The engine's cancellation deadline runs independently of renewal I/O. A late
+confirmation cannot revive a cancelled attempt, and renewal checks the existing
+lease has not expired using MongoDB's current time. Release and reacquisition wait
+for the engine and any outstanding renewal work to stop.
+
+This bounds cancellation requests, not the duration of cancellation-resistant
+engine operations. The engine performs some synchronous metadata operations, and
+the lease has no fencing; after genuine lease loss those operations can overlap
+another host. The acquisition protocol also retains its existing reliance on
+host-clock alignment for stored expiry values.
 Mongo migrations must use the notifications database; they must not share the
 Waste Obligations database.
 

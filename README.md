@@ -108,8 +108,17 @@ the host releases the lease and continues checking for completion by another hos
 It needs a restart to make further migration attempts itself. Failed attempts,
 exhaustion and prolonged readiness waits produce error logs for support alerts.
 An attempt timeout or host shutdown requests cancellation and continues renewing
-the lease until execution stops; a migration that does not stop needs support
-intervention.
+the lease while renewal succeeds until execution stops; a migration that does not
+stop needs support intervention.
+
+Lease confirmation deadlines are measured from the start of acquisition and
+renewal requests, reserving half a renewal interval for cancellation before
+expiry. An independent deadline cancels the engine even when renewal I/O stalls;
+late confirmations cannot restart that attempt. Renewal also rejects an expired
+lease using MongoDB's current time. Local release and reacquisition wait for both
+the engine and outstanding renewal work to stop. This requests cancellation before
+lease expiry; the migration engine has synchronous operations that can outlive
+cancellation, and the lease does not fence those operations after ownership is lost.
 
 `MongoMigrations` configures lease duration, renewal interval, attempt timeout,
 retry delay and readiness-wait alert threshold in seconds (the latter uses

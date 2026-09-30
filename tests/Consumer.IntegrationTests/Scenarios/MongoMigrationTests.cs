@@ -176,4 +176,40 @@ public sealed class MongoMigrationTests : IntegrationTestBase
             await client.DropDatabaseAsync(databaseName, CancellationToken.None);
         }
     }
+
+    [Fact]
+    public async Task WhenLeaseExpires_ShouldRejectRenewalAndProtectNewOwnerFromFormerOwner()
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_expiry_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var firstHost = new MongoMigrationLeaseService(database, TimeProvider.System);
+        var secondHost = new MongoMigrationLeaseService(database, TimeProvider.System);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var duration = TimeSpan.FromSeconds(60);
+
+        try
+        {
+            Assert.True(await firstHost.TryAcquire(duration, cancellationToken));
+            await database
+                .GetCollection<BsonDocument>("_migrations_lease")
+                .UpdateOneAsync(
+                    new BsonDocument("_id", "mongo-migrations"),
+                    Builders<BsonDocument>.Update.Set("expiresAt", DateTime.UtcNow.AddSeconds(-1)),
+                    cancellationToken: cancellationToken
+                );
+
+            Assert.False(await firstHost.TryRenew(duration, cancellationToken));
+            Assert.True(await secondHost.TryAcquire(duration, cancellationToken));
+            Assert.False(await firstHost.TryRenew(duration, cancellationToken));
+            await firstHost.Release(cancellationToken);
+
+            Assert.True(await secondHost.TryRenew(duration, cancellationToken));
+            Assert.False(await firstHost.TryAcquire(duration, cancellationToken));
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
 }

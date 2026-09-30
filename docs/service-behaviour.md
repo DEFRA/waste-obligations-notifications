@@ -64,7 +64,14 @@ restore a command's original recipient-lane position.
   cancels the engine; only after it stops can the host release and reacquire
   the lease. Attempts share a bounded host-wide budget across acquisitions.
   Host shutdown cancels the migration engine but continues renewing its lease
-  until execution stops.
+  while renewal succeeds until execution stops.
+  Bound acquisition and renewal confirmation by a deadline measured from the
+  request start, reserving half a renewal interval before expiry. Cancel the
+  engine independently of renewal I/O when confirmation misses that deadline;
+  ignore late success and reject renewal of an expired lease. Await outstanding
+  renewal work before local release or reacquisition. Cancellation-resistant
+  engine operations can still outlive ownership loss; the lease provides no
+  fencing after expiry.
   Migration failures and
   prolonged readiness waits produce error logs; `/health` and analytics
   consumption remain independent of migration readiness.

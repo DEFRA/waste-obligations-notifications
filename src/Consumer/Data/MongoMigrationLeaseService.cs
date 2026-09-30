@@ -1,4 +1,5 @@
 using Defra.WasteObligations.Consumer.Data.Entities;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace Defra.WasteObligations.Consumer.Data;
@@ -58,7 +59,8 @@ public sealed class MongoMigrationLeaseService(IMongoDatabase database, TimeProv
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
         var filter = Builders<MongoMigrationLease>.Filter.And(
             Builders<MongoMigrationLease>.Filter.Eq(x => x.Id, LeaseId),
-            Builders<MongoMigrationLease>.Filter.Eq(x => x.Owner, _instanceId)
+            Builders<MongoMigrationLease>.Filter.Eq(x => x.Owner, _instanceId),
+            new BsonDocument("$expr", new BsonDocument("$gt", new BsonArray { "$expiresAt", "$$NOW" }))
         );
         var update = Builders<MongoMigrationLease>.Update.Set(x => x.ExpiresAt, utcNow.Add(leaseDuration));
         var result = await _lease.UpdateOneAsync(filter, update, cancellationToken: cancellationToken);
