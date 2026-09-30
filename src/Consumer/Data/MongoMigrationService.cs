@@ -298,8 +298,11 @@ public sealed class MongoMigrationService(
                     return;
 
                 if (
-                    leaseExpiryCancellationTokenSource.IsCancellationRequested
-                    || GetRemainingLeaseTime(leaseDuration, confirmedRequestStartedAt) <= TimeSpan.Zero
+                    HasLeaseConfirmationExpired(
+                        leaseDuration,
+                        confirmedRequestStartedAt,
+                        leaseExpiryCancellationTokenSource
+                    )
                 )
                 {
                     await leaseExpiryCancellationTokenSource.CancelAsync();
@@ -343,6 +346,14 @@ public sealed class MongoMigrationService(
             await migrationCancellationTokenSource.CancelAsync();
         }
     }
+
+    private bool HasLeaseConfirmationExpired(
+        TimeSpan leaseDuration,
+        long confirmedRequestStartedAt,
+        CancellationTokenSource leaseExpiryCancellationTokenSource
+    ) =>
+        leaseExpiryCancellationTokenSource.IsCancellationRequested
+        || GetRemainingLeaseTime(leaseDuration, confirmedRequestStartedAt) <= TimeSpan.Zero;
 
     private TimeSpan GetRemainingLeaseTime(TimeSpan leaseDuration, long requestStartedAt) =>
         leaseDuration
