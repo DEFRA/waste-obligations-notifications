@@ -39,7 +39,7 @@ public sealed class NotificationCommandConsumer(
                     var command = NotificationCommandMessageReader.Read(message);
                     metrics.RecordReceived(command.NotificationType);
 
-                    // A future PR will add post-cutover Notify delivery; until then, leave these commands on SQS.
+                    // Ticket 02 adds Notify delivery. These failures retry and can reach the DLQ under queue redrive policy.
                     if (command.ActionOccurredAtUtc >= cutover)
                     {
                         throw new InvalidOperationException(

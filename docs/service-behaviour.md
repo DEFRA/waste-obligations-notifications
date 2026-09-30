@@ -11,7 +11,10 @@ The analytics consumer logs event and entity IDs and deletes successfully
 processed messages. It does not deliver notifications or persist event data.
 The command consumer records pre-cutover commands as `delivery-suppressed` and
 deletes them without sending to GOV.UK Notify. Post-cutover delivery belongs to
-the next implementation ticket.
+ticket 02. Until then, commands at or after the boundary fail without deletion,
+retry after visibility timeout, and can reach the DLQ under queue redrive policy.
+Operators may need to redrive them once delivery is enabled. Redrive does not
+restore a command's original recipient-lane position.
 
 ## Consumers and message handling
 

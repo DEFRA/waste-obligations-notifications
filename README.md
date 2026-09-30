@@ -11,7 +11,10 @@ not send notifications, persist data, or act on the event payload.
 
 The command consumer records pre-cutover commands as `delivery-suppressed` and
 deletes them without sending to GOV.UK Notify. Post-cutover delivery belongs to
-the next implementation ticket.
+ticket 02. Until then, commands at or after the boundary fail without deletion,
+retry after visibility timeout, and can reach the DLQ under queue redrive policy.
+Operators may need to redrive them after ticket 02 enables delivery. A redriven
+command does not regain its original position in the recipient lane.
 
 Malformed messages, messages without `eventId` or `entityId`, and unsupported
 content encodings are not deleted. The service-owned SQS queue's CDP redrive
