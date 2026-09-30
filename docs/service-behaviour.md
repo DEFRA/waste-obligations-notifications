@@ -51,6 +51,11 @@ restore a command's original recipient-lane position.
   Digest creation also rejects unconfigured secrets independently of processing.
 - Use the idempotency key as the FIFO message-deduplication ID and a
   non-reversible per-recipient digest as the FIFO message-group ID.
+  Validate the key before publishing or consuming: it must contain 1–128
+  characters from the ASCII letters, digits and punctuation allowed by
+  [SQS SendMessage](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html#API_SendMessage_RequestParameters).
+  Reject invalid keys without changing them; never trim, truncate or replace
+  the key to fit the queue constraints.
 - Run versioned Mongo migrations under a renewable exclusive lease when command
   processing is enabled. Each host must verify the required migration version
   and unique notification-key index before receiving commands from SQS or

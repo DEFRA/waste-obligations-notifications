@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
@@ -19,6 +20,52 @@ public class NotificationCommandConsumerTests
     private const string Personalisation = "secret personalisation";
     private const string QueueUrl = "http://localhost:4566/000000000000/commands.fifo";
     private const string ReceiptHandle = "receipt-handle-1";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Start_WhenIdempotencyKeyIsInvalid_ShouldNotRecordOrDeleteOrExposeIt(bool overlong)
+    {
+        var key = overlong ? new string('k', 129) : "key with space";
+        var body = JsonSerializer.Serialize(
+            new
+            {
+                schemaVersion = 1,
+                idempotencyKey = key,
+                actionOccurredAtUtc = "2026-09-28T10:00:00Z",
+                notificationType = "declaration-submitted",
+                emailAddress = EmailAddress,
+                templateId = "template-1",
+                personalisation = new { body = Personalisation },
+            }
+        );
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(MessageThenWait(CreateMessage(body)));
+        var recordStore = Substitute.For<INotificationDeliveryRecordStore>();
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        using var subject = CreateSubject(sqsClient, recordStore, logger);
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Notification command consumption failed", TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        await recordStore
+            .DidNotReceive()
+            .RecordSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            );
+        await sqsClient
+            .DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        Assert.DoesNotContain(logger.Messages, message => message.Contains(key, StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            logger.Exceptions,
+            exception => exception.Message.Contains(key, StringComparison.Ordinal)
+        );
+    }
 
     [Fact]
     public async Task Start_WhenDirectlyConfiguredWithInvalidCutover_ShouldFailBeforeReceiving()

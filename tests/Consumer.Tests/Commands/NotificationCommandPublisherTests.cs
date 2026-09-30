@@ -12,6 +12,68 @@ namespace Defra.WasteObligations.Consumer.Tests.Commands;
 
 public class NotificationCommandPublisherTests
 {
+    public static TheoryData<string> ValidFifoIdempotencyKeys =>
+        new() { new string('k', 128), """!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~""" };
+
+    public static TheoryData<string> InvalidFifoIdempotencyKeys =>
+        new()
+        {
+            new string('k', 129),
+            "key with space",
+            "key\tvalue",
+            "key\nvalue",
+            "key\u0000value",
+            "key\u007fvalue",
+            "keyévalue",
+            "key😀value",
+        };
+
+    [Theory]
+    [MemberData(nameof(ValidFifoIdempotencyKeys))]
+    public async Task Publish_WhenIdempotencyKeyFitsFifoConstraints_ShouldPreserveItUnchanged(string key)
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new SendMessageResponse { HttpStatusCode = HttpStatusCode.OK });
+        var subject = new NotificationCommandPublisher(
+            sqsClient,
+            Options.Create(CreateOptions()),
+            new NotificationCommandDigest(Options.Create(CreateOptions()))
+        );
+
+        await subject.Publish(CreateCommand() with { IdempotencyKey = key }, TestContext.Current.CancellationToken);
+
+        await sqsClient
+            .Received(1)
+            .SendMessageAsync(
+                Arg.Is<SendMessageRequest>(request => request.MessageDeduplicationId == key),
+                Arg.Any<CancellationToken>()
+            );
+        var request = sqsClient.ReceivedCalls().Single().GetArguments().OfType<SendMessageRequest>().Single();
+        using var body = JsonDocument.Parse(request.MessageBody);
+        Assert.Equal(key, body.RootElement.GetProperty("idempotencyKey").GetString());
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidFifoIdempotencyKeys))]
+    public async Task Publish_WhenIdempotencyKeyIsInvalid_ShouldRejectWithoutQueuingOrExposingKey(string key)
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        var subject = new NotificationCommandPublisher(
+            sqsClient,
+            Options.Create(CreateOptions()),
+            new NotificationCommandDigest(Options.Create(CreateOptions()))
+        );
+
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            subject.Publish(CreateCommand() with { IdempotencyKey = key }, TestContext.Current.CancellationToken)
+        );
+
+        Assert.DoesNotContain(key, exception.Message, StringComparison.Ordinal);
+        await sqsClient.DidNotReceive().SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
     [Theory]
     [InlineData("set-automatically-by-deployment")]
     [InlineData("")]

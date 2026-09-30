@@ -28,6 +28,13 @@ public sealed record NotificationCommand(
         }
 
         RequireValue(IdempotencyKey, "idempotencyKey");
+        if (IdempotencyKey.Length > 128 || IdempotencyKey.Any(character => character is < '!' or > '~'))
+        {
+            throw new InvalidDataException(
+                "Notification command idempotencyKey must be at most 128 characters using only SQS-supported ASCII letters, digits, or punctuation."
+            );
+        }
+
         RequireValue(NotificationType, "notificationType");
         RequireValue(EmailAddress, "emailAddress");
         RequireValue(TemplateId, "templateId");

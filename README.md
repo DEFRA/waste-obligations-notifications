@@ -16,6 +16,11 @@ retry after visibility timeout, and can reach the DLQ under queue redrive policy
 Operators may need to redrive them after ticket 02 enables delivery. A redriven
 command does not regain its original position in the recipient lane.
 
+The idempotency key is used unchanged as the FIFO deduplication ID. Publishing
+and consumption reject keys longer than 128 characters or containing whitespace,
+control characters, or characters outside the ASCII letters, digits and punctuation
+allowed by [SQS SendMessage](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html#API_SendMessage_RequestParameters).
+
 Malformed messages, messages without `eventId` or `entityId`, and unsupported
 content encodings are not deleted. The service-owned SQS queue's CDP redrive
 configuration routes them to its convention-led dead-letter queue after the
