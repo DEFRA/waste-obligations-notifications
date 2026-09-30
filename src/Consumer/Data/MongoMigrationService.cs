@@ -69,18 +69,23 @@ public sealed class MongoMigrationService(
                 if (await RunMigrationsWithLease(leaseDuration, stoppingToken))
                     return;
 
-                if (_attemptCount >= options.Value.MaximumAttempts)
-                {
-                    logger.LogError(
-                        "Mongo migrations did not complete after {AttemptCount} attempt(s). No further attempts will be made by this host; checking for completion by another host.",
-                        _attemptCount
-                    );
-                }
+                LogAttemptExhaustionIfRequired();
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             return;
+        }
+    }
+
+    private void LogAttemptExhaustionIfRequired()
+    {
+        if (_attemptCount >= options.Value.MaximumAttempts)
+        {
+            logger.LogError(
+                "Mongo migrations did not complete after {AttemptCount} attempt(s). No further attempts will be made by this host; checking for completion by another host.",
+                _attemptCount
+            );
         }
     }
 
