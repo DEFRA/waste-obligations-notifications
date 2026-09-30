@@ -10,7 +10,7 @@ public sealed class MongoMigrationService(
     ILogger<MongoMigrationService> logger
 ) : BackgroundService
 {
-    private static readonly TimeSpan LeaseRetryDelay = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ReadinessCheckInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan LeaseReleaseTimeout = TimeSpan.FromSeconds(10);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -19,9 +19,10 @@ public sealed class MongoMigrationService(
 
         try
         {
-            var failedLeaseAcquisitions = 0;
-            var leaseAcquisitionStartedAt = timeProvider.GetUtcNow();
-            var leaseAcquisitionAlertLogged = false;
+            var failedChecks = 0;
+            var readinessStartedAt = timeProvider.GetUtcNow();
+            var readinessAlertLogged = false;
+            var runMigrations = true;
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -30,18 +31,24 @@ public sealed class MongoMigrationService(
 
                 try
                 {
-                    acquired = await leaseService.TryAcquire(leaseDuration, stoppingToken);
+                    if (await migrationRunner.CheckReadiness(stoppingToken))
+                        return;
+
+                    acquired = runMigrations && await leaseService.TryAcquire(leaseDuration, stoppingToken);
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
-                    if (failedLeaseAcquisitions == 0)
+                    if (failedChecks == 0)
                     {
-                        logger.LogError(exception, "Mongo migration lease acquisition failed. Retrying.");
+                        logger.LogError(
+                            exception,
+                            "Mongo migration readiness check or lease acquisition failed. Retrying."
+                        );
                     }
-                    failedLeaseAcquisitions++;
-                    leaseAcquisitionAlertLogged = await WaitForLeaseRetry(
-                        leaseAcquisitionStartedAt,
-                        leaseAcquisitionAlertLogged,
+                    failedChecks++;
+                    readinessAlertLogged = await WaitForReadinessRetry(
+                        readinessStartedAt,
+                        readinessAlertLogged,
                         stoppingToken
                     );
                     continue;
@@ -49,17 +56,18 @@ public sealed class MongoMigrationService(
 
                 if (!acquired)
                 {
-                    leaseAcquisitionAlertLogged = await WaitForLeaseRetry(
-                        leaseAcquisitionStartedAt,
-                        leaseAcquisitionAlertLogged,
+                    readinessAlertLogged = await WaitForReadinessRetry(
+                        readinessStartedAt,
+                        readinessAlertLogged,
                         stoppingToken
                     );
                     continue;
                 }
 
-                await RunMigrationsWithLease(leaseDuration, stoppingToken);
+                if (await RunMigrationsWithLease(leaseDuration, stoppingToken))
+                    return;
 
-                return;
+                runMigrations = false;
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -68,37 +76,37 @@ public sealed class MongoMigrationService(
         }
     }
 
-    private bool LogLeaseAcquisitionAlertIfRequired(DateTimeOffset leaseAcquisitionStartedAt)
+    private bool LogReadinessAlertIfRequired(DateTimeOffset readinessStartedAt)
     {
-        var leaseWaitDuration = timeProvider.GetUtcNow() - leaseAcquisitionStartedAt;
+        var readinessWaitDuration = timeProvider.GetUtcNow() - readinessStartedAt;
         var alertThreshold = TimeSpan.FromSeconds(options.Value.LeaseAcquisitionAlertThresholdSeconds);
 
-        if (leaseWaitDuration < alertThreshold)
+        if (readinessWaitDuration < alertThreshold)
             return false;
 
         logger.LogError(
-            "Mongo migration lease has not been acquired after {LeaseWaitDuration}. Retrying while the consumer remains healthy.",
-            leaseWaitDuration
+            "Mongo migrations have not completed after {ReadinessWaitDuration}. Command consumption remains paused while the host remains healthy.",
+            readinessWaitDuration
         );
 
         return true;
     }
 
-    private async Task<bool> WaitForLeaseRetry(
-        DateTimeOffset leaseAcquisitionStartedAt,
-        bool leaseAcquisitionAlertLogged,
+    private async Task<bool> WaitForReadinessRetry(
+        DateTimeOffset readinessStartedAt,
+        bool readinessAlertLogged,
         CancellationToken stoppingToken
     )
     {
-        if (!leaseAcquisitionAlertLogged)
-            leaseAcquisitionAlertLogged = LogLeaseAcquisitionAlertIfRequired(leaseAcquisitionStartedAt);
+        if (!readinessAlertLogged)
+            readinessAlertLogged = LogReadinessAlertIfRequired(readinessStartedAt);
 
-        await Task.Delay(LeaseRetryDelay, timeProvider, stoppingToken);
+        await Task.Delay(ReadinessCheckInterval, timeProvider, stoppingToken);
 
-        return leaseAcquisitionAlertLogged;
+        return readinessAlertLogged;
     }
 
-    private async Task RunMigrationsWithLease(TimeSpan leaseDuration, CancellationToken stoppingToken)
+    private async Task<bool> RunMigrationsWithLease(TimeSpan leaseDuration, CancellationToken stoppingToken)
     {
         using var migrationCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         using var renewalCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -115,10 +123,10 @@ public sealed class MongoMigrationService(
             for (var attempt = 1; attempt <= maximumAttempts; attempt++)
             {
                 if (await RunMigrationAttempt(attempt, migrationCancellationTokenSource.Token, stoppingToken))
-                    return;
+                    return true;
 
                 if (migrationCancellationTokenSource.IsCancellationRequested)
-                    return;
+                    return false;
 
                 if (attempt < maximumAttempts)
                 {
@@ -136,13 +144,13 @@ public sealed class MongoMigrationService(
                     }
                     catch (OperationCanceledException) when (migrationCancellationTokenSource.IsCancellationRequested)
                     {
-                        return;
+                        return false;
                     }
                 }
             }
 
             logger.LogError(
-                "Mongo migrations did not complete after {AttemptCount} attempt(s). No further attempts will be made by this host.",
+                "Mongo migrations did not complete after {AttemptCount} attempt(s). No further attempts will be made by this host; checking for completion by another host.",
                 maximumAttempts
             );
         }
@@ -155,6 +163,8 @@ public sealed class MongoMigrationService(
 
             await ReleaseLease();
         }
+
+        return false;
     }
 
     private async Task<bool> RunMigrationAttempt(

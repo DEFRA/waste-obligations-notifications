@@ -17,16 +17,24 @@ Use the same AdaskoTheBeAsT.MongoDbMigrations engine, renewable Mongo lease,
 retry policy and attempt timeouts as Waste Obligations. Run migrations in a
 background service when command processing is enabled. Migration 001 creates
 `notificationKey_unique` on `NotificationDeliveryRecord` and retains an
-existing matching index. Command persistence waits for successful migration
-completion; analytics consumption does not depend on migrations.
+existing matching index. Each host checks the latest applied migration version
+and required unique index before receiving commands from SQS. The record store
+also guards persistence with readiness. A host can observe another host's
+successful migration without acquiring the lease itself. Analytics consumption
+and `/health` do not depend on migrations.
 
 ## Consequences
 
 Migration versions and the lease are stored in the configured notifications
 database. Hosts coordinate through the lease and retain it until a cancelled
-migration attempt stops. Failures receive bounded retries, and exhausted hosts
-leave command writes blocked until restart. Mongo migrations must use the
-notifications database; they must not share the Waste Obligations database.
+migration attempt stops. Failures receive bounded retries. Exhausted hosts
+release the lease and continue checking for completion by another host; they
+need a restart to execute further migration attempts themselves. Failed attempts,
+exhaustion and prolonged readiness waits produce error logs for support alerts.
+A timed-out migration that does not stop retains its lease and requires support
+intervention. Commands remain on SQS until the required migration is in place.
+Mongo migrations must use the notifications database; they must not share the
+Waste Obligations database.
 
 Mongo connection configuration lives in the `Mongo` section, using `DatabaseUri`
 and `DatabaseName` as in Waste Obligations. Notifications uses its own database

@@ -9,7 +9,7 @@ namespace Defra.WasteObligations.Consumer.Data.Migrations;
 [MigrationCollection(MongoNotificationDeliveryRecordStore.CollectionName, MigrationDirection.Both)]
 public sealed class NotificationDeliveryRecordIndexes : MongoMigration
 {
-    private const string NotificationKeyIndexName = "notificationKey_unique";
+    internal const string NotificationKeyIndexName = "notificationKey_unique";
 
     public override MigrationVersion Version => new(1, 0, 0);
 

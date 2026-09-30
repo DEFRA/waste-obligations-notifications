@@ -10,6 +10,88 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 public sealed class MongoMigrationTests : IntegrationTestBase
 {
     [Fact]
+    public async Task WhenAnotherHostAppliesMigration_ShouldCompleteReadinessWithoutRunningMigration()
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_readiness_test_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var waitingReadiness = new MongoMigrationReadiness();
+        var waitingRunner = new MongoMigrationRunner(
+            database,
+            NullLogger<MongoMigrationRunner>.Instance,
+            waitingReadiness
+        );
+        var waiting = waitingReadiness.Wait(cancellationToken);
+        var migratingRunner = new MongoMigrationRunner(
+            database,
+            NullLogger<MongoMigrationRunner>.Instance,
+            new MongoMigrationReadiness()
+        );
+
+        try
+        {
+            Assert.False(await waitingRunner.CheckReadiness(cancellationToken));
+            var migration = new NotificationDeliveryRecordIndexes();
+            await migration.UpAsync(new MigrationContext(database, null!, cancellationToken));
+            Assert.False(await waitingRunner.CheckReadiness(cancellationToken));
+            Assert.False(waiting.IsCompleted);
+
+            await migratingRunner.Run(cancellationToken);
+
+            Assert.True(await waitingRunner.CheckReadiness(cancellationToken));
+            await waiting;
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenMigrationHistoryExistsWithoutRequiredIndex_ShouldNotCompleteReadiness(bool wrongIndex)
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_index_test_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var migratingRunner = new MongoMigrationRunner(
+            database,
+            NullLogger<MongoMigrationRunner>.Instance,
+            new MongoMigrationReadiness()
+        );
+
+        try
+        {
+            await migratingRunner.Run(cancellationToken);
+            var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
+            await records.Indexes.DropOneAsync("notificationKey_unique", cancellationToken);
+            if (wrongIndex)
+            {
+                await records.Indexes.CreateOneAsync(
+                    new CreateIndexModel<BsonDocument>(
+                        Builders<BsonDocument>.IndexKeys.Ascending("wrongField"),
+                        new CreateIndexOptions { Name = "notificationKey_unique", Unique = true }
+                    ),
+                    cancellationToken: cancellationToken
+                );
+            }
+            var readiness = new MongoMigrationReadiness();
+            var runner = new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, readiness);
+
+            Assert.False(await runner.CheckReadiness(cancellationToken));
+            Assert.False(readiness.Wait(cancellationToken).IsCompleted);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => runner.Run(cancellationToken));
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task WhenAnotherHostOwnsLease_ShouldAcquireOnlyAfterRelease()
     {
         using var client = CreateMongoClient();

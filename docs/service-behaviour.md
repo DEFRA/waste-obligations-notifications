@@ -41,8 +41,12 @@ the next implementation ticket.
 - Use the idempotency key as the FIFO message-deduplication ID and a
   non-reversible per-recipient digest as the FIFO message-group ID.
 - Run versioned Mongo migrations under a renewable exclusive lease when command
-  processing is enabled. Command persistence must wait for successful migration
-  completion so the unique notification-key index exists before any write.
+  processing is enabled. Each host must verify the required migration version
+  and unique notification-key index before receiving commands from SQS or
+  persisting them. Completion by another host can satisfy this check, including
+  after the local host exhausts its migration attempts. Migration failures and
+  prolonged readiness waits produce error logs; `/health` and analytics
+  consumption remain independent of migration readiness.
 - Persist only the minimal, versioned HMAC evidence needed for command
   idempotency and outcomes. Do not persist recipient addresses,
   personalisation, template content, rendered content, or full GOV.UK Notify

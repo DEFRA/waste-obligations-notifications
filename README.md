@@ -67,12 +67,20 @@ in source control or logs.
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
-Command writes wait until migrations succeed; analytics consumption continues
-independently. Failures are retried up to `MongoMigrations__MaximumAttempts`;
-after exhaustion, command writes remain blocked until the host restarts.
+Each host checks migration history and the required unique index before command
+consumption starts. A host can become ready after another host applies migrations
+without acquiring the lease itself. Commands stay on SQS while migrations are
+incomplete; analytics consumption and `/health` continue independently.
+Failures are retried up to `MongoMigrations__MaximumAttempts`; after exhaustion,
+the host releases the lease and continues checking for completion by another host.
+It needs a restart to make further migration attempts itself. Failed attempts,
+exhaustion and prolonged readiness waits produce error logs for support alerts.
+An attempt timeout requests cancellation and retains the lease until execution
+stops; a migration that does not stop needs support intervention.
 
 `MongoMigrations` configures lease duration, renewal interval, attempt timeout,
-retry delay and lease-acquisition alert threshold in seconds. The defaults are
+retry delay and readiness-wait alert threshold in seconds (the latter uses
+`LeaseAcquisitionAlertThresholdSeconds`). The defaults are
 60, 15, 300, 30 and 300 respectively, with three attempts. Renewal must be no
 more than half the lease duration. CDP can override these defaults separately
 from local Compose configuration.

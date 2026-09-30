@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -17,6 +18,43 @@ public class NotificationCommandConsumerTests
     private const string Personalisation = "secret personalisation";
     private const string QueueUrl = "http://localhost:4566/000000000000/commands.fifo";
     private const string ReceiptHandle = "receipt-handle-1";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Start_WhenMigrationsAreIncomplete_ShouldWaitBeforeReceivingCommands(bool completeMigrations)
+    {
+        var readiness = new MongoMigrationReadiness();
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                received.TrySetResult();
+
+                return Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>())
+                    .ContinueWith(_ => new ReceiveMessageResponse(), CancellationToken.None);
+            });
+        using var subject = CreateSubject(
+            sqsClient,
+            Substitute.For<INotificationDeliveryRecordStore>(),
+            readiness: readiness
+        );
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
+        Assert.False(received.Task.IsCompleted);
+
+        if (completeMigrations)
+        {
+            readiness.MarkCompleted();
+            await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        }
+
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(completeMigrations, received.Task.IsCompleted);
+    }
 
     [Fact]
     public async Task Start_WhenPreCutoverCommandReceived_ShouldRecordSafeOutcomeBeforeDeletingMessage()
@@ -208,7 +246,8 @@ public class NotificationCommandConsumerTests
     private static NotificationCommandConsumer CreateSubject(
         IAmazonSQS sqsClient,
         INotificationDeliveryRecordStore recordStore,
-        ILogger<NotificationCommandConsumer>? logger = null
+        ILogger<NotificationCommandConsumer>? logger = null,
+        MongoMigrationReadiness? readiness = null
     ) =>
         new(
             sqsClient,
@@ -225,9 +264,18 @@ public class NotificationCommandConsumerTests
                 }
             ),
             CreateRecordStoreFactory(recordStore),
+            readiness ?? CompletedReadiness(),
             new NotificationCommandMetrics(),
             logger ?? new RecordingLogger<NotificationCommandConsumer>()
         );
+
+    private static MongoMigrationReadiness CompletedReadiness()
+    {
+        var readiness = new MongoMigrationReadiness();
+        readiness.MarkCompleted();
+
+        return readiness;
+    }
 
     private static INotificationDeliveryRecordStoreFactory CreateRecordStoreFactory(
         INotificationDeliveryRecordStore recordStore

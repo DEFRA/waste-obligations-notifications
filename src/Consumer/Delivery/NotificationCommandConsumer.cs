@@ -2,6 +2,7 @@ using System.Globalization;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Data;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
@@ -10,6 +11,7 @@ public sealed class NotificationCommandConsumer(
     IAmazonSQS sqsClient,
     IOptions<NotificationCommandDeliveryOptions> options,
     INotificationDeliveryRecordStoreFactory recordStoreFactory,
+    MongoMigrationReadiness migrationReadiness,
     NotificationCommandMetrics metrics,
     ILogger<NotificationCommandConsumer> logger
 ) : BackgroundService
@@ -25,6 +27,7 @@ public sealed class NotificationCommandConsumer(
         }
 
         var cutover = ReadCutover(options.Value.EmailDeliveryCutoverUtc);
+        await migrationReadiness.Wait(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
