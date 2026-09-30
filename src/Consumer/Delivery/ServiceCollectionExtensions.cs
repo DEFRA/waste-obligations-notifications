@@ -19,6 +19,22 @@ public static class ServiceCollectionExtensions
                 options => options.ReceiveTimeoutSeconds > options.WaitTimeSeconds,
                 "Notification command receive timeout must exceed the long-poll wait"
             )
+            .Validate(
+                options =>
+                    !options.ProcessingEnabled
+                    || NotificationCommandDeliveryOptions.IsSecretConfigured(options.EvidenceDigestSecret),
+                "EvidenceDigestSecret must be configured when notification command processing is enabled"
+            )
+            .Validate(
+                options =>
+                    !options.ProcessingEnabled
+                    || NotificationCommandDeliveryOptions.IsSecretConfigured(options.RecipientLaneSecret),
+                "RecipientLaneSecret must be configured when notification command processing is enabled"
+            )
+            .Validate(
+                options => !options.ProcessingEnabled || options.TryReadCutover(out _),
+                "EmailDeliveryCutoverUtc must be a UTC timestamp when notification command processing is enabled"
+            )
             .ValidateOnStart();
 
         services.AddAWSService<IAmazonSQS>();

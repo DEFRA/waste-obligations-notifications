@@ -12,6 +12,29 @@ namespace Defra.WasteObligations.Consumer.Tests.Commands;
 
 public class NotificationCommandPublisherTests
 {
+    [Theory]
+    [InlineData("set-automatically-by-deployment")]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task Publish_WhenProcessingIsDisabledAndLaneSecretIsUnconfigured_ShouldNotQueueCommand(string secret)
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        var options = CreateOptions() with { ProcessingEnabled = false, RecipientLaneSecret = secret };
+        var subject = new NotificationCommandPublisher(
+            sqsClient,
+            Options.Create(options),
+            new NotificationCommandDigest(Options.Create(options))
+        );
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            subject.Publish(CreateCommand(), TestContext.Current.CancellationToken)
+        );
+
+        if (!string.IsNullOrWhiteSpace(secret))
+            Assert.DoesNotContain(secret, exception.Message, StringComparison.Ordinal);
+        await sqsClient.DidNotReceive().SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task Publish_ShouldNormaliseRecipientAndUseStableFifoIdentifiers()
     {

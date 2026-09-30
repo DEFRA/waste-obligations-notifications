@@ -1,4 +1,3 @@
-using System.Globalization;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
@@ -26,7 +25,7 @@ public sealed class NotificationCommandConsumer(
             return;
         }
 
-        var cutover = ReadCutover(options.Value.EmailDeliveryCutoverUtc);
+        var cutover = ReadCutover();
         await migrationReadiness.Wait(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -103,20 +102,10 @@ public sealed class NotificationCommandConsumer(
         }
     }
 
-    private static DateTimeOffset ReadCutover(string configuredCutover)
+    private DateTimeOffset ReadCutover()
     {
-        if (
-            !DateTimeOffset.TryParse(
-                configuredCutover,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.None,
-                out var cutover
-            )
-            || cutover.Offset != TimeSpan.Zero
-        )
-        {
+        if (!options.Value.TryReadCutover(out var cutover))
             throw new InvalidOperationException("EmailDeliveryCutoverUtc must be a UTC timestamp.");
-        }
 
         return cutover;
     }

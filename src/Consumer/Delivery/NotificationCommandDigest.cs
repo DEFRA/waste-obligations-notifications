@@ -46,7 +46,7 @@ public sealed class NotificationCommandDigest(IOptions<NotificationCommandDelive
 
     private static string CreateDigest(string secret, string purpose, string value)
     {
-        if (secret.StartsWith("set-automatically", StringComparison.Ordinal))
+        if (!NotificationCommandDeliveryOptions.IsSecretConfigured(secret))
         {
             throw new InvalidOperationException("Notification command digest secret has not been configured.");
         }

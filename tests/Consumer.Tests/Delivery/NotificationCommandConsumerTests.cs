@@ -20,6 +20,24 @@ public class NotificationCommandConsumerTests
     private const string QueueUrl = "http://localhost:4566/000000000000/commands.fifo";
     private const string ReceiptHandle = "receipt-handle-1";
 
+    [Fact]
+    public async Task Start_WhenDirectlyConfiguredWithInvalidCutover_ShouldFailBeforeReceiving()
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        using var subject = CreateSubject(
+            sqsClient,
+            Substitute.For<INotificationDeliveryRecordStore>(),
+            cutover: "invalid-cutover"
+        );
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => subject.ExecuteTask!);
+
+        await sqsClient
+            .DidNotReceive()
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -396,7 +414,8 @@ public class NotificationCommandConsumerTests
         ILogger<NotificationCommandConsumer>? logger = null,
         MongoMigrationReadiness? readiness = null,
         int pollIntervalSeconds = 1,
-        int receiveTimeoutSeconds = 30
+        int receiveTimeoutSeconds = 30,
+        string cutover = "2026-09-29T00:00:00Z"
     ) =>
         new(
             sqsClient,
@@ -405,7 +424,7 @@ public class NotificationCommandConsumerTests
                 {
                     QueueUrl = QueueUrl,
                     ProcessingEnabled = true,
-                    EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
+                    EmailDeliveryCutoverUtc = cutover,
                     EvidenceDigestSecret = "test-evidence-secret",
                     RecipientLaneSecret = "test-recipient-lane-secret",
                     WaitTimeSeconds = 0,

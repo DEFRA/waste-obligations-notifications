@@ -42,6 +42,10 @@ the next implementation ticket.
   payloads, or persist event data.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
+- Validate the UTC cutover and configured evidence and recipient-lane secrets
+  at startup when command processing is enabled. Invalid configuration must
+  not consume commands; disabled processing permits deployment placeholders.
+  Digest creation also rejects unconfigured secrets independently of processing.
 - Use the idempotency key as the FIFO message-deduplication ID and a
   non-reversible per-recipient digest as the FIFO message-group ID.
 - Run versioned Mongo migrations under a renewable exclusive lease when command

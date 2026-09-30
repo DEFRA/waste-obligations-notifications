@@ -46,12 +46,13 @@ public sealed class NotificationCommandDigestTests
         Assert.DoesNotContain(recipient, evidence, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void WhenSecretIsPlaceholder_ShouldRejectDigestCreation()
+    [Theory]
+    [InlineData("set-automatically-by-deployment")]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void WhenSecretIsUnconfigured_ShouldRejectDigestCreation(string secret)
     {
-        Assert.Throws<InvalidOperationException>(() =>
-            CreateDigest("set-automatically-by-deployment").CreateIdempotencyKeyDigest("key")
-        );
+        Assert.Throws<InvalidOperationException>(() => CreateDigest(secret).CreateIdempotencyKeyDigest("key"));
     }
 
     private static NotificationCommandDigest CreateDigest(string secret = "test-evidence-secret") =>

@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
 
@@ -31,4 +32,11 @@ public sealed record NotificationCommandDeliveryOptions
 
     [Range(1, 300)]
     public int PollIntervalSeconds { get; init; } = 15;
+
+    public bool TryReadCutover(out DateTimeOffset cutover) =>
+        DateTimeOffset.TryParse(EmailDeliveryCutoverUtc, CultureInfo.InvariantCulture, DateTimeStyles.None, out cutover)
+        && cutover.Offset == TimeSpan.Zero;
+
+    internal static bool IsSecretConfigured(string? secret) =>
+        !string.IsNullOrWhiteSpace(secret) && !secret.StartsWith("set-automatically", StringComparison.Ordinal);
 }

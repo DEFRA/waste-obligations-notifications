@@ -63,6 +63,11 @@ queue convention configured.
 provide its FIFO queue URL, cutover timestamp,
 and distinct evidence-digest and recipient-lane secrets. Do not put those secrets
 in source control or logs.
+Enabled command processing validates the cutover timestamp and both digest
+secrets at startup. Blank or deployment-placeholder secrets prevent startup
+before commands are consumed. Disabled command processing permits the shipped
+deployment placeholders so analytics-only hosts can start. Digest creation also
+rejects unconfigured secrets when the publisher is used independently.
 
 Command consumption starts the next receive immediately after success or an
 empty response. `NotificationCommandDelivery__PollIntervalSeconds` is the
