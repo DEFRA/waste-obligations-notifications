@@ -54,10 +54,13 @@ public class NotificationCommandConsumerTests
     }
 
     [Theory]
-    [InlineData("2026-09-28T10:00:00.1234566Z", true)]
-    [InlineData("2026-09-28T10:00:00.1234567+00:00", false)]
-    public async Task Start_WhenActionIsOneTickBeforeOrExactlyAtCutover_ShouldPreserveBoundary(
+    [InlineData("2026-09-28T10:00:00.1229999Z", "2026-09-28T10:00:00.1234567Z", true)]
+    [InlineData("2026-09-28T10:00:00.1234567+00:00", "2026-09-28T10:00:00.1234567Z", false)]
+    [InlineData("2026-09-28T10:00:00.12345676Z", "2026-09-28T10:00:00.12345676Z", false)]
+    [InlineData("2026-09-28T10:00:00.123Z", "2026-09-28T10:00:00.12399996Z", false)]
+    public async Task Start_WhenActionIsBeforeOrAtCutoverAtMongoPrecision_ShouldPreserveBoundary(
         string timestamp,
+        string cutover,
         bool suppressed
     )
     {
@@ -72,7 +75,7 @@ public class NotificationCommandConsumerTests
             .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
             .Returns(new DeleteMessageResponse())
             .AndDoes(_ => deleted.TrySetResult());
-        using var subject = CreateSubject(sqsClient, recordStore, logger, cutover: "2026-09-28T10:00:00.1234567Z");
+        using var subject = CreateSubject(sqsClient, recordStore, logger, cutover: cutover);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
         if (suppressed)

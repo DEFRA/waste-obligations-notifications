@@ -42,7 +42,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             ImmutableFields = immutableFields,
             Recipient = _digest.CreateRecipientDigest(command.EmailAddress),
             NotificationType = command.NotificationType,
-            ActionOccurredAtUtc = command.ActionOccurredAtUtc.UtcDateTime,
+            ActionOccurredAtUtc = MongoDateTime.TruncateToMilliseconds(command.ActionOccurredAtUtc).UtcDateTime,
             Outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue(),
             RecordedAtUtc = DateTime.UtcNow,
         };

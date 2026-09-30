@@ -30,8 +30,12 @@ audit-entry timestamp. It is never a mutable `Created` or `Updated` timestamp.
 The configured cutover and serialized command action timestamp must include an
 explicit UTC timezone: `Z` or a numeric zero offset (`+00:00` or `-00:00`).
 Reject offset-free and nonzero-offset input so host timezone cannot change the
-delivery boundary. Retain timestamp precision when comparing the two values.
-Validate the cutover at startup when command processing is enabled.
+delivery boundary. Parse both values with the same ISO timestamp parser and
+truncate to whole milliseconds, matching MongoDB storage precision. Ignore
+sub-millisecond precision in command serialisation and immutable evidence as well
+so a Mongo roundtrip preserves command identity. The producer's inverse cutover
+decision must use the same precision. Validate the cutover at startup when command
+processing is enabled.
 
 ## Consequences
 

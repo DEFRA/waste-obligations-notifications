@@ -43,7 +43,7 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
         var command = new NotificationCommand(
             1,
             "private-key",
-            DateTimeOffset.Parse("2026-09-28T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture),
+            new DateTimeOffset(2026, 9, 28, 0, 0, 0, TimeSpan.Zero).AddTicks(1234567),
             "submitted",
             "recipient@example.com",
             "private-template",
@@ -63,7 +63,15 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             Assert.Equal(SuppressionClaimResult.Recorded, await store.RecordSuppression(command, cancellationToken));
             Assert.Equal(
                 SuppressionClaimResult.TerminalDuplicate,
-                await store.RecordSuppression(command, cancellationToken)
+                await store.RecordSuppression(
+                    command with
+                    {
+                        ActionOccurredAtUtc = new DateTimeOffset(2026, 9, 28, 0, 0, 0, TimeSpan.Zero).AddMilliseconds(
+                            123
+                        ),
+                    },
+                    cancellationToken
+                )
             );
             Assert.Equal(
                 SuppressionClaimResult.Conflict,
@@ -76,6 +84,7 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             var record = Assert.Single(records);
             Assert.Equal(digest.CreateImmutableFieldsDigest(command), record.ImmutableFields);
             Assert.Equal("delivery-suppressed", record.Outcome);
+            Assert.Equal(new DateTime(2026, 9, 28, 0, 0, 0, 123, DateTimeKind.Utc), record.ActionOccurredAtUtc);
             var stored = record.ToJson();
             Assert.DoesNotContain(command.EmailAddress, stored, StringComparison.Ordinal);
             Assert.DoesNotContain(command.IdempotencyKey, stored, StringComparison.Ordinal);

@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Data;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
@@ -21,7 +22,9 @@ public sealed class NotificationCommandDigest(IOptions<NotificationCommandDelive
             writer.WriteStartObject();
             writer.WriteString(
                 "actionOccurredAtUtc",
-                command.ActionOccurredAtUtc.ToString("O", CultureInfo.InvariantCulture)
+                MongoDateTime
+                    .TruncateToMilliseconds(command.ActionOccurredAtUtc)
+                    .ToString("O", CultureInfo.InvariantCulture)
             );
             writer.WriteString("emailAddress", command.EmailAddress.Trim().ToLowerInvariant());
             writer.WriteString("notificationType", command.NotificationType);

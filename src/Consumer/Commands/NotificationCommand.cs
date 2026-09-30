@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Defra.WasteObligations.Consumer.Data;
 
 namespace Defra.WasteObligations.Consumer.Commands;
 
@@ -40,7 +41,10 @@ public sealed record NotificationCommand(
         RequireValue(EmailAddress, "emailAddress");
         RequireValue(TemplateId, "templateId");
 
-        if (ActionOccurredAtUtc == default || ActionOccurredAtUtc.Offset != TimeSpan.Zero)
+        if (
+            MongoDateTime.TruncateToMilliseconds(ActionOccurredAtUtc) == default
+            || ActionOccurredAtUtc.Offset != TimeSpan.Zero
+        )
         {
             throw new InvalidDataException("Notification command actionOccurredAtUtc must be a UTC timestamp.");
         }

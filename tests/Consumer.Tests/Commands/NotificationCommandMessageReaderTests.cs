@@ -13,14 +13,17 @@ public sealed class NotificationCommandMessageReaderTests
     [InlineData("2026-10-01T00:00:00.1234567+00:00", false)]
     [InlineData("2026-10-01T00:00:00.1234567-00:00", false)]
     [InlineData("2026-10-01T00:00:00.1234567Z", true)]
-    public void WhenActionTimestampIsExplicitUtc_ShouldPreservePrecision(string timestamp, bool compressed)
+    [InlineData("2026-10-01T00:00:00.12345676Z", false)]
+    [InlineData("2026-10-01T00:00:00.12399996Z", false)]
+    [InlineData("2026-10-01T00:00:00.12399996Z", true)]
+    public void WhenActionTimestampIsExplicitUtc_ShouldTruncateToMongoPrecision(string timestamp, bool compressed)
     {
         var command = NotificationCommandMessageReader.Read(
             CreateMessage(JsonSerializer.Serialize(timestamp), compressed)
         );
 
         Assert.Equal(
-            new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero).AddTicks(1234567),
+            new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero).AddMilliseconds(123),
             command.ActionOccurredAtUtc
         );
     }
@@ -32,6 +35,7 @@ public sealed class NotificationCommandMessageReaderTests
     [InlineData("2026-10-01T00:00:00-01:00", false)]
     [InlineData("private-invalid-timestampZ", false)]
     [InlineData("2026-02-30T00:00:00Z", false)]
+    [InlineData("00:00Z", false)]
     public void WhenActionTimestampIsNotExplicitValidUtc_ShouldRejectWithoutExposingValue(
         string timestamp,
         bool compressed

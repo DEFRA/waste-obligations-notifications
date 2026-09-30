@@ -8,6 +8,34 @@ namespace Defra.WasteObligations.Consumer.Tests.Delivery;
 public sealed class NotificationCommandDigestTests
 {
     [Fact]
+    public void WhenActionTimestampsDifferOnlyBelowMongoPrecision_ShouldPreserveImmutableDigest()
+    {
+        var digest = CreateDigest();
+        var command = Command("{}") with { ActionOccurredAtUtc = Command("{}").ActionOccurredAtUtc.AddTicks(1234567) };
+        var roundTripped = JsonSerializer.Deserialize<NotificationCommand>(JsonSerializer.Serialize(command))!;
+
+        Assert.Equal(digest.CreateImmutableFieldsDigest(command), digest.CreateImmutableFieldsDigest(roundTripped));
+        Assert.Equal(
+            digest.CreateImmutableFieldsDigest(command),
+            digest.CreateImmutableFieldsDigest(
+                command with
+                {
+                    ActionOccurredAtUtc = command.ActionOccurredAtUtc.AddTicks(1),
+                }
+            )
+        );
+        Assert.NotEqual(
+            digest.CreateImmutableFieldsDigest(command),
+            digest.CreateImmutableFieldsDigest(
+                command with
+                {
+                    ActionOccurredAtUtc = command.ActionOccurredAtUtc.AddMilliseconds(1),
+                }
+            )
+        );
+    }
+
+    [Fact]
     public void WhenObjectPropertiesAreReordered_ShouldPreserveImmutableDigest()
     {
         var digest = CreateDigest();

@@ -26,6 +26,7 @@ public sealed class NotificationCommandStartupTests
     [InlineData("EmailDeliveryCutoverUtc", "private-invalid-cutoverZ")]
     [InlineData("EmailDeliveryCutoverUtc", "2026-10-01T00:00:00+01:00")]
     [InlineData("EmailDeliveryCutoverUtc", "2026-10-01T00:00:00")]
+    [InlineData("EmailDeliveryCutoverUtc", "00:00Z")]
     public async Task WhenEnabledWithInvalidConfiguration_ShouldFailStartupBeforeReceivingAndNotExposeValues(
         string field,
         string invalidValue

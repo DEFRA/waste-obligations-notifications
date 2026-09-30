@@ -59,8 +59,12 @@ public class NotificationCommandPublisherTests
         using var body = JsonDocument.Parse(request.MessageBody);
         Assert.Equal(key, body.RootElement.GetProperty("idempotencyKey").GetString());
         Assert.Equal(
-            command.ActionOccurredAtUtc,
+            CreateCommand().ActionOccurredAtUtc.AddMilliseconds(123),
             NotificationCommandMessageReader.Read(new Message { Body = request.MessageBody }).ActionOccurredAtUtc
+        );
+        Assert.Equal(
+            CreateCommand().ActionOccurredAtUtc.AddMilliseconds(123),
+            body.RootElement.GetProperty("actionOccurredAtUtc").GetDateTimeOffset()
         );
     }
 
@@ -80,6 +84,32 @@ public class NotificationCommandPublisherTests
                 command with
                 {
                     ActionOccurredAtUtc = command.ActionOccurredAtUtc.ToOffset(TimeSpan.FromHours(1)),
+                },
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        await sqsClient.DidNotReceive().SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(9999)]
+    public async Task Publish_WhenActionTimestampTruncatesToDefault_ShouldRejectWithoutQueuing(int ticks)
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        var subject = new NotificationCommandPublisher(
+            sqsClient,
+            Options.Create(CreateOptions()),
+            new NotificationCommandDigest(Options.Create(CreateOptions()))
+        );
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            subject.Publish(
+                CreateCommand() with
+                {
+                    ActionOccurredAtUtc = DateTimeOffset.MinValue.AddTicks(ticks),
                 },
                 TestContext.Current.CancellationToken
             )

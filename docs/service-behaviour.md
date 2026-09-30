@@ -77,8 +77,11 @@ restore a command's original recipient-lane position.
   cutover value. Both configured cutover and serialized action timestamps must
   explicitly include `Z` or a zero offset (`+00:00` or `-00:00`). Reject absent
   or nonzero offsets instead of interpreting them in the host timezone or
-  converting them. Preserve timestamp precision in the comparison. Do not use
-  processing time or mutable entity state.
+  converting them. Truncate both timestamps to whole milliseconds before
+  comparison, matching MongoDB storage precision. Apply the same truncation to
+  command serialisation and immutable-field digests so sub-millisecond precision
+  lost on a Mongo roundtrip does not create a conflict. Do not use processing time
+  or mutable entity state.
 
 The command architecture is described in
 [ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the

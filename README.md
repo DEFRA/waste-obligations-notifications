@@ -79,7 +79,9 @@ rejects unconfigured secrets when the publisher is used independently.
 Cutover configuration and serialized `actionOccurredAtUtc` values must include
 `Z` or a numeric zero offset (`+00:00` or `-00:00`). Offset-free timestamps are
 rejected regardless of host timezone; nonzero offsets are rejected without
-conversion. Timestamp precision is retained for the cutover comparison.
+conversion. Both timestamps are truncated to whole milliseconds before comparison,
+matching MongoDB storage precision. Command serialisation and immutable evidence
+use the same precision so a Mongo roundtrip does not change command identity.
 
 Command consumption starts the next receive immediately after success or an
 empty response. `NotificationCommandDelivery__PollIntervalSeconds` is the
