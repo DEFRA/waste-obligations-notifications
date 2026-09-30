@@ -74,7 +74,11 @@ restore a command's original recipient-lane position.
   leave it retryable. A pre-cutover command is terminal only after its
   `delivery-suppressed` outcome is recorded.
 - Compare the immutable UTC business-action timestamp with the deployment-owned
-  cutover value. Do not use processing time or mutable entity state.
+  cutover value. Both configured cutover and serialized action timestamps must
+  explicitly include `Z` or a zero offset (`+00:00` or `-00:00`). Reject absent
+  or nonzero offsets instead of interpreting them in the host timezone or
+  converting them. Preserve timestamp precision in the comparison. Do not use
+  processing time or mutable entity state.
 
 The command architecture is described in
 [ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the

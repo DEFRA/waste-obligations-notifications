@@ -22,6 +22,80 @@ public class NotificationCommandConsumerTests
     private const string ReceiptHandle = "receipt-handle-1";
 
     [Theory]
+    [InlineData("2026-09-28T10:00:00")]
+    [InlineData("2026-09-28T10:00:00+01:00")]
+    public async Task Start_WhenActionTimestampLacksExplicitUtc_ShouldNotRecordOrDelete(string timestamp)
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(MessageThenWait(CreateMessage(CommandBody(timestamp))));
+        var recordStore = Substitute.For<INotificationDeliveryRecordStore>();
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        using var subject = CreateSubject(sqsClient, recordStore, logger);
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Notification command consumption failed", TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        await recordStore
+            .DidNotReceive()
+            .RecordSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            );
+        await sqsClient
+            .DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        Assert.DoesNotContain(
+            logger.Exceptions,
+            exception => exception.Message.Contains(timestamp, StringComparison.Ordinal)
+        );
+    }
+
+    [Theory]
+    [InlineData("2026-09-28T10:00:00.1234566Z", true)]
+    [InlineData("2026-09-28T10:00:00.1234567+00:00", false)]
+    public async Task Start_WhenActionIsOneTickBeforeOrExactlyAtCutover_ShouldPreserveBoundary(
+        string timestamp,
+        bool suppressed
+    )
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(MessageThenWait(CreateMessage(CommandBody(timestamp))));
+        var recordStore = Substitute.For<INotificationDeliveryRecordStore>();
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sqsClient
+            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
+            .Returns(new DeleteMessageResponse())
+            .AndDoes(_ => deleted.TrySetResult());
+        using var subject = CreateSubject(sqsClient, recordStore, logger, cutover: "2026-09-28T10:00:00.1234567Z");
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        if (suppressed)
+            await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        else
+            await logger.WaitForMessage(
+                "Notification command consumption failed",
+                TestContext.Current.CancellationToken
+            );
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        await recordStore
+            .Received(suppressed ? 1 : 0)
+            .RecordSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            );
+        await sqsClient
+            .Received(suppressed ? 1 : 0)
+            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Start_WhenIdempotencyKeyIsInvalid_ShouldNotRecordOrDeleteOrExposeIt(bool overlong)

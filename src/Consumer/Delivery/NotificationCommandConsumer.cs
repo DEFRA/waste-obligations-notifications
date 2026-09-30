@@ -105,7 +105,7 @@ public sealed class NotificationCommandConsumer(
     private DateTimeOffset ReadCutover()
     {
         if (!options.Value.TryReadCutover(out var cutover))
-            throw new InvalidOperationException("EmailDeliveryCutoverUtc must be a UTC timestamp.");
+            throw new InvalidOperationException("EmailDeliveryCutoverUtc must include an explicit UTC offset.");
 
         return cutover;
     }

@@ -1,11 +1,12 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Defra.WasteObligations.Consumer.Commands;
 
 public sealed record NotificationCommand(
     int SchemaVersion,
     string IdempotencyKey,
-    DateTimeOffset ActionOccurredAtUtc,
+    [property: JsonConverter(typeof(UtcDateTimeOffsetConverter))] DateTimeOffset ActionOccurredAtUtc,
     string NotificationType,
     string EmailAddress,
     string TemplateId,

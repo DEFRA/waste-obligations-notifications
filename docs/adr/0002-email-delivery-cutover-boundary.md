@@ -27,6 +27,12 @@ suppresses actions at or after it.
 For compliance declarations, the action time is the `Submitted` or `Cancelled`
 audit-entry timestamp. It is never a mutable `Created` or `Updated` timestamp.
 
+The configured cutover and serialized command action timestamp must include an
+explicit UTC timezone: `Z` or a numeric zero offset (`+00:00` or `-00:00`).
+Reject offset-free and nonzero-offset input so host timezone cannot change the
+delivery boundary. Retain timestamp precision when comparing the two values.
+Validate the cutover at startup when command processing is enabled.
+
 ## Consequences
 
 Both services must be deployed and configured with the identical future value

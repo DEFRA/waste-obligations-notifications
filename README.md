@@ -76,6 +76,10 @@ secrets at startup. Blank or deployment-placeholder secrets prevent startup
 before commands are consumed. Disabled command processing permits the shipped
 deployment placeholders so analytics-only hosts can start. Digest creation also
 rejects unconfigured secrets when the publisher is used independently.
+Cutover configuration and serialized `actionOccurredAtUtc` values must include
+`Z` or a numeric zero offset (`+00:00` or `-00:00`). Offset-free timestamps are
+rejected regardless of host timezone; nonzero offsets are rejected without
+conversion. Timestamp precision is retained for the cutover comparison.
 
 Command consumption starts the next receive immediately after success or an
 empty response. `NotificationCommandDelivery__PollIntervalSeconds` is the

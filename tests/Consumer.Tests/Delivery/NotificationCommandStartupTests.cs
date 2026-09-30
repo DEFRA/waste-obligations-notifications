@@ -23,7 +23,9 @@ public sealed class NotificationCommandStartupTests
     [InlineData("RecipientLaneSecret", " ")]
     [InlineData("EmailDeliveryCutoverUtc", "set-automatically-when-deployed")]
     [InlineData("EmailDeliveryCutoverUtc", "invalid-private-cutover-marker")]
+    [InlineData("EmailDeliveryCutoverUtc", "private-invalid-cutoverZ")]
     [InlineData("EmailDeliveryCutoverUtc", "2026-10-01T00:00:00+01:00")]
+    [InlineData("EmailDeliveryCutoverUtc", "2026-10-01T00:00:00")]
     public async Task WhenEnabledWithInvalidConfiguration_ShouldFailStartupBeforeReceivingAndNotExposeValues(
         string field,
         string invalidValue
@@ -52,8 +54,11 @@ public sealed class NotificationCommandStartupTests
             Assert.DoesNotContain(invalidValue, evidence, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task WhenEnabledWithConfiguredSecretsAndUtcCutover_ShouldStartAndReceive()
+    [Theory]
+    [InlineData("2100-01-01T00:00:00Z")]
+    [InlineData("2100-01-01T00:00:00+00:00")]
+    [InlineData("2100-01-01T00:00:00-00:00")]
+    public async Task WhenEnabledWithConfiguredSecretsAndUtcCutover_ShouldStartAndReceive(string cutover)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqs = Substitute.For<IAmazonSQS>();
@@ -65,7 +70,12 @@ public sealed class NotificationCommandStartupTests
 
                 return new ReceiveMessageResponse();
             });
-        using var host = CreateHost(sqs, Substitute.For<ILogger>(), true);
+        using var host = CreateHost(
+            sqs,
+            Substitute.For<ILogger>(),
+            true,
+            new Dictionary<string, string?> { ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover }
+        );
 
         await host.StartAsync(TestContext.Current.CancellationToken);
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);

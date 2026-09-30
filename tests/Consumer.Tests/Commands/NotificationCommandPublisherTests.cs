@@ -42,7 +42,12 @@ public class NotificationCommandPublisherTests
             new NotificationCommandDigest(Options.Create(CreateOptions()))
         );
 
-        await subject.Publish(CreateCommand() with { IdempotencyKey = key }, TestContext.Current.CancellationToken);
+        var command = CreateCommand() with
+        {
+            IdempotencyKey = key,
+            ActionOccurredAtUtc = CreateCommand().ActionOccurredAtUtc.AddTicks(1234567),
+        };
+        await subject.Publish(command, TestContext.Current.CancellationToken);
 
         await sqsClient
             .Received(1)
@@ -53,6 +58,34 @@ public class NotificationCommandPublisherTests
         var request = sqsClient.ReceivedCalls().Single().GetArguments().OfType<SendMessageRequest>().Single();
         using var body = JsonDocument.Parse(request.MessageBody);
         Assert.Equal(key, body.RootElement.GetProperty("idempotencyKey").GetString());
+        Assert.Equal(
+            command.ActionOccurredAtUtc,
+            NotificationCommandMessageReader.Read(new Message { Body = request.MessageBody }).ActionOccurredAtUtc
+        );
+    }
+
+    [Fact]
+    public async Task Publish_WhenActionTimestampHasNonzeroOffset_ShouldRejectWithoutQueuing()
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        var subject = new NotificationCommandPublisher(
+            sqsClient,
+            Options.Create(CreateOptions()),
+            new NotificationCommandDigest(Options.Create(CreateOptions()))
+        );
+        var command = CreateCommand();
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            subject.Publish(
+                command with
+                {
+                    ActionOccurredAtUtc = command.ActionOccurredAtUtc.ToOffset(TimeSpan.FromHours(1)),
+                },
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        await sqsClient.DidNotReceive().SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>());
     }
 
     [Theory]
