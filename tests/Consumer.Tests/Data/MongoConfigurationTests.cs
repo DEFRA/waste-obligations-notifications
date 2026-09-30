@@ -28,7 +28,7 @@ public sealed class MongoConfigurationTests
         var database = serviceProvider.GetRequiredService<IMongoDatabase>();
 
         Assert.Equal("MONGODB-AWS", client.Settings.Credential.Mechanism);
-        Assert.Equal("waste-obligiations-notifications-consumer", client.Settings.ApplicationName);
+        Assert.Equal("waste-obligations-notifications-consumer", client.Settings.ApplicationName);
         Assert.Equal(ReadPreference.Primary, client.Settings.ReadPreference);
         Assert.Equal("notifications", database.DatabaseNamespace.DatabaseName);
     }

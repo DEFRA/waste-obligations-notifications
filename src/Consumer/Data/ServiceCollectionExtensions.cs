@@ -25,7 +25,7 @@ public static class ServiceCollectionExtensions
 
             var options = serviceProvider.GetRequiredService<IOptions<MongoDbOptions>>().Value;
             var settings = MongoClientSettings.FromConnectionString(options.DatabaseUri);
-            settings.ApplicationName = "waste-obligiations-notifications-consumer";
+            settings.ApplicationName = "waste-obligations-notifications-consumer";
             // Duplicate-key recovery reads the existing delivery record to distinguish a duplicate from a conflict.
             // Read from the primary so replication lag cannot hide the record that caused the insert to fail.
             settings.ReadPreference = ReadPreference.Primary;
