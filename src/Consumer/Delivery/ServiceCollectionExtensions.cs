@@ -15,6 +15,10 @@ public static class ServiceCollectionExtensions
             .AddOptions<NotificationCommandDeliveryOptions>()
             .Bind(configuration.GetRequiredSection(NotificationCommandDeliveryOptions.SectionName))
             .ValidateDataAnnotations()
+            .Validate(
+                options => options.ReceiveTimeoutSeconds > options.WaitTimeSeconds,
+                "Notification command receive timeout must exceed the long-poll wait"
+            )
             .ValidateOnStart();
 
         services.AddAWSService<IAmazonSQS>();

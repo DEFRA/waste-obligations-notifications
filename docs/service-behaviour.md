@@ -26,8 +26,12 @@ the next implementation ticket.
 - Delete an SQS message only after all work needed to make it terminal has
   succeeded. Parsing, validation, persistence, or processing failures must
   leave the message in the queue for its redrive policy.
-- Background consumers should long-poll, process the configured batch, log
-  non-cancellation exceptions, and wait for their configured poll interval.
+- Background consumers should long-poll, process the configured batch, and log
+  non-cancellation exceptions. Analytics consumption waits for its configured
+  poll interval after each receive. Command consumption immediately receives
+  again after success or an empty response; its poll interval is backoff only
+  after errors. The command receive timeout must exceed its long-poll wait and
+  bounds that receive without changing the shared SQS client's configuration.
   A disabled consumer logs once and awaits cancellation.
 - Apply the logging restrictions in [coding standards](../CODING_STANDARDS.md).
 

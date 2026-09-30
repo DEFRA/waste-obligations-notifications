@@ -33,16 +33,7 @@ public sealed class NotificationCommandConsumer(
         {
             try
             {
-                var response = await sqsClient.ReceiveMessageAsync(
-                    new ReceiveMessageRequest
-                    {
-                        QueueUrl = options.Value.QueueUrl,
-                        MaxNumberOfMessages = options.Value.BatchSize,
-                        MessageAttributeNames = ["All"],
-                        WaitTimeSeconds = options.Value.WaitTimeSeconds,
-                    },
-                    stoppingToken
-                );
+                var response = await ReceiveCommands(stoppingToken);
 
                 foreach (var message in response.Messages ?? [])
                 {
@@ -83,9 +74,32 @@ public sealed class NotificationCommandConsumer(
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 logger.LogError(exception, "Notification command consumption failed");
+                await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
             }
+        }
+    }
 
-            await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
+    private async Task<ReceiveMessageResponse> ReceiveCommands(CancellationToken stoppingToken)
+    {
+        using var receiveCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        receiveCancellationTokenSource.CancelAfter(TimeSpan.FromSeconds(options.Value.ReceiveTimeoutSeconds));
+
+        try
+        {
+            return await sqsClient.ReceiveMessageAsync(
+                new ReceiveMessageRequest
+                {
+                    QueueUrl = options.Value.QueueUrl,
+                    MaxNumberOfMessages = options.Value.BatchSize,
+                    MessageAttributeNames = ["All"],
+                    WaitTimeSeconds = options.Value.WaitTimeSeconds,
+                },
+                receiveCancellationTokenSource.Token
+            );
+        }
+        catch (OperationCanceledException exception) when (!stoppingToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("Notification command receive exceeded its configured timeout.", exception);
         }
     }
 

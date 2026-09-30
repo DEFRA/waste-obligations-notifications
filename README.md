@@ -64,6 +64,16 @@ provide its FIFO queue URL, cutover timestamp,
 and distinct evidence-digest and recipient-lane secrets. Do not put those secrets
 in source control or logs.
 
+Command consumption starts the next receive immediately after success or an
+empty response. `NotificationCommandDelivery__PollIntervalSeconds` is the
+error backoff only (15 seconds initially). Each host processes one command
+at a time. `WaitTimeSeconds` defaults to a 20-second long poll;
+`ReceiveTimeoutSeconds` bounds the entire receive request, including SDK
+retries, and defaults to 30 seconds. It must exceed `WaitTimeSeconds`. These
+command settings leave analytics polling and the shared SQS client unchanged.
+CDP can override them through the `NotificationCommandDelivery` section;
+local Compose values do not configure deployed environments.
+
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.

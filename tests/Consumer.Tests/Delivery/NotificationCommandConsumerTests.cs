@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
 using Amazon.SQS;
@@ -18,6 +19,152 @@ public class NotificationCommandConsumerTests
     private const string Personalisation = "secret personalisation";
     private const string QueueUrl = "http://localhost:4566/000000000000/commands.fifo";
     private const string ReceiptHandle = "receipt-handle-1";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Start_WhenReceiveSucceedsOrIsEmpty_ShouldImmediatelyReceiveAgain(bool hasCommand)
+    {
+        var receivedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deleted = false;
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                deleted = true;
+
+                return new DeleteMessageResponse();
+            });
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                _ =>
+                    Task.FromResult(
+                        new ReceiveMessageResponse
+                        {
+                            Messages = hasCommand ? [CreateMessage(CommandBody("2026-09-28T10:00:00Z"))] : [],
+                        }
+                    ),
+                call =>
+                {
+                    Assert.Equal(hasCommand, deleted);
+                    receivedAgain.TrySetResult();
+
+                    return WaitForReceiveCancellation(call.Arg<CancellationToken>());
+                }
+            );
+        var recordStore = Substitute.For<INotificationDeliveryRecordStore>();
+        recordStore
+            .RecordSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(SuppressionClaimResult.Recorded);
+        using var subject = CreateSubject(sqsClient, recordStore, pollIntervalSeconds: 300);
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await receivedAgain.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        await sqsClient.Received(2).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+        await sqsClient
+            .Received(hasCommand ? 1 : 0)
+            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Start_WhenReceiveOrProcessingFails_ShouldBackOffBeforeReceivingAgain(bool receiveFails)
+    {
+        var receivedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                _ =>
+                    receiveFails
+                        ? Task.FromException<ReceiveMessageResponse>(new InvalidOperationException("Receive failed"))
+                        : Task.FromResult(new ReceiveMessageResponse { Messages = [CreateMessage("{}")] }),
+                call =>
+                {
+                    receivedAgain.TrySetResult();
+
+                    return WaitForReceiveCancellation(call.Arg<CancellationToken>());
+                }
+            );
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        using var subject = CreateSubject(
+            sqsClient,
+            Substitute.For<INotificationDeliveryRecordStore>(),
+            logger,
+            pollIntervalSeconds: 2
+        );
+
+        var startedAt = Stopwatch.GetTimestamp();
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Notification command consumption failed", TestContext.Current.CancellationToken);
+        await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
+        Assert.False(receivedAgain.Task.IsCompleted);
+        await receivedAgain.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.True(Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(1.8));
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.Single(logger.Messages);
+        await sqsClient
+            .DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Start_WhenReceiveTimesOut_ShouldLogAndBackOffButShutdownCancellationShouldNotLog()
+    {
+        var receivedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                async call =>
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+
+                    return new ReceiveMessageResponse();
+                },
+                async call =>
+                {
+                    receivedAgain.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+
+                    return new ReceiveMessageResponse();
+                }
+            );
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        using var subject = CreateSubject(
+            sqsClient,
+            Substitute.For<INotificationDeliveryRecordStore>(),
+            logger,
+            pollIntervalSeconds: 2,
+            receiveTimeoutSeconds: 1
+        );
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Notification command consumption failed", TestContext.Current.CancellationToken);
+        await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
+        Assert.False(receivedAgain.Task.IsCompleted);
+        await receivedAgain.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.Single(logger.Messages);
+        Assert.IsType<TimeoutException>(Assert.Single(logger.Exceptions));
+    }
+
+    private static async Task<ReceiveMessageResponse> WaitForReceiveCancellation(CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ContinueWith(_ => { }, CancellationToken.None);
+
+        return new ReceiveMessageResponse();
+    }
 
     [Theory]
     [InlineData(false)]
@@ -247,7 +394,9 @@ public class NotificationCommandConsumerTests
         IAmazonSQS sqsClient,
         INotificationDeliveryRecordStore recordStore,
         ILogger<NotificationCommandConsumer>? logger = null,
-        MongoMigrationReadiness? readiness = null
+        MongoMigrationReadiness? readiness = null,
+        int pollIntervalSeconds = 1,
+        int receiveTimeoutSeconds = 30
     ) =>
         new(
             sqsClient,
@@ -260,7 +409,8 @@ public class NotificationCommandConsumerTests
                     EvidenceDigestSecret = "test-evidence-secret",
                     RecipientLaneSecret = "test-recipient-lane-secret",
                     WaitTimeSeconds = 0,
-                    PollIntervalSeconds = 1,
+                    PollIntervalSeconds = pollIntervalSeconds,
+                    ReceiveTimeoutSeconds = receiveTimeoutSeconds,
                 }
             ),
             CreateRecordStoreFactory(recordStore),
@@ -356,8 +506,10 @@ public class NotificationCommandConsumerTests
     private sealed class RecordingLogger<T> : ILogger<T>
     {
         private readonly List<string> _messages = [];
+        private readonly List<Exception> _exceptions = [];
 
         public IReadOnlyList<string> Messages => _messages;
+        public IReadOnlyList<Exception> Exceptions => _exceptions;
 
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
@@ -375,6 +527,8 @@ public class NotificationCommandConsumerTests
             lock (_messages)
             {
                 _messages.Add(formatter(state, exception));
+                if (exception is not null)
+                    _exceptions.Add(exception);
             }
         }
 

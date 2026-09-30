@@ -27,5 +27,8 @@ public sealed record NotificationCommandDeliveryOptions
     public int WaitTimeSeconds { get; init; } = 20;
 
     [Range(1, 300)]
+    public int ReceiveTimeoutSeconds { get; init; } = 30;
+
+    [Range(1, 300)]
     public int PollIntervalSeconds { get; init; } = 15;
 }
