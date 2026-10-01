@@ -19,8 +19,7 @@ public sealed class CommandDlqRedriver(
     CommandDlqSelectionTokens selections,
     IOptions<CommandDlqAdministrationOptions> administration,
     IOptions<NotificationCommandDeliveryOptions> delivery,
-    TimeProvider timeProvider,
-    ILogger<CommandDlqRedriver> logger
+    CommandDlqDiagnostics diagnostics
 )
 {
     public async Task<CommandDlqRedriveResult> Redrive(string? selectionToken, CancellationToken cancellationToken)
@@ -29,7 +28,7 @@ public sealed class CommandDlqRedriver(
         var selection = selections.Validate(selectionToken);
         if (selection is null)
             return CommandDlqRedriveResult.InvalidSelection;
-        var remaining = selection.ExpiresAtUtc - timeProvider.GetUtcNow();
+        var remaining = selections.RemainingLifetime(selection);
         var dependencyBudget = TimeSpan.FromSeconds(administration.Value.DependencyTimeoutSeconds);
         var budget = remaining < dependencyBudget ? remaining : dependencyBudget;
         using var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -47,7 +46,7 @@ public sealed class CommandDlqRedriver(
                     MaxNumberOfMessages = 1,
                     WaitTimeSeconds = 0,
                     VisibilityTimeout = Math.Clamp(
-                        (int)Math.Ceiling((selection.ExpiresAtUtc - timeProvider.GetUtcNow()).TotalSeconds),
+                        (int)Math.Ceiling(selections.RemainingLifetime(selection).TotalSeconds),
                         1,
                         43200
                     ),
@@ -87,10 +86,7 @@ public sealed class CommandDlqRedriver(
             EnsureTimely(started, budget, selection, source.Token);
             if (deleted.HttpStatusCode != HttpStatusCode.OK)
                 throw new InvalidOperationException("Redriven command removal was not confirmed.");
-            logger.LogInformation(
-                "Command DLQ redrive completed for {NotificationType}",
-                delivery.Value.GetDiagnosticNotificationType(command.NotificationType)
-            );
+            diagnostics.Redriven(command.NotificationType);
 
             return CommandDlqRedriveResult.Redriven;
         }
@@ -107,7 +103,7 @@ public sealed class CommandDlqRedriver(
     private void EnsureTimely(long started, TimeSpan budget, CommandDlqSelection selection, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (Stopwatch.GetElapsedTime(started) >= budget || timeProvider.GetUtcNow() >= selection.ExpiresAtUtc)
+        if (Stopwatch.GetElapsedTime(started) >= budget || selections.RemainingLifetime(selection) <= TimeSpan.Zero)
             throw new TimeoutException("Command DLQ redrive exceeded its deadline.");
     }
 
@@ -122,7 +118,7 @@ public sealed class CommandDlqRedriver(
 
     private InvalidOperationException RedriveFailure()
     {
-        logger.LogError("Command DLQ redrive failed.");
+        diagnostics.RedriveFailed();
 
         return new InvalidOperationException("Command DLQ redrive failed.");
     }

@@ -16,9 +16,7 @@ public sealed class CommandDlqDiscarder(
     INotificationCommandDigest digest,
     CommandDlqSelectionTokens selections,
     IOptions<CommandDlqAdministrationOptions> administration,
-    IOptions<NotificationCommandDeliveryOptions> delivery,
-    TimeProvider timeProvider,
-    ILogger<CommandDlqDiscarder> logger
+    CommandDlqDiagnostics diagnostics
 )
 {
     public async Task<CommandDlqDiscardResult> Discard(string? selectionToken, CancellationToken cancellationToken)
@@ -27,7 +25,7 @@ public sealed class CommandDlqDiscarder(
         var selection = selections.Validate(selectionToken);
         if (selection is null)
             return CommandDlqDiscardResult.InvalidSelection;
-        var remaining = selection.ExpiresAtUtc - timeProvider.GetUtcNow();
+        var remaining = selections.RemainingLifetime(selection);
         var dependencyBudget = TimeSpan.FromSeconds(administration.Value.DependencyTimeoutSeconds);
         var budget = remaining < dependencyBudget ? remaining : dependencyBudget;
         using var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -45,7 +43,7 @@ public sealed class CommandDlqDiscarder(
                     MaxNumberOfMessages = 1,
                     WaitTimeSeconds = 0,
                     VisibilityTimeout = Math.Clamp(
-                        (int)Math.Ceiling((selection.ExpiresAtUtc - timeProvider.GetUtcNow()).TotalSeconds),
+                        (int)Math.Ceiling(selections.RemainingLifetime(selection).TotalSeconds),
                         1,
                         43200
                     ),
@@ -75,10 +73,7 @@ public sealed class CommandDlqDiscarder(
             EnsureTimely(started, budget, selection, source.Token);
             if (deleted.HttpStatusCode != HttpStatusCode.OK)
                 throw new InvalidOperationException("Discarded command removal was not confirmed.");
-            logger.LogInformation(
-                "Command DLQ discard completed for {NotificationType}",
-                delivery.Value.GetDiagnosticNotificationType(command.NotificationType)
-            );
+            diagnostics.Discarded(command.NotificationType);
 
             return CommandDlqDiscardResult.Discarded;
         }
@@ -95,13 +90,13 @@ public sealed class CommandDlqDiscarder(
     private void EnsureTimely(long started, TimeSpan budget, CommandDlqSelection selection, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (Stopwatch.GetElapsedTime(started) >= budget || timeProvider.GetUtcNow() >= selection.ExpiresAtUtc)
+        if (Stopwatch.GetElapsedTime(started) >= budget || selections.RemainingLifetime(selection) <= TimeSpan.Zero)
             throw new TimeoutException("Command DLQ discard exceeded its deadline.");
     }
 
     private InvalidOperationException DiscardFailure()
     {
-        logger.LogError("Command DLQ discard failed.");
+        diagnostics.DiscardFailed();
 
         return new InvalidOperationException("Command DLQ discard failed.");
     }

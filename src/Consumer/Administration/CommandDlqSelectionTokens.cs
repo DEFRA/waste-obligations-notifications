@@ -19,6 +19,12 @@ public sealed class CommandDlqSelectionTokens(
         PropertyNameCaseInsensitive = false,
     };
 
+    public DateTimeOffset CreateExpiry() =>
+        timeProvider.GetUtcNow().AddSeconds(administration.Value.SelectionLifetimeSeconds);
+
+    public TimeSpan RemainingLifetime(CommandDlqSelection selection) =>
+        selection.ExpiresAtUtc - timeProvider.GetUtcNow();
+
     public string Create(
         string receiveAttemptId,
         string messageId,

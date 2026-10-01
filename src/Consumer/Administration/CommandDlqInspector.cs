@@ -17,9 +17,7 @@ public sealed class CommandDlqInspector(
     INotificationCommandDigest digest,
     CommandDlqSelectionTokens selections,
     IOptions<CommandDlqAdministrationOptions> administration,
-    IOptions<NotificationCommandDeliveryOptions> delivery,
-    TimeProvider timeProvider,
-    ILogger<CommandDlqInspector> logger
+    CommandDlqDiagnostics diagnostics
 )
 {
     private const string UnavailableHistory = "Historical dependency error details are unavailable.";
@@ -35,7 +33,7 @@ public sealed class CommandDlqInspector(
             EnsureTimely(started, source.Token);
             // Both the replay window and selection expiry begin before SQS can make this message invisible.
             var selectionStarted = Stopwatch.GetTimestamp();
-            var expiresAtUtc = timeProvider.GetUtcNow().AddSeconds(administration.Value.SelectionLifetimeSeconds);
+            var expiresAtUtc = selections.CreateExpiry();
             var attemptId = Guid.NewGuid().ToString();
             var response = await sqs.ReceiveMessageAsync(
                 new ReceiveMessageRequest
@@ -62,7 +60,7 @@ public sealed class CommandDlqInspector(
             EnsureTimely(started, source.Token);
             if (command is null)
             {
-                logger.LogWarning("Command DLQ inspection classified an invalid or unsupported command.");
+                diagnostics.InvalidCommand();
 
                 return new(
                     null,
@@ -91,11 +89,7 @@ public sealed class CommandDlqInspector(
                 expiresAtUtc,
                 digest.CreateImmutableFieldsDigest(command)
             );
-            logger.LogInformation(
-                "Command DLQ inspection classified {Classification} for {NotificationType}",
-                state.Classification,
-                delivery.Value.GetDiagnosticNotificationType(command.NotificationType)
-            );
+            diagnostics.Inspected(state.Classification, command.NotificationType);
 
             return new(
                 command.IdempotencyKey,
@@ -123,7 +117,7 @@ public sealed class CommandDlqInspector(
 
     private InvalidOperationException InspectionFailure()
     {
-        logger.LogError("Command DLQ inspection failed.");
+        diagnostics.InspectionFailed();
 
         return new InvalidOperationException("Command DLQ inspection failed.");
     }
