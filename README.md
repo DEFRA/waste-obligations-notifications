@@ -20,9 +20,11 @@ regain its original recipient-lane position.
 Configured Basic administrators can inspect one next-visible command-DLQ message
 through `POST /admin/notification-commands/dlq/inspect`. Administration is disabled
 by default. Inspection returns minimal metadata and a signed expiring selection;
-redrive and discard endpoints are not yet available. It never sends, deletes or
-changes delivery evidence, but receiving temporarily changes visibility and the
-selected message's receive count.
+`POST /admin/notification-commands/dlq/redrive` accepts that selection in a JSON
+body, republishes the unchanged command, then removes only the selected source
+after publication is confirmed. Neither operation changes delivery evidence.
+Inspection temporarily changes visibility and receive count. Discard is not yet
+available.
 
 Notify acceptance means Notify accepted the email request; it does not prove
 recipient delivery. A timeout, lost response, crash, or persistence failure can
@@ -33,7 +35,7 @@ New suppression records retain their original eight-field shape, omitting absent
 lease and Notify fields. Claims and accepted records retain their additional
 evidence; this change does not rewrite existing documents.
 
-The idempotency key is used unchanged as the FIFO deduplication ID. Publishing
+Normal publication uses the idempotency key unchanged as the FIFO deduplication ID. Publishing
 and consumption reject keys longer than 128 characters or containing whitespace,
 control characters, or characters outside the ASCII letters, digits and punctuation
 allowed by [SQS SendMessage](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html#API_SendMessage_RequestParameters).
@@ -265,13 +267,14 @@ delivery. Failures expose a fixed description without dependency error details.
 Disabled command processing does not register or call this check. `/health`
 remains independent of Notify and the other extended dependency checks.
 
-`CommandDlqAdministration__Enabled=true` enables inspection independently of
+`CommandDlqAdministration__Enabled=true` enables inspection and redrive independently of
 command sending. Configure its FIFO `QueueUrl`, a distinct command FIFO URL and both
 delivery digest secrets. `SelectionLifetimeSeconds` defaults to 120 and must be
 strictly below AWS's 300-second receive-attempt window;
 `DependencyTimeoutSeconds` defaults to 10 and must be positive and shorter than
-the selection lifetime. Inspection waits for verified Mongo migrations before
-receiving. Notify credentials, cutover and sending budgets are required only
+the selection lifetime. Inspection and redrive wait for verified Mongo migrations
+before receiving. Redrive applies the dependency timeout to the whole operation,
+further limited by the signed selection's remaining lifetime. Notify credentials, cutover and sending budgets are required only
 when sending is enabled. Disabled administration ignores its unvalidated ACL
 and permits deployment placeholders; its endpoints remain absent.
 
@@ -284,7 +287,7 @@ the first colon, permitting colons in a secret. Supply secrets through CDP,
 never source control. CDP operator routing and credentials must be configured
 separately; local Compose keeps administration disabled.
 
-An authenticated response retains the exact idempotency key and notification
+An authenticated inspection response retains the exact idempotency key and notification
 type, including private-bearing spellings: these two fields are the approved
 operator-view exception. Other fields contain timestamps, receive count, fixed
 state/parsing classifications, recipient digest and the selection token.
@@ -299,6 +302,29 @@ returned or stored. Expiry starts before the receive request, and late dependenc
 confirmations fail safely. `/health/all` checks the DLQ when administration is
 enabled, while Notify health remains conditional on sending. `/health` stays
 independent of migration readiness and these dependencies.
+
+Redrive accepts `{ "selectionToken": "..." }` only in the authenticated POST body.
+It replays the selected FIFO receive attempt and verifies message identity and
+immutable evidence before publishing the exact body and content encoding to the
+canonical recipient lane. Its transport deduplication ID is a domain-separated
+HMAC of source DLQ and SQS message ID, stable across retries and different from
+normal command-key publication. This permits recovery inside the original FIFO
+deduplication window after the original copy has been consumed. Recovery joins
+the current lane order. Normal consumption still enforces immutable conflicts,
+active claims and accepted/suppressed/abandoned outcomes.
+
+A failed, timed-out or late publication confirmation leaves the source; a
+destination copy may already exist. Failed deletion retains confirmed publication,
+and a retry uses the same recovery deduplication ID. There is no additional
+request retry. A later retry outside SQS's deduplication window may create another
+copy, protected by normal durable command identity. Responses and logs use fixed
+safe outcomes and expose no command content, receipt or selection token.
+
+Local redrive tests label their controlled `ReceiveMessage` replay adapter because
+Floci does not implement native receive-attempt replay. FIFO publication,
+deduplication, deletion, selected-message isolation and Mongo readiness/evidence
+remain real. Native AWS replay must be checked during deployment validation;
+local tests do not modify shared resources.
 
 ## Code quality and delivery
 

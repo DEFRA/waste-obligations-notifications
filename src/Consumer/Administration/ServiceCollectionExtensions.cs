@@ -56,6 +56,7 @@ public static class ServiceCollectionExtensions
             .ValidateOnStart();
         services.AddSingleton<CommandDlqSelectionTokens>();
         services.AddSingleton<CommandDlqInspector>();
+        services.AddSingleton<CommandDlqRedriver>();
 
         return services;
     }

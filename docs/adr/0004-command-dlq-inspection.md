@@ -1,4 +1,4 @@
-# 0004: Authenticated command-DLQ inspection
+# 0004: Authenticated command-DLQ inspection and redrive
 
 Status: Accepted
 
@@ -35,12 +35,32 @@ before receive and keep it below AWS's five-minute receive-attempt window.
 Correctly configured hosts validate the same selection without host-local keys
 or storing payloads.
 
+Redrive replays the signed receive attempt, verifies the selected message and
+immutable evidence, then publishes its exact body/encoding to the canonical
+recipient lane. Use `v1:command-dlq-redrive:` plus a JSON array of source DLQ URL
+and SQS message ID as the HMAC input with the evidence secret, returning a
+versioned hexadecimal transport ID. This domain differs from normal command-key
+publication and is stable across hosts and retries, permitting recovery while
+SQS remembers a consumed original copy. Confirm publication before deleting only
+the selected receipt. Bound the entire operation by dependency timeout and
+selection expiry, rejecting late confirmations before further effects. Redrive
+never changes delivery evidence; normal consumption retains terminal, conflict
+and active-claim guards.
+
 ## Consequences
 
 Inspection temporarily changes visibility and receive count. Disabled
 administration exposes no management routes and ignores unvalidated ACL entries.
 Deployments must supply admin credentials and operator access separately.
-Redrive, discard and abandonment writes remain unavailable in this increment.
+Recovery joins current lane order. An indeterminate publication can leave both
+source and destination; failed deletion preserves publication. Repeated recovery
+is deduplicated inside SQS's window and checked against durable command identity
+on consumption. A prior indeterminate Notify request retains its accepted
+duplicate-email risk. Discard and abandonment writes remain unavailable.
+
+Floci does not implement receive-attempt replay. A labelled test-only API adapter
+supplies that boundary while FIFO effects and Mongo remain real; deployment
+validation must verify native AWS replay.
 
 ## References
 

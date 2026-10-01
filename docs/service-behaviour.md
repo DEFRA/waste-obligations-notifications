@@ -14,7 +14,7 @@ sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
 cutover. Analytics does not yet create notification commands. Configured Basic
-administrators can inspect one command-DLQ message; redrive and discard remain
+administrators can inspect and redrive one command-DLQ message; discard remains
 unavailable. Redrive does not restore a command's
 original recipient-lane position.
 
@@ -201,8 +201,40 @@ evidence digest. It contains neither raw command identity nor body/receipt
 content, works across correctly configured hosts and is not persisted. Expiry
 is anchored before receive, is strictly within AWS's five-minute attempt window,
 and is not extended by a delayed response. Pass bounded cancellation to queue
-and storage calls and reject late confirmations. Redrive and discard will use
-this selection contract in later increments; neither operation is available now.
+and storage calls and reject late confirmations. Redrive uses this selection
+contract; discard remains unavailable.
+
+`POST /admin/notification-commands/dlq/redrive` accepts the selection token in its
+JSON body and requires the same Basic Admin policy. Invalid or expired tokens
+return a fixed bad-request result before receiving. Replay uses the signed FIFO
+receive-attempt ID, one message and zero wait. Missing, changed or malformed
+selected commands return a fixed conflict without publishing or deleting. The
+whole operation waits for migration readiness and shares one bounded dependency
+deadline capped by the selection's remaining lifetime; late confirmations cannot
+start the next effect.
+
+Publish the exact source body and message attributes, including `Content-Encoding`,
+with the canonical recipient lane. Use a versioned, domain-separated HMAC of
+source DLQ URL and SQS message ID as transport deduplication identity. It remains
+stable across hosts/retries and differs from the producer command-key identity,
+so a consumed original copy's five-minute SQS deduplication memory cannot swallow
+recovery. Keep the command idempotency key unchanged. Recovery joins current lane
+order and does not rewrite delivery evidence or apply discard restrictions;
+normal consumption still checks conflicts, active claims and terminal outcomes.
+
+Only confirmed publication permits deletion of the replayed selected receipt.
+Failed, timed-out or late publication leaves the source even if a destination
+copy exists. Failed deletion retains publication; a repeat uses the same recovery
+transport identity. Outside SQS's deduplication window, another copy remains
+subject to durable command identity. Redrive responses and logs contain fixed
+safe results, no raw command fields, receipt, selection token or dependency
+exception text. No additional HTTP retries or Notify reconciliation are added.
+
+Floci lacks native receive-attempt replay. Local tests explicitly supply that
+one API behavior with a test-only adapter while real FIFO queues verify
+publication, deduplication, deletion and isolation, and real Mongo verifies
+readiness and unchanged evidence. Native AWS replay remains a deployment
+validation requirement.
 
 Command queue/Mongo extended health runs when sending or administration is
 enabled, with DLQ health added for administration. Notify health remains enabled
