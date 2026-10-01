@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using Amazon.Runtime;
@@ -23,6 +24,7 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
 public sealed class CommandDlqInspectionTests : IntegrationTestBase
 {
+    private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web);
     private const string Route = "/admin/notification-commands/dlq/inspect";
     private const string Secret = "local-test-admin:secret";
 
@@ -40,6 +42,7 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
         CreateQueueResponse? destination = null;
         var lease = new MongoMigrationLeaseService(database, TimeProvider.System);
         Exception? testFailure = null;
+        var failures = new List<Exception>();
         try
         {
             queue = await sqs.CreateQueueAsync(
@@ -177,11 +180,9 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
         catch (Exception exception)
         {
             testFailure = exception;
-            throw;
         }
         finally
         {
-            var failures = new List<Exception>();
             await Cleanup(lease.Release, "migration lease", failures);
             await Cleanup(
                 cleanup => RemoveQueue(sqs, queueName, queue?.QueueUrl, cleanup),
@@ -194,13 +195,15 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
                 failures
             );
             await Cleanup(cleanup => mongo.DropDatabaseAsync(databaseName, cleanup), "inspection database", failures);
-            if (failures.Count > 0)
-            {
-                if (testFailure is not null)
-                    failures.Insert(0, testFailure);
-                throw new AggregateException("Owned inspection resources could not all be cleaned up.", failures);
-            }
         }
+        if (failures.Count > 0)
+        {
+            if (testFailure is not null)
+                failures.Insert(0, testFailure);
+            throw new AggregateException("Owned inspection resources could not all be cleaned up.", failures);
+        }
+        if (testFailure is not null)
+            ExceptionDispatchInfo.Capture(testFailure).Throw();
     }
 
     private static async Task Cleanup(
@@ -260,7 +263,7 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
             new SendMessageRequest
             {
                 QueueUrl = queueUrl,
-                MessageBody = JsonSerializer.Serialize(command, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                MessageBody = JsonSerializer.Serialize(command, s_jsonOptions),
                 MessageDeduplicationId = command.IdempotencyKey,
                 MessageGroupId = group,
             },

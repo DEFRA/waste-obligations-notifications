@@ -134,7 +134,8 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
     {
         private const string DatabaseUri = "mongodb://localhost:27017";
         private const string EvidenceSecret = "isolated-test-evidence-secret";
-        private readonly IMongoClient _mongo = new MongoClient(DatabaseUri);
+        private static readonly JsonSerializerOptions s_commandJsonOptions = new(JsonSerializerDefaults.Web);
+        private readonly MongoClient _mongo = new(DatabaseUri);
         private readonly string _databaseName = $"delivery_integration_{Guid.NewGuid():N}";
         private readonly HttpClient _http = new() { BaseAddress = new Uri("http://localhost:8086") };
         private IHost? _host;
@@ -272,10 +273,7 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                 new SendMessageRequest
                 {
                     QueueUrl = QueueUrl,
-                    MessageBody = JsonSerializer.Serialize(
-                        command,
-                        new JsonSerializerOptions(JsonSerializerDefaults.Web)
-                    ),
+                    MessageBody = JsonSerializer.Serialize(command, s_commandJsonOptions),
                     MessageDeduplicationId = command.IdempotencyKey,
                     MessageGroupId = lane,
                 },

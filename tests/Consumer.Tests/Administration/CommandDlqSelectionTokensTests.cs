@@ -41,7 +41,7 @@ public sealed class CommandDlqSelectionTokensTests
         );
         using var body = JsonDocument.Parse(payload);
         Assert.Equal(
-            new[] { "expiresAtUtc", "immutableFieldsDigest", "messageId", "queueBinding", "receiveRequestAttemptId" },
+            ["expiresAtUtc", "immutableFieldsDigest", "messageId", "queueBinding", "receiveRequestAttemptId"],
             body.RootElement.EnumerateObject().Select(property => property.Name).Order()
         );
         Assert.DoesNotContain(Secret, payload, StringComparison.Ordinal);

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Net;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using Amazon.Runtime;
@@ -25,6 +26,11 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
 public sealed class CommandDlqRedriveTests : IntegrationTestBase
 {
+    private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions s_indentedJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+    };
     private const string Secret = "local-test-admin:secret";
     private const string PrivateContent = "private-redrive-personalisation-template";
 
@@ -45,6 +51,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         CreateQueueResponse? queue = null;
         CreateQueueResponse? destination = null;
         Exception? testFailure = null;
+        var failures = new List<Exception>();
         var token = TestContext.Current.CancellationToken;
         try
         {
@@ -79,10 +86,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 .WaitAsync(TimeSpan.FromSeconds(10), token);
             var command = Command("private-original-key@example.com", "private-recipient@example.com");
             var digest = first.Services.GetRequiredService<INotificationCommandDigest>();
-            var body = JsonSerializer.Serialize(
-                command,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }
-            );
+            var body = JsonSerializer.Serialize(command, s_indentedJsonOptions);
             using var bytes = new MemoryStream();
             await using (var gzip = new GZipStream(bytes, CompressionMode.Compress, leaveOpen: true))
                 await gzip.WriteAsync(Encoding.UTF8.GetBytes(body), token);
@@ -142,7 +146,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             await Publish(
                 sqs,
                 queue.QueueUrl,
-                JsonSerializer.Serialize(unrelated, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                JsonSerializer.Serialize(unrelated, s_jsonOptions),
                 [],
                 unrelated.IdempotencyKey,
                 digest.CreateRecipientLane(unrelated.EmailAddress),
@@ -242,11 +246,9 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         catch (Exception exception)
         {
             testFailure = exception;
-            throw;
         }
         finally
         {
-            var failures = new List<Exception>();
             await Cleanup(cleanup => RemoveQueue(sqs, queueName, queue?.QueueUrl, cleanup), "redrive DLQ", failures);
             await Cleanup(
                 cleanup => RemoveQueue(sqs, destinationName, destination?.QueueUrl, cleanup),
@@ -254,13 +256,15 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 failures
             );
             await Cleanup(cleanup => mongo.DropDatabaseAsync(databaseName, cleanup), "redrive database", failures);
-            if (failures.Count > 0)
-            {
-                if (testFailure is not null)
-                    failures.Insert(0, testFailure);
-                throw new AggregateException("Owned redrive resources could not all be cleaned up.", failures);
-            }
         }
+        if (failures.Count > 0)
+        {
+            if (testFailure is not null)
+                failures.Insert(0, testFailure);
+            throw new AggregateException("Owned redrive resources could not all be cleaned up.", failures);
+        }
+        if (testFailure is not null)
+            ExceptionDispatchInfo.Capture(testFailure).Throw();
     }
 
     private static NotificationCommand Command(string key, string recipient) =>

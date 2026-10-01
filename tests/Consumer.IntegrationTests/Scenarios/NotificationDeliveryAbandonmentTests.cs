@@ -34,8 +34,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         Assert.Equal(2, results.Count(result => result == AbandonmentResult.AlreadyAbandoned));
         var record = Assert.Single(await context.Records.Find(FilterDefinition<BsonDocument>.Empty).ToListAsync(token));
         Assert.Equal(
-            new[]
-            {
+            [
                 "_id",
                 "actionOccurredAtUtc",
                 "immutableFields",
@@ -44,7 +43,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
                 "outcome",
                 "recipient",
                 "recordedAtUtc",
-            },
+            ],
             record.Names.Order(StringComparer.Ordinal)
         );
         Assert.Equal("delivery-abandoned", record["outcome"].AsString);
@@ -272,7 +271,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         private readonly ILoggerFactory _logs = LoggerFactory.Create(_ => { });
         private readonly MongoMigrationReadiness _readiness = new();
         private readonly string _databaseName = $"notifications_abandonment_{Guid.NewGuid():N}";
-        public INotificationCommandDigest Digest { get; } =
+        public NotificationCommandDigest Digest { get; } =
             new NotificationCommandDigest(
                 Options.Create(
                     new NotificationCommandDeliveryOptions
@@ -287,14 +286,14 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         public IMongoDatabase Database => _client.GetDatabase(_databaseName);
         public IMongoCollection<BsonDocument> Records =>
             Database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
-        public INotificationDeliveryRecordStore Store => CreateStore();
+        public MongoNotificationDeliveryRecordStore Store => CreateStore();
 
         public Task Initialise() =>
             new MongoMigrationRunner(Database, _logs.CreateLogger<MongoMigrationRunner>(), _readiness).Run(
                 TestContext.Current.CancellationToken
             );
 
-        public INotificationDeliveryRecordStore CreateStore() =>
+        public MongoNotificationDeliveryRecordStore CreateStore() =>
             new MongoNotificationDeliveryRecordStore(
                 _client,
                 Options.Create(

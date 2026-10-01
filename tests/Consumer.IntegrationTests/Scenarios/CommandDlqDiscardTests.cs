@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using Amazon.Runtime;
@@ -25,6 +26,7 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
 public sealed class CommandDlqDiscardTests : IntegrationTestBase
 {
+    private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web);
     private const string Secret = "local-test-admin:secret";
     private const string PrivateContent = "private-redrive-personalisation-template";
 
@@ -51,6 +53,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
         CreateQueueResponse? queue = null;
         CreateQueueResponse? destination = null;
         Exception? testFailure = null;
+        var failures = new List<Exception>();
         var token = TestContext.Current.CancellationToken;
         try
         {
@@ -123,7 +126,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                     )
                 );
             var before = await records.Find(FilterDefinition<BsonDocument>.Empty).FirstOrDefaultAsync(token);
-            var body = JsonSerializer.Serialize(command, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var body = JsonSerializer.Serialize(command, s_jsonOptions);
             await Publish(
                 sqs,
                 queue.QueueUrl,
@@ -143,7 +146,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
             await Publish(
                 sqs,
                 queue.QueueUrl,
-                JsonSerializer.Serialize(unrelated, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                JsonSerializer.Serialize(unrelated, s_jsonOptions),
                 [],
                 unrelated.IdempotencyKey,
                 digest.CreateRecipientLane(unrelated.EmailAddress),
@@ -264,11 +267,9 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
         catch (Exception exception)
         {
             testFailure = exception;
-            throw;
         }
         finally
         {
-            var failures = new List<Exception>();
             await Cleanup(cleanup => RemoveQueue(sqs, queueName, queue?.QueueUrl, cleanup), "discard DLQ", failures);
             await Cleanup(
                 cleanup => RemoveQueue(sqs, destinationName, destination?.QueueUrl, cleanup),
@@ -276,13 +277,15 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 failures
             );
             await Cleanup(cleanup => mongo.DropDatabaseAsync(databaseName, cleanup), "discard database", failures);
-            if (failures.Count > 0)
-            {
-                if (testFailure is not null)
-                    failures.Insert(0, testFailure);
-                throw new AggregateException("Owned discard resources could not all be cleaned up.", failures);
-            }
         }
+        if (failures.Count > 0)
+        {
+            if (testFailure is not null)
+                failures.Insert(0, testFailure);
+            throw new AggregateException("Owned discard resources could not all be cleaned up.", failures);
+        }
+        if (testFailure is not null)
+            ExceptionDispatchInfo.Capture(testFailure).Throw();
     }
 
     private static async Task VerifyFutureDuplicate(

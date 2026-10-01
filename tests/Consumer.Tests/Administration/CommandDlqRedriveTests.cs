@@ -24,6 +24,10 @@ namespace Defra.WasteObligations.Consumer.Tests.Administration;
 
 public sealed class CommandDlqRedriveTests
 {
+    private static readonly JsonSerializerOptions s_indentedJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+    };
     private const string Route = "/admin/notification-commands/dlq/redrive";
     private const string Secret = "private-päss:secret";
     private const string Identity = "private-recipient@example.com";
@@ -728,7 +732,7 @@ public sealed class CommandDlqRedriveTests
                     PrivateContent,
                     JsonSerializer.SerializeToElement(new { content = PrivateContent })
                 ),
-                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }
+                s_indentedJsonOptions
             ),
         };
 

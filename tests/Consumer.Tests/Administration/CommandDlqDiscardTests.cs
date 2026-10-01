@@ -22,6 +22,10 @@ namespace Defra.WasteObligations.Consumer.Tests.Administration;
 
 public sealed class CommandDlqDiscardTests
 {
+    private static readonly JsonSerializerOptions s_indentedJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true,
+    };
     private const string Route = "/admin/notification-commands/dlq/discard";
     private const string Secret = "private-päss:secret";
     private const string Identity = "private-recipient@example.com";
@@ -61,7 +65,7 @@ public sealed class CommandDlqDiscardTests
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
-        Assert.Equal(new[] { "receive", "abandon", "delete" }, order);
+        Assert.Equal(["receive", "abandon", "delete"], order);
         var deleted = Assert.IsType<DeleteMessageRequest>(factory.Sqs.ReceivedCalls().Last().GetArguments()[0]);
         Assert.Equal("http://sqs.local/commands-dlq.fifo", deleted.QueueUrl);
         Assert.Equal(Receipt, deleted.ReceiptHandle);
@@ -647,7 +651,7 @@ public sealed class CommandDlqDiscardTests
                     PrivateContent,
                     JsonSerializer.SerializeToElement(new { content = PrivateContent })
                 ),
-                new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true }
+                s_indentedJsonOptions
             ),
         };
 

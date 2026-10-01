@@ -608,7 +608,12 @@ public sealed class NotifyEmailClientTests
                 requests++;
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
                 var actual = body.RootElement.GetProperty("personalisation");
-                foreach (var name in new[] { "date", "null", "large", "precise", "nested", "array", "duplicate" })
+                foreach (
+                    var name in personalisation
+                        .RootElement.EnumerateObject()
+                        .Select(property => property.Name)
+                        .Distinct()
+                )
                     Assert.Equal(
                         personalisation.RootElement.GetProperty(name).GetRawText(),
                         actual.GetProperty(name).GetRawText()
@@ -801,8 +806,8 @@ public sealed class NotifyEmailClientTests
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
         using var transport = new NotifySdkHttpClient(
             client,
-            TestContext.Current.CancellationToken,
-            HttpStatusCode.Created
+            HttpStatusCode.Created,
+            TestContext.Current.CancellationToken
         );
         using var first = new HttpRequestMessage(HttpMethod.Post, "v2/notifications/email");
         await transport.SendAsync(first);

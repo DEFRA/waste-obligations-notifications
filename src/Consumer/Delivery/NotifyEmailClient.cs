@@ -17,7 +17,7 @@ public sealed class NotifyEmailClient(
     {
         try
         {
-            using var transport = new NotifySdkHttpClient(httpClient, cancellationToken, HttpStatusCode.OK);
+            using var transport = new NotifySdkHttpClient(httpClient, HttpStatusCode.OK, cancellationToken);
             var client = notificationClientFactory(transport, options.Value);
             var response = await Task.Run(() => client.GetAllTemplatesAsync("email"), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
@@ -43,7 +43,7 @@ public sealed class NotifyEmailClient(
         try
         {
             command.Validate();
-            using var transport = new NotifySdkHttpClient(httpClient, cancellationToken, HttpStatusCode.Created);
+            using var transport = new NotifySdkHttpClient(httpClient, HttpStatusCode.Created, cancellationToken);
             var client = notificationClientFactory(transport, options.Value);
             var personalisation = CreatePersonalisation(command.Personalisation);
             // The pinned SDK blocks before returning its task. Keep that off the caller while the adapter

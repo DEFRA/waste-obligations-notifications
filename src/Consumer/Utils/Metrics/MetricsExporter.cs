@@ -128,8 +128,11 @@ public sealed class MetricsExporter(
         }
     }
 
-    private void ReportFailure(string operation, LogLevel level) =>
-        logger.Log(level, "Notification command EMF failure during {Operation}.", operation);
+    private void ReportFailure(string operation, LogLevel level)
+    {
+        if (logger.IsEnabled(level))
+            logger.Log(level, "Notification command EMF failure during {Operation}.", operation);
+    }
 
     public void Dispose() => StopAsync(CancellationToken.None).GetAwaiter().GetResult();
 }

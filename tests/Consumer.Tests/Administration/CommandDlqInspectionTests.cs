@@ -21,6 +21,7 @@ namespace Defra.WasteObligations.Consumer.Tests.Administration;
 
 public sealed class CommandDlqInspectionTests
 {
+    private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web);
     private const string Route = "/admin/notification-commands/dlq/inspect";
     private const string Secret = "private-päss:secret";
     private const string Identity = "private-recipient@example.com";
@@ -142,8 +143,7 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal("2026-10-01T00:00:00+00:00", body.RootElement.GetProperty("sentAtUtc").GetString());
         Assert.StartsWith("v1:", body.RootElement.GetProperty("recipientDigest").GetString());
         Assert.Equal(
-            new[]
-            {
+            [
                 "actionOccurredAtUtc",
                 "failureClassification",
                 "failureDetails",
@@ -155,13 +155,13 @@ public sealed class CommandDlqInspectionTests
                 "recordedAtUtc",
                 "selectionToken",
                 "sentAtUtc",
-            },
+            ],
             body.RootElement.EnumerateObject().Select(property => property.Name).Order()
         );
         var token = body.RootElement.GetProperty("selectionToken").GetString()!;
         using var payload = JsonDocument.Parse(DecodePayload(token));
         Assert.Equal(
-            new[] { "expiresAtUtc", "immutableFieldsDigest", "messageId", "queueBinding", "receiveRequestAttemptId" },
+            ["expiresAtUtc", "immutableFieldsDigest", "messageId", "queueBinding", "receiveRequestAttemptId"],
             payload.RootElement.EnumerateObject().Select(property => property.Name).Order()
         );
         Assert.Equal("opaque-message-id", payload.RootElement.GetProperty("messageId").GetString());
@@ -514,7 +514,7 @@ public sealed class CommandDlqInspectionTests
                     PrivateContent,
                     JsonSerializer.SerializeToElement(new { content = PrivateContent })
                 ),
-                new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                s_jsonOptions
             ),
             Attributes = new() { ["ApproximateReceiveCount"] = "3", ["SentTimestamp"] = "1790812800000" },
         };
