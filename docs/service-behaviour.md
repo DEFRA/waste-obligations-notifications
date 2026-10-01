@@ -146,6 +146,16 @@ command processing. Observation stops before sink shutdown; the host bounds its
 wait, but the SDK's background worker has no cancellation API and may outlive that
 wait. Metrics are best effort. See the README for configuration and CDP routing.
 
+With command processing enabled, `/health/all` includes a light read-only Notify
+connectivity check. It makes one authenticated `GET /v2/templates?type=email`,
+requires `200 OK`, and disposes the response without reading template content.
+The existing ten-second health timeout cancels the HTTP request; a late response
+after cancellation cannot report healthy. Results and logs expose only fixed
+descriptions, without dependency exceptions or response data. Disabled command
+processing does not register or call Notify health. `/health` stays independent
+of extended dependency checks. This check does not validate a specific template
+or confirm recipient delivery.
+
 The command architecture is described in
 [ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the
 cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).

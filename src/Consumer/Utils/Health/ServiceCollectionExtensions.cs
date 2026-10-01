@@ -56,6 +56,17 @@ public static class ServiceCollectionExtensions
                         tags: [WebApplicationExtensions.Extended],
                         timeout: TimeSpan.FromSeconds(10)
                     )
+                )
+                .Add(
+                    new HealthCheckRegistration(
+                        "Notify",
+                        serviceProvider => new NotifyHealthCheck(
+                            serviceProvider.GetRequiredService<INotifyEmailClient>()
+                        ),
+                        HealthStatus.Unhealthy,
+                        tags: [WebApplicationExtensions.Extended],
+                        timeout: TimeSpan.FromSeconds(10)
+                    )
                 );
         }
 

@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Delivery;
@@ -11,6 +13,170 @@ public sealed class NotifyEmailClientTests
     private const string Reference = "v1:opaque-reference";
     private const string NotificationId = "01234567-89ab-cdef-0123-456789abcdef";
     private static string ApiKey => NotifyTestCredentials.ApiKey;
+
+    [Fact]
+    public async Task CheckHealth_WhenNotifyResponds_ShouldAuthenticateOneBodyFreeGetWithoutReadingItsContent()
+    {
+        var requests = 0;
+        using var content = new UnreadContent();
+        using var handler = new ControlledHandler(
+            (request, _) =>
+            {
+                requests++;
+                Assert.Equal(HttpMethod.Get, request.Method);
+                Assert.Equal("http://notify.local/v2/templates?type=email", request.RequestUri!.AbsoluteUri);
+                Assert.Null(request.Content);
+                Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
+                var token = request.Headers.Authorization.Parameter!.Split('.');
+                Assert.Equal(3, token.Length);
+                using var header = JsonDocument.Parse(DecodeBase64Url(token[0]));
+                using var payload = JsonDocument.Parse(DecodeBase64Url(token[1]));
+                Assert.Equal("HS256", header.RootElement.GetProperty("alg").GetString());
+                Assert.Equal(
+                    NotifyTestCredentials.ServiceId.ToString(),
+                    payload.RootElement.GetProperty("iss").GetString()
+                );
+                Assert.Equal(
+                    HMACSHA256.HashData(
+                        Encoding.UTF8.GetBytes(NotifyTestCredentials.SecretId.ToString()),
+                        Encoding.ASCII.GetBytes($"{token[0]}.{token[1]}")
+                    ),
+                    DecodeBase64Url(token[2])
+                );
+
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+            }
+        );
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
+        var subject = new NotifyEmailClient(client, Options.Create(new NotifyOptions { ApiKey = ApiKey }));
+
+        await subject.CheckHealth(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, requests);
+        Assert.False(content.WasRead);
+        Assert.True(content.WasDisposed);
+    }
+
+    [Theory]
+    [InlineData(201)]
+    [InlineData(403)]
+    [InlineData(500)]
+    public async Task CheckHealth_WhenNotifyReturnsNon200_ShouldFailWithoutReadingContentOrRetrying(int statusCode)
+    {
+        var requests = 0;
+        using var content = new UnreadContent();
+        using var handler = new ControlledHandler(
+            (_, _) =>
+            {
+                requests++;
+
+                return Task.FromResult(new HttpResponseMessage((HttpStatusCode)statusCode) { Content = content });
+            }
+        );
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
+        var subject = new NotifyEmailClient(client, Options.Create(new NotifyOptions { ApiKey = ApiKey }));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            subject.CheckHealth(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("Notify health request failed.", exception.Message);
+        Assert.Null(exception.InnerException);
+        Assert.Equal(1, requests);
+        Assert.False(content.WasRead);
+        Assert.True(content.WasDisposed);
+    }
+
+    [Fact]
+    public async Task CheckHealth_WhenDependencyThrowsPrivateError_ShouldSanitizeItsFailure()
+    {
+        using var handler = new ControlledHandler(
+            (_, _) => throw new HttpRequestException($"recipient@example.com private-template {ApiKey}")
+        );
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
+        var subject = new NotifyEmailClient(client, Options.Create(new NotifyOptions { ApiKey = ApiKey }));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            subject.CheckHealth(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("Notify health request failed.", exception.Message);
+        Assert.Null(exception.InnerException);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CheckHealth_WhenCallerCancelsOrTimeoutExpires_ShouldCancelActualRequest(bool timeout)
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = false;
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        using var handler = new ControlledHandler(
+            async (_, token) =>
+            {
+                started.SetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    cancelled = true;
+                    throw;
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+        );
+        using var client = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://notify.local"),
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+        var subject = new NotifyEmailClient(client, Options.Create(new NotifyOptions { ApiKey = ApiKey }));
+        var check = subject.CheckHealth(source.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        if (timeout)
+            source.CancelAfter(TimeSpan.FromMilliseconds(50));
+        else
+            await source.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => check);
+        Assert.True(cancelled);
+    }
+
+    [Fact]
+    public async Task CheckHealth_WhenCancellationResistantRequestReturnsLate200_ShouldRejectAndDisposeIt()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        using var content = new UnreadContent();
+        using var handler = new ControlledHandler(
+            async (_, _) =>
+            {
+                started.SetResult();
+                await release.Task;
+
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+            }
+        );
+        using var client = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://notify.local"),
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+        var subject = new NotifyEmailClient(client, Options.Create(new NotifyOptions { ApiKey = ApiKey }));
+        var check = subject.CheckHealth(source.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await source.CancelAsync();
+        release.SetResult();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => check);
+        Assert.False(content.WasRead);
+        Assert.True(content.WasDisposed);
+    }
 
     [Fact]
     public async Task WhenNotifyAccepts_ShouldSendOneAuthenticatedNormalisedRequestAndProjectOnlyAcceptance()
@@ -209,6 +375,38 @@ public sealed class NotifyEmailClientTests
         await source.CancelAsync();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => send);
+    }
+
+    private static byte[] DecodeBase64Url(string value)
+    {
+        var base64 = value.Replace('-', '+').Replace('_', '/');
+
+        return Convert.FromBase64String(base64.PadRight((base64.Length + 3) / 4 * 4, '='));
+    }
+
+    private sealed class UnreadContent : HttpContent
+    {
+        public bool WasRead { get; private set; }
+        public bool WasDisposed { get; private set; }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            WasRead = true;
+            throw new InvalidOperationException("private-template-content");
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+
+            return false;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            WasDisposed = true;
+            base.Dispose(disposing);
+        }
     }
 
     private sealed class BlockingContent(TaskCompletionSource reading) : HttpContent

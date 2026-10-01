@@ -48,9 +48,9 @@ docker compose up --build
 The local bootstrap creates `waste_obligations_analytics_events` and subscribes
 `waste_obligations_notifications_analytics_events_queue` with raw message delivery.
 It also creates isolated FIFO command and command dead-letter queues, MongoDB,
-and a controlled Notify HTTP fixture. The fixture uses a dummy API key and records
-requests only in memory for local integration tests; it does not contact GOV.UK
-Notify. Its port is `8086`.
+and a controlled Notify HTTP fixture. The fixture uses a dummy API key, verifies
+the health request's JWT, and records send requests only in memory for local
+integration tests; it does not contact GOV.UK Notify. Its port is `8086`.
 
 The Consumer health endpoint is available at `http://localhost:8085/health`.
 
@@ -244,6 +244,14 @@ TLS. Before enabling command processing in CDP, verify authentication, certifica
 loading, database permissions, migration completion and `/health/all`. Mongo
 migrations and health checks remain conditional on command processing being enabled.
 
+When command processing is enabled, `/health/all` also checks GOV.UK Notify with
+one authenticated `GET /v2/templates?type=email`, bounded by the existing
+ten-second health timeout. It checks connectivity and credentials without reading
+template content; it does not validate a command's template or confirm email
+delivery. Failures expose a fixed description without dependency error details.
+Disabled command processing does not register or call this check. `/health`
+remains independent of Notify and the other extended dependency checks.
+
 ## Code quality and delivery
 
 GitHub Actions runs Consumer tests, validates Compose, builds and scans the
@@ -251,9 +259,9 @@ container image, and sends coverage to SonarCloud under
 `DEFRA_waste-obligations-notifications`. Dependabot manages NuGet, actions, and
 container dependency updates. Journey tests are not currently part of this service.
 
-The isolated Notify fixture creates random synthetic API credentials at startup.
-Compose supplies them to the consumer through a local ephemeral volume and fixture
-bootstrap script; integration
+The isolated Notify fixture creates random synthetic API credentials for each fresh
+local volume and reuses them on fixture restarts. Compose supplies them through
+an ephemeral volume and fixture bootstrap script. Integration
 tests read the same fixture credential from its test-only API. No Notify account
 credential is stored in development settings or test source. Compose teardown
 removes the generated volume.

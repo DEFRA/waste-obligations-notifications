@@ -12,6 +12,10 @@
     "NotificationDeliveryRecordStore": {
       "status": "Healthy",
       "description": "Connected to MongoDB database: waste-obligations-notifications"
+    },
+    "Notify": {
+      "status": "Healthy",
+      "description": "Connected to GOV.UK Notify."
     }
   }
 }
