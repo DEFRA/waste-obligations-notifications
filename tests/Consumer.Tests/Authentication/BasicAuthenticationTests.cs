@@ -120,7 +120,7 @@ public sealed class BasicAuthenticationTests
         $"Basic {Convert.ToBase64String(Encoding.UTF8.GetBytes(credentials))}";
 
     // This route exercises the genuine ASP.NET authentication/authorization boundary; product inspection is tested separately.
-    private sealed class AuthenticationFixture(
+    internal sealed class AuthenticationFixture(
         WebApplication application,
         IAmazonSQS sqs,
         INotificationDeliveryRecordStore store,
@@ -156,6 +156,9 @@ public sealed class BasicAuthenticationTests
                     ["Acl:Clients:oauth:Type"] = "OAuth",
                     ["Acl:Clients:oauth:Secret"] = Secret,
                     ["Acl:Clients:oauth:Scopes:0"] = "admin",
+                    ["Acl:Clients:oauth:Scopes:1"] = "read",
+                    ["Acl:Clients:oauth-read:Type"] = "OAuth",
+                    ["Acl:Clients:oauth-read:Scopes:0"] = "read",
                 }
             );
             var logs = new RecordingLogs();
@@ -206,7 +209,7 @@ public sealed class BasicAuthenticationTests
         }
     }
 
-    private sealed class RecordingLogs : ILoggerProvider
+    internal sealed class RecordingLogs : ILoggerProvider
     {
         public ConcurrentQueue<string> Messages { get; } = new();
 

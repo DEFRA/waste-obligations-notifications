@@ -19,9 +19,7 @@ public sealed record AclOptions
             && (entry.Value.Type == ClientType.OAuth || IsConfiguredSecret(entry.Value.Secret))
             && entry.Value.Scopes.All(scope => !string.IsNullOrWhiteSpace(scope) && !scope.Any(char.IsControl))
         )
-        && Clients.Values.Any(client =>
-            client.Type == ClientType.ApiKey && client.Scopes.Contains(Scopes.Admin, StringComparer.Ordinal)
-        );
+        && Clients.Values.Any(client => client.Scopes.Contains(Scopes.Admin, StringComparer.Ordinal));
 
     private static bool IsConfiguredSecret(string? secret) =>
         !string.IsNullOrWhiteSpace(secret) && !secret.StartsWith("set-automatically", StringComparison.Ordinal);

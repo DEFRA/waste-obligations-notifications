@@ -28,8 +28,12 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
     private const string Route = "/admin/notification-commands/dlq/inspect";
     private const string Secret = "local-test-admin:secret";
 
-    [Fact]
-    public async Task WhenSendingIsPaused_ShouldWaitForRealMigrationReadinessAndInspectOnlyOneRealFifoMessage()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenSendingIsPaused_ShouldWaitForRealMigrationReadinessAndInspectOnlyOneRealFifoMessage(
+        bool oauth
+    )
     {
         using var sqs = CreateSqsClient();
         using var mongo = CreateMongoClient();
@@ -69,15 +73,17 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
             await using var factory = new AdministrationApplicationFactory(
                 queue.QueueUrl,
                 destination.QueueUrl,
-                databaseName
+                databaseName,
+                oauth,
+                mongo
             );
             using var client = factory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(20);
             using var request = new HttpRequestMessage(HttpMethod.Post, Route);
-            request.Headers.TryAddWithoutValidation(
-                "Authorization",
-                $"Basic {Convert.ToBase64String(Encoding.UTF8.GetBytes($"admin:{Secret}"))}"
-            );
+            var authorization = oauth
+                ? GatewayOAuthToken.Create("admin")
+                : $"Basic {Convert.ToBase64String(Encoding.UTF8.GetBytes($"admin:{Secret}"))}";
+            request.Headers.TryAddWithoutValidation("Authorization", authorization);
 
             var inspecting = client.SendAsync(request, token);
             await factory.Logs.EndpointEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), token);
@@ -170,6 +176,7 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
                     first.TemplateId,
                     "private-body",
                     Secret,
+                    authorization,
                 }
             )
                 Assert.All(
@@ -270,8 +277,13 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
             token
         );
 
-    private sealed class AdministrationApplicationFactory(string dlq, string commandQueue, string databaseName)
-        : WebApplicationFactory<Program>
+    private sealed class AdministrationApplicationFactory(
+        string dlq,
+        string commandQueue,
+        string databaseName,
+        bool oauth,
+        IMongoClient mongo
+    ) : WebApplicationFactory<Program>
     {
         public CountingSqsClient Sqs { get; } = new();
         public RecordingLogs Logs { get; } = new();
@@ -281,6 +293,9 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
             builder.UseEnvironment("Testing");
             builder.ConfigureTestServices(services =>
             {
+                // Both theory hosts use real isolated Mongo without repeating the SDK's process-global AWS registration.
+                services.RemoveAll<IMongoClient>();
+                services.AddSingleton(mongo);
                 services.RemoveAll<IAmazonSQS>();
                 services.AddSingleton<IAmazonSQS>(Sqs);
                 services.AddSingleton<ILoggerFactory>(_ =>
@@ -311,8 +326,8 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
                         ["Mongo:DatabaseName"] = databaseName,
                         ["Notify:ApiKey"] = "set-automatically-when-deployed",
                         ["Notify:BaseAddress"] = "set-automatically-when-deployed",
-                        ["Acl:Clients:admin:Type"] = "ApiKey",
-                        ["Acl:Clients:admin:Secret"] = Secret,
+                        ["Acl:Clients:admin:Type"] = oauth ? "OAuth" : "ApiKey",
+                        ["Acl:Clients:admin:Secret"] = oauth ? null : Secret,
                         ["Acl:Clients:admin:Scopes:0"] = "admin",
                     }
                 )

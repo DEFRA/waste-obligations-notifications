@@ -35,11 +35,13 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
     private const string PrivateContent = "private-redrive-personalisation-template";
 
     [Theory]
-    [InlineData("confirmed")]
-    [InlineData("delete-failure")]
-    [InlineData("indeterminate-send")]
+    [InlineData("confirmed", false)]
+    [InlineData("confirmed", true)]
+    [InlineData("delete-failure", false)]
+    [InlineData("indeterminate-send", false)]
     public async Task WhenSelectionIsRedrivenAcrossHosts_ShouldRecoverInsideDeduplicationWindowAndPreserveOtherMessagesAndEvidence(
-        string failure
+        string failure,
+        bool oauth
     )
     {
         using var sqs = new ReplaySqsClient();
@@ -77,7 +79,8 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 databaseName,
                 sqs,
                 mongo,
-                120
+                120,
+                oauth: oauth
             );
             using var firstClient = first.CreateClient();
             await first
@@ -133,7 +136,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             Assert.Equal(DeliveryClaimResult.Claimed, await store.Claim(command, "real-active-attempt", 60, token));
             var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
             var before = await records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token);
-            using var inspectionRequest = Request("inspect");
+            using var inspectionRequest = Request("inspect", oauth: oauth);
             using var inspected = await firstClient.SendAsync(inspectionRequest, token);
             Assert.Equal(HttpStatusCode.OK, inspected.StatusCode);
             using var inspection = JsonDocument.Parse(await inspected.Content.ReadAsStringAsync(token));
@@ -158,13 +161,14 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 databaseName,
                 sqs,
                 mongo,
-                60
+                60,
+                oauth: oauth
             );
             using var secondClient = second.CreateClient();
             sqs.DestinationUrl = destination.QueueUrl;
             sqs.FailNextDelete = failure == "delete-failure";
             sqs.FailNextSendAfterPublication = failure == "indeterminate-send";
-            using var redriveRequest = Request("redrive", selectionToken);
+            using var redriveRequest = Request("redrive", selectionToken, oauth: oauth);
             using var redriven = await secondClient.SendAsync(redriveRequest, token);
             Assert.Equal(
                 failure == "confirmed" ? HttpStatusCode.NoContent : HttpStatusCode.ServiceUnavailable,
@@ -174,7 +178,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             Assert.Equal(failure == "confirmed" ? 1 : 2, await Count(sqs, queue.QueueUrl, token));
             if (failure != "confirmed")
             {
-                using var retryRequest = Request("redrive", selectionToken);
+                using var retryRequest = Request("redrive", selectionToken, oauth: oauth);
                 using var retried = await firstClient.SendAsync(retryRequest, token);
                 Assert.Equal(HttpStatusCode.NoContent, retried.StatusCode);
                 Assert.Equal(1, await Count(sqs, destination.QueueUrl, token));
@@ -278,7 +282,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             JsonSerializer.SerializeToElement(new { content = PrivateContent })
         );
 
-    private static HttpRequestMessage Request(string action, string? selectionToken = null)
+    private static HttpRequestMessage Request(string action, string? selectionToken = null, bool oauth = false)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, $"/admin/notification-commands/dlq/{action}");
         if (action == "redrive")
@@ -289,7 +293,9 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             );
         request.Headers.TryAddWithoutValidation(
             "Authorization",
-            "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"admin:{Secret}"))
+            oauth
+                ? GatewayOAuthToken.Create("admin")
+                : "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"admin:{Secret}"))
         );
 
         return request;
@@ -476,7 +482,8 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         string databaseName,
         ReplaySqsClient sqs,
         IMongoClient mongo,
-        int lifetime
+        int lifetime,
+        bool oauth = false
     ) : WebApplicationFactory<Program>
     {
         public ReplaySqsClient Sqs { get; } = sqs;
@@ -524,8 +531,8 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                         ["Mongo:DatabaseName"] = databaseName,
                         ["Notify:ApiKey"] = "set-automatically-when-deployed",
                         ["Notify:BaseAddress"] = "set-automatically-when-deployed",
-                        ["Acl:Clients:admin:Type"] = "ApiKey",
-                        ["Acl:Clients:admin:Secret"] = Secret,
+                        ["Acl:Clients:admin:Type"] = oauth ? "OAuth" : "ApiKey",
+                        ["Acl:Clients:admin:Secret"] = oauth ? null : Secret,
                         ["Acl:Clients:admin:Scopes:0"] = "admin",
                     }
                 )

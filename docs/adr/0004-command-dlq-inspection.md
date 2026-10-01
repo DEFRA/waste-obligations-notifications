@@ -6,16 +6,26 @@ Status: Accepted
 
 Operators need to inspect failed notification commands without exposing message
 content or altering delivery evidence. Command sending can be paused during
-recovery. The approved administration contract uses Waste Obligations' Basic ACL
+recovery. The approved administration contract uses Waste Obligations' Basic/OAuth ACL
 and administrator endpoint structure.
 
 ## Decision
 
-Use Waste Obligations' `Basic` client authentication, `Acl.Clients` configuration,
-name/client-ID/scope claims and authenticated `Admin` policy requiring `admin`.
-Adapt malformed-header handling to generic denial with strict UTF-8 decoding.
-Validate enabled clients and require an ApiKey administrator. OAuth entries may
-coexist but cannot authenticate; no Bearer scheme is imported.
+Use Waste Obligations' Basic and Bearer providers, `Acl.Clients` configuration
+and authenticated Admin policy requiring an ACL `admin` scope. Basic maps ApiKey
+clients; Bearer maps exactly one `client_id` to an OAuth client. Build privileges
+only from ACL scopes, excluding incoming token scope/role claims. Enabled
+administration requires an ApiKey or OAuth administrator; OAuth needs no Basic
+secret. Preserve generic malformed-header denial and strict Basic UTF-8 decoding.
+
+The user amended the original Basic-only decision on 2026-10-01 and explicitly
+approved Waste Obligations' gateway-only validation. The private CDP gateway
+owns JWT signature, issuer and audience validation; this service parses tokens
+and retains framework lifetime checks with the default five-minute clock skew.
+Direct backend callers can assert an ACL identity, so backend access is a
+trusted deployment boundary requiring separate network controls. Gateway
+Cognito authentication must cover every administrator route. This decision
+does not provision deployed access or claim in-service signature validation.
 
 Enable inspection separately from sending and start/check Mongo migrations for
 either capability. Inspection waits for readiness and receives one visible FIFO

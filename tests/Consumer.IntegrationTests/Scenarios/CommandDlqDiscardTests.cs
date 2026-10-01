@@ -31,17 +31,19 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
     private const string PrivateContent = "private-redrive-personalisation-template";
 
     [Theory]
-    [InlineData("new")]
-    [InlineData("expired")]
-    [InlineData("delete-failure")]
-    [InlineData("late-write")]
-    [InlineData("active")]
-    [InlineData("accepted")]
-    [InlineData("suppressed")]
-    [InlineData("conflict")]
-    [InlineData("unknown")]
+    [InlineData("new", false)]
+    [InlineData("new", true)]
+    [InlineData("expired", false)]
+    [InlineData("delete-failure", false)]
+    [InlineData("late-write", false)]
+    [InlineData("active", false)]
+    [InlineData("accepted", false)]
+    [InlineData("suppressed", false)]
+    [InlineData("conflict", false)]
+    [InlineData("unknown", false)]
     public async Task WhenSelectedCommandIsDiscarded_ShouldPersistBeforeRemovalAndPreserveOtherMessagesAndProtectedHistory(
-        string state
+        string state,
+        bool oauth
     )
     {
         using var mongo = CreateMongoClient();
@@ -79,7 +81,8 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 databaseName,
                 sqs,
                 mongo,
-                120
+                120,
+                oauth: oauth
             );
             using var firstClient = first.CreateClient();
             await first
@@ -136,7 +139,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 digest.CreateRecipientLane(command.EmailAddress),
                 token
             );
-            using var inspectionRequest = Request("inspect");
+            using var inspectionRequest = Request("inspect", oauth: oauth);
             using var inspected = await firstClient.SendAsync(inspectionRequest, token);
             Assert.Equal(HttpStatusCode.OK, inspected.StatusCode);
             using var inspection = JsonDocument.Parse(await inspected.Content.ReadAsStringAsync(token));
@@ -162,10 +165,11 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 sqs,
                 mongo,
                 60,
-                lateWrite: state == "late-write"
+                lateWrite: state == "late-write",
+                oauth: oauth
             );
             using var secondClient = second.CreateClient();
-            using var discardRequest = Request("discard", selectionToken);
+            using var discardRequest = Request("discard", selectionToken, oauth: oauth);
             using var discarded = await secondClient.SendAsync(discardRequest, token);
             var eligible = state is "new" or "expired" or "delete-failure" or "late-write";
             var expectedStatus = state switch
@@ -200,7 +204,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 {
                     Assert.Equal(2, await Count(sqs, queue.QueueUrl, token));
                     Assert.Equal(state == "late-write" ? 0 : 1, sqs.SelectedDeletes);
-                    using var retryRequest = Request("discard", selectionToken);
+                    using var retryRequest = Request("discard", selectionToken, oauth: oauth);
                     using var retried = await firstClient.SendAsync(retryRequest, token);
                     Assert.Equal(HttpStatusCode.NoContent, retried.StatusCode);
                     Assert.Equal(record, await records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
@@ -365,7 +369,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
             JsonSerializer.SerializeToElement(new { content = PrivateContent })
         );
 
-    private static HttpRequestMessage Request(string action, string? selectionToken = null)
+    private static HttpRequestMessage Request(string action, string? selectionToken = null, bool oauth = false)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, $"/admin/notification-commands/dlq/{action}");
         if (action == "discard")
@@ -376,7 +380,9 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
             );
         request.Headers.TryAddWithoutValidation(
             "Authorization",
-            "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"admin:{Secret}"))
+            oauth
+                ? GatewayOAuthToken.Create("admin")
+                : "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"admin:{Secret}"))
         );
 
         return request;
@@ -558,7 +564,8 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
         ReplaySqsClient sqs,
         IMongoClient mongo,
         int lifetime,
-        bool lateWrite = false
+        bool lateWrite = false,
+        bool oauth = false
     ) : WebApplicationFactory<Program>
     {
         public ReplaySqsClient Sqs { get; } = sqs;
@@ -620,8 +627,8 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                         ["Mongo:DatabaseName"] = databaseName,
                         ["Notify:ApiKey"] = "set-automatically-when-deployed",
                         ["Notify:BaseAddress"] = "set-automatically-when-deployed",
-                        ["Acl:Clients:admin:Type"] = "ApiKey",
-                        ["Acl:Clients:admin:Secret"] = Secret,
+                        ["Acl:Clients:admin:Type"] = oauth ? "OAuth" : "ApiKey",
+                        ["Acl:Clients:admin:Secret"] = oauth ? null : Secret,
                         ["Acl:Clients:admin:Scopes:0"] = "admin",
                     }
                 )

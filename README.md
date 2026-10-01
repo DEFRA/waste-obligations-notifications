@@ -17,7 +17,7 @@ send. Conflicts, active claims, failed sends and incomplete persistence remain o
 SQS for visibility-timeout retry and queue redrive. A redriven command does not
 regain its original recipient-lane position.
 
-Configured Basic administrators can inspect one next-visible command-DLQ message
+Configured Basic or OAuth administrators can inspect one next-visible command-DLQ message
 through `POST /admin/notification-commands/dlq/inspect`. Administration is disabled
 by default. Inspection returns minimal metadata and a signed expiring selection;
 `POST /admin/notification-commands/dlq/redrive` accepts that selection in a JSON
@@ -293,11 +293,26 @@ and permits deployment placeholders; its endpoints remain absent.
 The ACL follows Waste Obligations: `Acl__Clients__<clientId>__Type=ApiKey`,
 `Acl__Clients__<clientId>__Secret`, and `Acl__Clients__<clientId>__Scopes__0=admin`.
 Enabled administration validates every client entry and requires a configured
-ApiKey admin. Known OAuth entries may coexist but cannot authenticate here;
-Bearer authentication is unavailable. Basic credentials use UTF-8 and split at
+ApiKey or OAuth admin. OAuth follows Waste Obligations: set
+`Acl__Clients__<clientId>__Type=OAuth` and
+`Acl__Clients__<clientId>__Scopes__0=admin`; an OAuth entry needs no Basic secret.
+Bearer tokens must identify exactly one configured OAuth client through
+`client_id`. Only ACL scopes grant admin access; incoming token scope/role claims
+cannot elevate a caller. ApiKey clients cannot use Bearer and OAuth clients
+cannot use Basic. Basic credentials use UTF-8 and split at
 the first colon, permitting colons in a secret. Supply secrets through CDP,
 never source control. CDP operator routing and credentials must be configured
 separately; local Compose keeps administration disabled.
+
+As explicitly approved, Bearer validation matches Waste Obligations: the private
+CDP gateway validates Cognito signatures, issuer and audience; this service
+parses the forwarded JWT and applies framework lifetime checks with the default
+five-minute clock skew. It does not verify signatures, issuer or audience.
+Gateway Cognito authentication must cover every administrator route. Direct
+backend callers can assert an ACL client identity, so backend network access is
+a deployment-owned trust boundary. Private DNS alone does not prove gateway
+traversal. Configure gateway authentication, OAuth client IDs/ACL scopes and
+network restrictions separately; this PR does not provision CDP resources.
 
 An authenticated inspection response retains the exact idempotency key and notification
 type, including private-bearing spellings: these two fields are the approved

@@ -13,7 +13,7 @@ The command consumer records pre-cutover commands as `delivery-suppressed` and
 sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
-cutover. Analytics does not yet create notification commands. Configured Basic
+cutover. Analytics does not yet create notification commands. Configured Basic or OAuth
 administrators can inspect, redrive or discard one command-DLQ message. Redrive does not restore a command's
 original recipient-lane position.
 
@@ -179,11 +179,24 @@ cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
 
 Administration is disabled by default and exposes no routes while disabled.
 Enabled `POST /admin/notification-commands/dlq/inspect` requires authenticated
-Basic credentials from the Waste Obligations `Acl.Clients` shape with an `admin`
-scope. Unknown clients, OAuth/Bearer callers, incorrect or malformed credentials
-and read/write-only clients cannot reach queue or record operations. Validate
+Basic or Bearer credentials from the Waste Obligations `Acl.Clients` shape with
+an ACL `admin` scope. Basic requires an ApiKey client and its secret; Bearer
+requires exactly one `client_id` identifying an OAuth client. Unknown clients,
+wrong client types, incorrect/malformed credentials, invalid lifetimes and
+read/write-only clients cannot reach queue or record operations. Token-provided
+scope or role claims cannot grant privileges; only configured ACL scopes apply. Validate
 enabled ACL entries, admin credentials, distinct command/DLQ FIFO URLs and digest secrets at
-startup. See [ADR 0004](adr/0004-command-dlq-inspection.md).
+startup. Either an ApiKey or OAuth administrator satisfies enabled startup.
+See [ADR 0004](adr/0004-command-dlq-inspection.md).
+
+Bearer follows the explicitly approved Waste Obligations gateway trust contract:
+the private CDP gateway validates Cognito signatures, issuer and audience. The
+service parses tokens and validates lifetime with the framework's default
+five-minute clock skew, but does not verify signature, issuer or audience.
+Gateway authentication must protect every administrator route. Direct backend
+callers can assert an ACL client identity; deployment-owned network controls
+must establish that trust boundary. Private routing alone does not establish
+gateway validation. Disabled administration stays absent without a live gateway.
 
 Administration can run while sending is paused. It starts the same Mongo
 migrations and waits for verified readiness before receiving one next-visible
@@ -213,7 +226,7 @@ and storage calls and reject late confirmations. Redrive uses this selection
 contract; discard uses the same authenticated selection body.
 
 `POST /admin/notification-commands/dlq/redrive` accepts the selection token in its
-JSON body and requires the same Basic Admin policy. Invalid or expired tokens
+JSON body and requires the same Basic/Bearer Admin policy. Invalid or expired tokens
 return a fixed bad-request result before receiving. Replay uses the signed FIFO
 receive-attempt ID, one message and zero wait. Missing, changed or malformed
 selected commands return a fixed conflict without publishing or deleting. The
@@ -285,7 +298,7 @@ readiness.
   deployment-owned. Local Compose settings do not configure CDP environments.
   Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
   Fluent-host endpoint derivation is malformed.
-- Administration enablement, DLQ URL, selection/timeout settings, Basic client
+- Administration enablement, DLQ URL, selection/timeout settings, Basic/OAuth client
   credentials/scopes and operator routing are deployment-owned. Compose defaults
   do not configure CDP access.
 

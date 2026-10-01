@@ -610,7 +610,7 @@ public sealed class CommandDlqInspectionTests
                 ["Acl:Clients:admin:Scopes:0"] = "admin",
                 ["Acl:Clients:oauth:Type"] = "OAuth",
                 ["Acl:Clients:oauth:Secret"] = Secret,
-                ["Acl:Clients:oauth:Scopes:0"] = "admin",
+                ["Acl:Clients:oauth:Scopes:0"] = "read",
                 ["Acl:Clients:read:Type"] = "ApiKey",
                 ["Acl:Clients:read:Secret"] = Secret,
                 ["Acl:Clients:read:Scopes:0"] = "read",
