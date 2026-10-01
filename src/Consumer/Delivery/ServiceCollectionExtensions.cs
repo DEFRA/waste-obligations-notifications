@@ -2,6 +2,8 @@ using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
+using Notify.Client;
+using Notify.Interfaces;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
 
@@ -65,6 +67,9 @@ public static class ServiceCollectionExtensions
                 "Notify BaseAddress must be an absolute HTTP URL"
             )
             .ValidateOnStart();
+        services.AddSingleton<Func<IHttpClient, NotifyOptions, IAsyncNotificationClient>>(_ =>
+            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
+        );
         services
             .AddHttpClient<INotifyEmailClient, NotifyEmailClient>(
                 (provider, client) =>
