@@ -17,6 +17,13 @@ send. Conflicts, active claims, failed sends and incomplete persistence remain o
 SQS for visibility-timeout retry and queue redrive. A redriven command does not
 regain its original recipient-lane position.
 
+Configured Basic administrators can inspect one next-visible command-DLQ message
+through `POST /admin/notification-commands/dlq/inspect`. Administration is disabled
+by default. Inspection returns minimal metadata and a signed expiring selection;
+redrive and discard endpoints are not yet available. It never sends, deletes or
+changes delivery evidence, but receiving temporarily changes visibility and the
+selected message's receive count.
+
 Notify acceptance means Notify accepted the email request; it does not prove
 recipient delivery. A timeout, lost response, crash, or persistence failure can
 leave an indeterminate send. After claim expiry, a queue retry may send that email
@@ -65,6 +72,7 @@ The Consumer health endpoint is available at `http://localhost:8085/health`.
 - [Service behaviour](docs/service-behaviour.md): message contracts, processing rules, and deployment ownership.
 - [Context](CONTEXT.md): notification-delivery terminology.
 - ADRs: accepted [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and proposed [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
+- Accepted [administrator inspection](docs/adr/0004-command-dlq-inspection.md): Basic access and content-free selection.
 - [Agent guidelines](AGENTS.md): entry points and sandbox build guidance for coding agents.
 
 ## Test
@@ -191,7 +199,7 @@ the pinned SDK's [ECS implementation](https://github.com/awslabs/aws-embedded-me
 builds an invalid derived endpoint. `AWS_EMF_ENVIRONMENT=Agent` also avoids metadata
 discovery when the collector route is already known.
 
-When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
+When command processing or administration is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
 Each host checks migration history and the required unique index before command
@@ -246,7 +254,8 @@ reads for delivery evidence, even if the URI specifies another read preference.
 Local Compose uses unauthenticated standalone Mongo and cannot verify CDP IAM or
 TLS. Before enabling command processing in CDP, verify authentication, certificate
 loading, database permissions, migration completion and `/health/all`. Mongo
-migrations and health checks remain conditional on command processing being enabled.
+migrations and command queue/Mongo health checks run when command processing
+or command-DLQ administration is enabled.
 
 When command processing is enabled, `/health/all` also checks GOV.UK Notify with
 one authenticated `GET /v2/templates?type=email`, bounded by the existing
@@ -255,6 +264,41 @@ template content; it does not validate a command's template or confirm email
 delivery. Failures expose a fixed description without dependency error details.
 Disabled command processing does not register or call this check. `/health`
 remains independent of Notify and the other extended dependency checks.
+
+`CommandDlqAdministration__Enabled=true` enables inspection independently of
+command sending. Configure its FIFO `QueueUrl`, a distinct command FIFO URL and both
+delivery digest secrets. `SelectionLifetimeSeconds` defaults to 120 and must be
+strictly below AWS's 300-second receive-attempt window;
+`DependencyTimeoutSeconds` defaults to 10 and must be positive and shorter than
+the selection lifetime. Inspection waits for verified Mongo migrations before
+receiving. Notify credentials, cutover and sending budgets are required only
+when sending is enabled. Disabled administration ignores its unvalidated ACL
+and permits deployment placeholders; its endpoints remain absent.
+
+The ACL follows Waste Obligations: `Acl__Clients__<clientId>__Type=ApiKey`,
+`Acl__Clients__<clientId>__Secret`, and `Acl__Clients__<clientId>__Scopes__0=admin`.
+Enabled administration validates every client entry and requires a configured
+ApiKey admin. Known OAuth entries may coexist but cannot authenticate here;
+Bearer authentication is unavailable. Basic credentials use UTF-8 and split at
+the first colon, permitting colons in a secret. Supply secrets through CDP,
+never source control. CDP operator routing and credentials must be configured
+separately; local Compose keeps administration disabled.
+
+An authenticated response retains the exact idempotency key and notification
+type, including private-bearing spellings: these two fields are the approved
+operator-view exception. Other fields contain timestamps, receive count, fixed
+state/parsing classifications, recipient digest and the selection token.
+Historical dependency error details are unavailable. Malformed or unsupported
+commands disclose no partial command identity and receive no usable selection.
+Logs use the diagnostic category allowlist and never expose raw identities.
+
+Selections contain only receive-attempt ID, SQS message ID, an HMAC queue binding,
+absolute expiry and immutable-field digest. Hosts sharing the evidence secret
+and DLQ configuration can validate them; no message body or receipt handle is
+returned or stored. Expiry starts before the receive request, and late dependency
+confirmations fail safely. `/health/all` checks the DLQ when administration is
+enabled, while Notify health remains conditional on sending. `/health` stays
+independent of migration readiness and these dependencies.
 
 ## Code quality and delivery
 

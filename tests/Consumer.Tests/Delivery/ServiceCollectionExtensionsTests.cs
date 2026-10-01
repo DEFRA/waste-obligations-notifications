@@ -14,20 +14,67 @@ public sealed class ServiceCollectionExtensionsTests
     [InlineData(20, 10, false)]
     [InlineData(0, 1, true)]
     [InlineData(0, 0, false)]
-    public void WhenReceiveTimeoutIsConfigured_ShouldRequireItToExceedLongPollWait(
+    public void WhenSendingIsEnabled_ShouldRequireReceiveTimeoutToExceedLongPollWait(
         int waitTimeSeconds,
         int receiveTimeoutSeconds,
         bool valid
     )
     {
+        using var provider = CreateProvider(true, waitTimeSeconds, receiveTimeoutSeconds);
+        var options = provider.GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>();
+
+        if (valid)
+        {
+            Assert.True(options.Value.ProcessingEnabled);
+            Assert.Equal(waitTimeSeconds, options.Value.WaitTimeSeconds);
+            Assert.Equal(receiveTimeoutSeconds, options.Value.ReceiveTimeoutSeconds);
+            Assert.Equal(1, options.Value.BatchSize);
+            Assert.True(options.Value.HasValidProcessingBudget);
+        }
+        else
+        {
+            var exception = Assert.Throws<OptionsValidationException>(() => options.Value);
+            Assert.Contains("Notification command receive timeout must exceed the long-poll wait", exception.Failures);
+            Assert.DoesNotContain(
+                exception.Failures,
+                failure => failure.Contains("must cover", StringComparison.Ordinal)
+            );
+        }
+    }
+
+    [Theory]
+    [InlineData(20, 20)]
+    [InlineData(20, 10)]
+    [InlineData(0, 0)]
+    public void WhenSendingIsPaused_ShouldPermitUnusedReceiveBudgets(int waitTimeSeconds, int receiveTimeoutSeconds)
+    {
+        using var provider = CreateProvider(false, waitTimeSeconds, receiveTimeoutSeconds);
+        var options = provider.GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>().Value;
+
+        Assert.False(options.ProcessingEnabled);
+        Assert.Equal(waitTimeSeconds, options.WaitTimeSeconds);
+        Assert.Equal(receiveTimeoutSeconds, options.ReceiveTimeoutSeconds);
+    }
+
+    private static ServiceProvider CreateProvider(
+        bool processingEnabled,
+        int waitTimeSeconds,
+        int receiveTimeoutSeconds
+    )
+    {
+        const string ampleBudgetSeconds = "1000";
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
+                    ["AWS_EMF_ENABLED"] = "false",
+                    ["NotificationCommandDelivery:ProcessingEnabled"] = processingEnabled.ToString(),
                     ["NotificationCommandDelivery:QueueUrl"] = "commands.fifo",
                     ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
+                    ["NotificationCommandDelivery:CommandLeaseSeconds"] = ampleBudgetSeconds,
+                    ["NotificationCommandDelivery:VisibilityTimeoutSeconds"] = ampleBudgetSeconds,
                     ["NotificationCommandDelivery:WaitTimeSeconds"] = waitTimeSeconds.ToString(
                         CultureInfo.InvariantCulture
                     ),
@@ -40,18 +87,7 @@ public sealed class ServiceCollectionExtensionsTests
             .Build();
         var services = new ServiceCollection();
         services.AddNotificationCommandDelivery(configuration);
-        using var provider = services.BuildServiceProvider();
-        var options = provider.GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>();
 
-        if (valid)
-        {
-            Assert.Equal(waitTimeSeconds, options.Value.WaitTimeSeconds);
-            Assert.Equal(receiveTimeoutSeconds, options.Value.ReceiveTimeoutSeconds);
-            Assert.Equal(1, options.Value.BatchSize);
-        }
-        else
-        {
-            Assert.Throws<OptionsValidationException>(() => options.Value);
-        }
+        return services.BuildServiceProvider();
     }
 }

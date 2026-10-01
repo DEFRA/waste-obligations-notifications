@@ -28,6 +28,66 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         _migrationReadiness = migrationReadiness;
     }
 
+    public async Task<NotificationDeliveryState> Inspect(
+        NotificationCommand command,
+        CancellationToken cancellationToken
+    )
+    {
+        await _migrationReadiness.Wait(cancellationToken);
+        var fields = new BsonDocument
+        {
+            { "_id", 0 },
+            { "outcome", 1 },
+            { "recordedAtUtc", 1 },
+            { "leaseExpiresAtUtc", 1 },
+            {
+                "matches",
+                new BsonDocument(
+                    "$eq",
+                    new BsonArray { "$immutableFields", Literal(_digest.CreateImmutableFieldsDigest(command)) }
+                )
+            },
+            {
+                "active",
+                new BsonDocument(
+                    "$gt",
+                    new BsonArray
+                    {
+                        new BsonDocument(
+                            "$ifNull",
+                            new BsonArray { "$leaseExpiresAtUtc", new BsonDateTime(DateTime.UnixEpoch) }
+                        ),
+                        "$$NOW",
+                    }
+                )
+            },
+        };
+        var record = await _records
+            .Aggregate()
+            .Match(new BsonDocument("notificationKey", _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey)))
+            .Project<BsonDocument>(fields)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (record is null)
+            return new("unrecorded", null, null);
+        var classification = record["outcome"].AsString switch
+        {
+            "delivery-pending" => record["active"].AsBoolean ? "active-claim" : "expired-claim",
+            "delivery-accepted" => "delivery-accepted",
+            "delivery-suppressed" => "delivery-suppressed",
+            "delivery-abandoned" => "delivery-abandoned",
+            _ => "unknown-delivery-state",
+        };
+        if (!record["matches"].AsBoolean)
+            classification = "immutable-conflict";
+
+        return new(classification, ReadTimestamp(record, "recordedAtUtc"), ReadTimestamp(record, "leaseExpiresAtUtc"));
+    }
+
+    private static DateTimeOffset? ReadTimestamp(BsonDocument record, string name) =>
+        record.TryGetValue(name, out var value) && value.BsonType == BsonType.DateTime
+            ? new DateTimeOffset(value.ToUniversalTime())
+            : null;
+
     public async Task<SuppressionClaimResult> RecordSuppression(
         NotificationCommand command,
         CancellationToken cancellationToken

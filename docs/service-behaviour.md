@@ -13,8 +13,9 @@ The command consumer records pre-cutover commands as `delivery-suppressed` and
 sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
-cutover. Analytics does not yet create notification commands, and there is no
-administrator DLQ management surface. Redrive does not restore a command's
+cutover. Analytics does not yet create notification commands. Configured Basic
+administrators can inspect one command-DLQ message; redrive and discard remain
+unavailable. Redrive does not restore a command's
 original recipient-lane position.
 
 ## Consumers and message handling
@@ -47,8 +48,10 @@ original recipient-lane position.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
 - Validate the UTC cutover and configured evidence and recipient-lane secrets
-  at startup when command processing is enabled. Invalid configuration must
-  not consume commands; disabled processing permits deployment placeholders.
+  at startup when command processing is enabled. Digest secrets are also required
+  for enabled command-DLQ administration; cutover and sending budgets are required
+  only for sending. Invalid configuration must not consume commands; disabled
+  capabilities permit deployment placeholders.
   Digest creation also rejects unconfigured secrets independently of processing.
 - Use the idempotency key as the FIFO message-deduplication ID and a
   non-reversible per-recipient digest as the FIFO message-group ID.
@@ -58,7 +61,7 @@ original recipient-lane position.
   Reject invalid keys without changing them; never trim, truncate or replace
   the key to fit the queue constraints.
 - Run versioned Mongo migrations under a renewable exclusive lease when command
-  processing is enabled. Each host must verify the required migration version
+  processing or command-DLQ administration is enabled. Each host must verify the required migration version
   and unique notification-key index before receiving commands from SQS or
   persisting them. Completion by another host can satisfy this check, including
   after the local host exhausts its migration attempts. A lease-renewal failure
@@ -164,6 +167,48 @@ The command architecture is described in
 [ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the
 cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
 
+## Command-DLQ inspection
+
+Administration is disabled by default and exposes no routes while disabled.
+Enabled `POST /admin/notification-commands/dlq/inspect` requires authenticated
+Basic credentials from the Waste Obligations `Acl.Clients` shape with an `admin`
+scope. Unknown clients, OAuth/Bearer callers, incorrect or malformed credentials
+and read/write-only clients cannot reach queue or record operations. Validate
+enabled ACL entries, admin credentials, distinct command/DLQ FIFO URLs and digest secrets at
+startup. See [ADR 0004](adr/0004-command-dlq-inspection.md).
+
+Administration can run while sending is paused. It starts the same Mongo
+migrations and waits for verified readiness before receiving one next-visible
+FIFO DLQ message. Receive uses a fresh attempt ID, zero wait and visibility
+covering the bounded selection lifetime. Inspection changes that message's
+visibility and receive count but never deletes, publishes, abandons or overwrites
+delivery evidence. An empty queue returns no content. Failures expose fixed
+safe messages and leave the message available for later visibility-timeout retry.
+
+The response retains a valid command's exact raw idempotency key and notification
+type, even when these contain private-bearing text. This approved exception is
+limited to those two authenticated response fields. Other fields contain only
+business/SQS/evidence timestamps, receive count, recipient digest, fixed parsing
+or delivery-state classification, a statement that historical dependency errors
+are unavailable, and a signed selection token. Do not expose recipient-address,
+personalisation, template, rendered-content or Notify-response fields. Malformed
+or unsupported commands expose no partially extracted command fields and no
+usable selection. Logs retain the safe diagnostic-label rules above.
+
+The shared-secret, versioned HMAC selection contains only FIFO receive-attempt
+ID, opaque SQS message ID, HMAC queue binding, absolute UTC expiry and immutable
+evidence digest. It contains neither raw command identity nor body/receipt
+content, works across correctly configured hosts and is not persisted. Expiry
+is anchored before receive, is strictly within AWS's five-minute attempt window,
+and is not extended by a delayed response. Pass bounded cancellation to queue
+and storage calls and reject late confirmations. Redrive and discard will use
+this selection contract in later increments; neither operation is available now.
+
+Command queue/Mongo extended health runs when sending or administration is
+enabled, with DLQ health added for administration. Notify health remains enabled
+only for sending. `/health` and analytics remain independent of administration
+readiness.
+
 ## Deployment ownership
 
 - The analytics queue must be a separate SNS subscription from the producer
@@ -174,6 +219,9 @@ cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
   deployment-owned. Local Compose settings do not configure CDP environments.
   Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
   Fluent-host endpoint derivation is malformed.
+- Administration enablement, DLQ URL, selection/timeout settings, Basic client
+  credentials/scopes and operator routing are deployment-owned. Compose defaults
+  do not configure CDP access.
 
 ## Behaviour verification
 

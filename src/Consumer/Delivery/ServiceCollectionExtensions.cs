@@ -1,4 +1,6 @@
+using System.ComponentModel.DataAnnotations;
 using Amazon.SQS;
+using Defra.WasteObligations.Consumer.Administration;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
@@ -12,13 +14,25 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration
     )
     {
+        var administrationEnabled = configuration.GetValue<bool>(
+            $"{CommandDlqAdministrationOptions.SectionName}:Enabled"
+        );
+        var processingEnabled = configuration.GetValue<bool>(
+            $"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled"
+        );
         services
             .AddOptions<NotificationCommandDeliveryOptions>()
             .Bind(configuration.GetRequiredSection(NotificationCommandDeliveryOptions.SectionName))
-            .ValidateDataAnnotations()
+            .Validate(
+                options =>
+                    !options.ProcessingEnabled
+                    || Validator.TryValidateObject(options, new ValidationContext(options), [], true),
+                "Notification command sending configuration must satisfy required fields and duration ranges."
+            )
             .Validate(
                 options =>
                     options.DiagnosticNotificationTypes is not null
+                    && options.DiagnosticNotificationTypes.Length <= 32
                     && options.DiagnosticNotificationTypes.All(NotificationCommandDeliveryOptions.IsDiagnosticLabel),
                 "DiagnosticNotificationTypes must contain only bounded lowercase ASCII category labels"
             )
@@ -27,20 +41,20 @@ public static class ServiceCollectionExtensions
                 "CommandLeaseSeconds and VisibilityTimeoutSeconds must cover ReceiveTimeoutSeconds, ClaimTimeoutSeconds, NotifyTimeoutSeconds, AcceptanceTimeoutSeconds, DeleteTimeoutSeconds and SafetyHeadroomSeconds"
             )
             .Validate(
-                options => options.ReceiveTimeoutSeconds > options.WaitTimeSeconds,
+                options => !options.ProcessingEnabled || options.ReceiveTimeoutSeconds > options.WaitTimeSeconds,
                 "Notification command receive timeout must exceed the long-poll wait"
             )
             .Validate(
                 options =>
-                    !options.ProcessingEnabled
+                    !(options.ProcessingEnabled || administrationEnabled)
                     || NotificationCommandDeliveryOptions.IsSecretConfigured(options.EvidenceDigestSecret),
-                "EvidenceDigestSecret must be configured when notification command processing is enabled"
+                "EvidenceDigestSecret must be configured when notification command processing or administration is enabled"
             )
             .Validate(
                 options =>
-                    !options.ProcessingEnabled
+                    !(options.ProcessingEnabled || administrationEnabled)
                     || NotificationCommandDeliveryOptions.IsSecretConfigured(options.RecipientLaneSecret),
-                "RecipientLaneSecret must be configured when notification command processing is enabled"
+                "RecipientLaneSecret must be configured when notification command processing or administration is enabled"
             )
             .Validate(
                 options => !options.ProcessingEnabled || options.TryReadCutover(out _),
@@ -51,17 +65,23 @@ public static class ServiceCollectionExtensions
         services
             .AddOptions<NotifyOptions>()
             .Bind(configuration.GetSection(NotifyOptions.SectionName))
-            .ValidateDataAnnotations()
             .Validate(
                 options =>
-                    !configuration.GetValue<bool>($"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled")
-                    || options.HasValidApiKey,
+                    !processingEnabled
+                    || Validator.TryValidateObject(options, new ValidationContext(options), [], true),
+                "Notify configuration must satisfy required sending fields."
+            )
+            .Validate(
+                options => !processingEnabled || options.HasValidApiKey,
                 "Notify ApiKey must be configured when notification command processing is enabled"
             )
             .Validate(
                 options =>
-                    Uri.TryCreate(options.BaseAddress, UriKind.Absolute, out var uri)
-                    && uri.Scheme is "https" or "http",
+                    !processingEnabled
+                    || (
+                        Uri.TryCreate(options.BaseAddress, UriKind.Absolute, out var uri)
+                        && uri.Scheme is "https" or "http"
+                    ),
                 "Notify BaseAddress must be an absolute HTTP URL"
             )
             .ValidateOnStart();
@@ -69,11 +89,12 @@ public static class ServiceCollectionExtensions
             .AddHttpClient<INotifyEmailClient, NotifyEmailClient>(
                 (provider, client) =>
                 {
-                    client.BaseAddress = new Uri(
-                        provider
-                            .GetRequiredService<Microsoft.Extensions.Options.IOptions<NotifyOptions>>()
-                            .Value.BaseAddress
-                    );
+                    if (processingEnabled)
+                        client.BaseAddress = new Uri(
+                            provider
+                                .GetRequiredService<Microsoft.Extensions.Options.IOptions<NotifyOptions>>()
+                                .Value.BaseAddress
+                        );
                     client.Timeout = Timeout.InfiniteTimeSpan;
                 }
             )

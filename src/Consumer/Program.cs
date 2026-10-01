@@ -1,5 +1,8 @@
+using Defra.WasteObligations.Consumer.Administration;
+using Defra.WasteObligations.Consumer.Authentication;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Endpoints;
 using Defra.WasteObligations.Consumer.Utils;
 using Defra.WasteObligations.Consumer.Utils.Health;
 using Defra.WasteObligations.Consumer.Utils.Logging;
@@ -15,16 +18,19 @@ try
     builder.Services.LoadCustomTrustStoreFromEnvironment();
     builder.ConfigureLoggingAndTracing();
     builder.Services.AddProblemDetails();
-    builder.Services.AddAuthorization();
+    builder.Services.AddAuthenticationAuthorization(builder.Configuration);
     builder.Services.AddHealth(builder.Configuration);
     builder.Services.AddAnalyticsEventConsumer(builder.Configuration);
     builder.Services.AddNotificationCommandDelivery(builder.Configuration);
+    builder.Services.AddCommandDlqAdministration(builder.Configuration);
 
     var app = builder.Build();
 
     app.UseHeaderPropagation();
+    app.UseAuthentication();
     app.UseAuthorization();
     app.MapHealth();
+    app.MapApiEndpoints();
 
     await app.RunAsync();
 }
