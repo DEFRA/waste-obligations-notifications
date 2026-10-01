@@ -10,6 +10,8 @@ namespace Defra.WasteObligations.Consumer.Delivery;
 public sealed class MongoNotificationDeliveryRecordStore : INotificationDeliveryRecordStore
 {
     internal const string CollectionName = nameof(NotificationDeliveryRecord);
+    private const string OutcomeField = "outcome";
+    private const string ServerNow = "$$NOW";
     private readonly INotificationCommandDigest _digest;
     private readonly MongoMigrationReadiness _migrationReadiness;
     private readonly IMongoCollection<NotificationDeliveryRecord> _records;
@@ -87,7 +89,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         {
             { "notificationKey", notificationKey },
             { "immutableFields", immutableFields },
-            { "outcome", "delivery-pending" },
+            { OutcomeField, "delivery-pending" },
         };
         var fields = new BsonDocument
         {
@@ -96,8 +98,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { "recipient", Literal(_digest.CreateRecipientDigest(command.EmailAddress)) },
             { "notificationType", Literal(command.NotificationType) },
             { "actionOccurredAtUtc", command.ActionOccurredAtUtc.UtcDateTime },
-            { "outcome", "delivery-pending" },
-            { "recordedAtUtc", "$$NOW" },
+            { OutcomeField, "delivery-pending" },
+            { "recordedAtUtc", ServerNow },
             { "attemptOwner", Literal(attemptOwner) },
             {
                 "leaseExpiresAtUtc",
@@ -105,7 +107,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                     "$dateAdd",
                     new BsonDocument
                     {
-                        { "startDate", "$$NOW" },
+                        { "startDate", ServerNow },
                         { "unit", "second" },
                         { "amount", leaseDurationSeconds },
                     }
@@ -120,7 +122,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                     "$ifNull",
                     new BsonArray { "$leaseExpiresAtUtc", new BsonDateTime(DateTime.UnixEpoch) }
                 ),
-                "$$NOW",
+                ServerNow,
             }
         );
         var update = new PipelineUpdateDefinition<NotificationDeliveryRecord>(
@@ -180,18 +182,18 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { "notificationKey", _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey) },
             { "immutableFields", _digest.CreateImmutableFieldsDigest(command) },
             { "attemptOwner", attemptOwner },
-            { "outcome", "delivery-pending" },
-            { "$expr", new BsonDocument("$gt", new BsonArray { "$leaseExpiresAtUtc", "$$NOW" }) },
+            { OutcomeField, "delivery-pending" },
+            { "$expr", new BsonDocument("$gt", new BsonArray { "$leaseExpiresAtUtc", ServerNow }) },
         };
         var fields = new BsonDocument
         {
-            { "outcome", NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue() },
+            { OutcomeField, NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue() },
             { "notifyReference", Literal(acceptance.Reference) },
             { "templateId", Literal(acceptance.TemplateId) },
             { "templateVersion", acceptance.TemplateVersion },
             { "notifyNotificationId", Literal(acceptance.NotificationId) },
-            { "acceptedAtUtc", "$$NOW" },
-            { "recordedAtUtc", "$$NOW" },
+            { "acceptedAtUtc", ServerNow },
+            { "recordedAtUtc", ServerNow },
         };
         var update = new PipelineUpdateDefinition<NotificationDeliveryRecord>(
             new[]

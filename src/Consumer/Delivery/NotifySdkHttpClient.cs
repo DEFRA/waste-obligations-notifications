@@ -14,7 +14,7 @@ public sealed class NotifySdkHttpClient : IHttpClient
     private string? _accept;
     private string? _userAgent;
 
-    public NotifySdkHttpClient(HttpClient client, CancellationToken cancellationToken, HttpStatusCode expectedStatus)
+    public NotifySdkHttpClient(HttpClient client, HttpStatusCode expectedStatus, CancellationToken cancellationToken)
     {
         _client = client;
         _cancellationToken = cancellationToken;
