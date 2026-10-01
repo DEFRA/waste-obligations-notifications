@@ -32,20 +32,32 @@ public sealed class NotificationCommandDeliveryTests : IntegrationTestBase
         var records = mongoClient
             .GetDatabase("waste-obligations-notifications")
             .GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        var filter = NotificationKeyFilter(IdempotencyKey);
 
         await WaitForAsync(async () =>
         {
-            var record = await records
-                .Find(new BsonDocument())
-                .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
+            var record = await records.Find(filter).FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
             Assert.NotNull(record);
         });
 
-        var storedRecord = await records.Find(new BsonDocument()).FirstAsync(TestContext.Current.CancellationToken);
+        var storedRecord = await records.Find(filter).SingleAsync(TestContext.Current.CancellationToken);
         var storedJson = storedRecord.ToJson();
 
         Assert.Equal("delivery-suppressed", storedRecord["outcome"].AsString);
+        Assert.Equal(
+            [
+                "_id",
+                "actionOccurredAtUtc",
+                "immutableFields",
+                "notificationKey",
+                "notificationType",
+                "outcome",
+                "recipient",
+                "recordedAtUtc",
+            ],
+            storedRecord.Names.Order(StringComparer.Ordinal)
+        );
         Assert.DoesNotContain(EmailAddress, storedJson, StringComparison.Ordinal);
         Assert.DoesNotContain(IdempotencyKey, storedJson, StringComparison.Ordinal);
         Assert.DoesNotContain(Personalisation, storedJson, StringComparison.Ordinal);

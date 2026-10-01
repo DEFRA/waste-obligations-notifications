@@ -80,6 +80,10 @@ original recipient-lane position.
   idempotency and outcomes. Do not persist recipient addresses,
   personalisation, template content, rendered content, or full GOV.UK Notify
   responses.
+  New suppression records retain their original eight fields; optional lease
+  and Notify fields are omitted when absent. Claims and accepted records keep
+  their additional evidence. Existing documents are not rewritten, and older
+  record models are not expected to read pending or accepted records.
 - Treat a duplicate command with different immutable fields as a conflict and
   leave it retryable. A pre-cutover command is terminal only after its
   `delivery-suppressed` outcome is recorded. A nonterminal claim cannot be

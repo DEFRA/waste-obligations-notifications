@@ -22,6 +22,10 @@ recipient delivery. A timeout, lost response, crash, or persistence failure can
 leave an indeterminate send. After claim expiry, a queue retry may send that email
 again. There is no HTTP retry or Notify-reference reconciliation in this service.
 
+New suppression records retain their original eight-field shape, omitting absent
+lease and Notify fields. Claims and accepted records retain their additional
+evidence; this change does not rewrite existing documents.
+
 The idempotency key is used unchanged as the FIFO deduplication ID. Publishing
 and consumption reject keys longer than 128 characters or containing whitespace,
 control characters, or characters outside the ASCII letters, digits and punctuation

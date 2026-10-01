@@ -22,17 +22,24 @@ public sealed record NotificationDeliveryRecord
 
     public required DateTime RecordedAtUtc { get; init; }
 
+    [BsonIgnoreIfNull]
     public string? AttemptOwner { get; init; }
 
+    [BsonIgnoreIfNull]
     public DateTime? LeaseExpiresAtUtc { get; init; }
 
+    [BsonIgnoreIfNull]
     public string? NotifyReference { get; init; }
 
+    [BsonIgnoreIfNull]
     public string? TemplateId { get; init; }
 
+    [BsonIgnoreIfNull]
     public int? TemplateVersion { get; init; }
 
+    [BsonIgnoreIfNull]
     public string? NotifyNotificationId { get; init; }
 
+    [BsonIgnoreIfNull]
     public DateTime? AcceptedAtUtc { get; init; }
 }

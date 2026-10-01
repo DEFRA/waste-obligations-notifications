@@ -6,6 +6,8 @@ using Defra.WasteObligations.Consumer.Delivery;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 
 namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
@@ -13,7 +15,7 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
 {
     [Fact]
-    public async Task WhenSuppressionIsRetried_ShouldPreserveEvidenceAndRejectConflicts()
+    public async Task WhenSuppressionIsRetried_ShouldPreserveBaselineCompatibleEvidenceAndRejectConflicts()
     {
         using var client = CreateMongoClient();
         var databaseName = $"notifications_store_test_{Guid.NewGuid():N}";
@@ -85,7 +87,39 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             Assert.Equal(digest.CreateImmutableFieldsDigest(command), record.ImmutableFields);
             Assert.Equal("delivery-suppressed", record.Outcome);
             Assert.Equal(new DateTime(2026, 9, 28, 0, 0, 0, 123, DateTimeKind.Utc), record.ActionOccurredAtUtc);
-            var stored = record.ToJson();
+            var rawRecord = await database
+                .GetCollection<BsonDocument>("NotificationDeliveryRecord")
+                .Find(new BsonDocument("notificationKey", digest.CreateIdempotencyKeyDigest(command.IdempotencyKey)))
+                .SingleAsync(cancellationToken);
+            var baselineRecord = BsonSerializer.Deserialize<BaselineNotificationDeliveryRecord>(rawRecord);
+            Assert.Equal(
+                new BaselineNotificationDeliveryRecord
+                {
+                    Id = record.Id,
+                    NotificationKey = record.NotificationKey,
+                    ImmutableFields = record.ImmutableFields,
+                    Recipient = record.Recipient,
+                    NotificationType = record.NotificationType,
+                    ActionOccurredAtUtc = record.ActionOccurredAtUtc,
+                    Outcome = record.Outcome,
+                    RecordedAtUtc = record.RecordedAtUtc,
+                },
+                baselineRecord
+            );
+            Assert.Equal(
+                [
+                    "_id",
+                    "actionOccurredAtUtc",
+                    "immutableFields",
+                    "notificationKey",
+                    "notificationType",
+                    "outcome",
+                    "recipient",
+                    "recordedAtUtc",
+                ],
+                rawRecord.Names.Order(StringComparer.Ordinal)
+            );
+            var stored = rawRecord.ToJson();
             Assert.DoesNotContain(command.EmailAddress, stored, StringComparison.Ordinal);
             Assert.DoesNotContain(command.IdempotencyKey, stored, StringComparison.Ordinal);
             Assert.DoesNotContain(command.TemplateId, stored, StringComparison.Ordinal);
@@ -149,13 +183,19 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             Assert.Single(claims, result => result == DeliveryClaimResult.Claimed);
             Assert.Equal(2, claims.Count(result => result == DeliveryClaimResult.ActiveClaim));
             var oldOwner = $"attempt-{Array.IndexOf(claims, DeliveryClaimResult.Claimed)}";
+            var filter = new BsonDocument("notificationKey", digest.CreateIdempotencyKeyDigest(command.IdempotencyKey));
+            var activeRecord = await records.Find(filter).SingleAsync(token);
+            Assert.Equal(oldOwner, activeRecord["attemptOwner"].AsString);
+            Assert.Equal(BsonType.DateTime, activeRecord["leaseExpiresAtUtc"].BsonType);
+            Assert.True(
+                activeRecord["leaseExpiresAtUtc"].ToUniversalTime() > activeRecord["recordedAtUtc"].ToUniversalTime()
+            );
             Assert.Equal(DeliveryClaimResult.ActiveClaim, await hosts[0].Claim(command, "blocked-attempt", 120, token));
             Assert.Equal(
                 DeliveryClaimResult.Conflict,
                 await hosts[1].Claim(command with { TemplateId = "changed" }, "conflict-attempt", 120, token)
             );
             Assert.Equal(SuppressionClaimResult.ActiveClaim, await hosts[2].RecordSuppression(command, token));
-            var filter = new BsonDocument("notificationKey", digest.CreateIdempotencyKeyDigest(command.IdempotencyKey));
             await records.UpdateOneAsync(
                 filter,
                 new BsonDocument("$set", new BsonDocument("leaseExpiresAtUtc", DateTime.UnixEpoch)),
@@ -177,7 +217,12 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             );
             var record = await records.Find(filter).SingleAsync(token);
             Assert.Equal("delivery-accepted", record["outcome"].AsString);
+            Assert.Equal(acceptance.Reference, record["notifyReference"].AsString);
+            Assert.Equal(acceptance.TemplateId, record["templateId"].AsString);
             Assert.Equal(2, record["templateVersion"].AsInt32);
+            Assert.Equal(acceptance.NotificationId, record["notifyNotificationId"].AsString);
+            Assert.Equal(BsonType.DateTime, record["acceptedAtUtc"].BsonType);
+            Assert.Equal(record["recordedAtUtc"], record["acceptedAtUtc"]);
             Assert.False(record.Contains("attemptOwner"));
             Assert.False(record.Contains("leaseExpiresAtUtc"));
             foreach (var privateValue in new[] { command.EmailAddress, command.IdempotencyKey, "private-body" })
@@ -344,5 +389,26 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
         {
             await client.DropDatabaseAsync(databaseName, CancellationToken.None);
         }
+    }
+
+    // Exact PR 5 record shape: unknown fields must fail rather than hiding a compatibility regression.
+    private sealed record BaselineNotificationDeliveryRecord
+    {
+        [BsonId]
+        public ObjectId Id { get; init; }
+
+        public required string NotificationKey { get; init; }
+
+        public required string ImmutableFields { get; init; }
+
+        public required string Recipient { get; init; }
+
+        public required string NotificationType { get; init; }
+
+        public required DateTime ActionOccurredAtUtc { get; init; }
+
+        public required string Outcome { get; init; }
+
+        public required DateTime RecordedAtUtc { get; init; }
     }
 }
