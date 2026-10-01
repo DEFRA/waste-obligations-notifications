@@ -326,6 +326,141 @@ public sealed class NotificationCommandSendTests : IDisposable
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData(5, 60)]
+    [InlineData(60, 6)]
+    public async Task WhenHostPausesAfterTimelyClaimUntilOwnershipExpires_ShouldNotSendPersistOrDelete(
+        int commandLeaseSeconds,
+        int visibilityTimeoutSeconds
+    )
+    {
+        var token = TestContext.Current.CancellationToken;
+        var handshakeTimeout = TimeSpan.FromSeconds(5);
+        var reached = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var meter = _metricServices.GetRequiredService<IMeterFactory>().Create(Metrics.MeterName);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            if (
+                ReferenceEquals(instrument.Meter, meter)
+                && instrument.Name == MetricNames.NotificationCommandLeaseClaim
+            )
+                observer.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>(
+            (_, value, tags, _) =>
+            {
+                if (!tags.ToArray().Any(tag => tag.Key == MetricTags.Outcome && Equals(tag.Value, "claimed")))
+                    return;
+                reached.TrySetResult(value);
+                try
+                {
+                    // A synchronous observer pauses the consumer after Claim's timely result has been confirmed.
+                    release.Task.WaitAsync(TimeSpan.FromSeconds(15), token).GetAwaiter().GetResult();
+                }
+                finally
+                {
+                    exited.TrySetResult();
+                }
+            }
+        );
+        listener.Start();
+        var sqs = Sqs(PrivateValues);
+        var store = Store();
+        var notify = Notify();
+        var logger = new RecordingLogger();
+        using var consumer = Consumer(
+            sqs,
+            store,
+            notify,
+            logger,
+            new()
+            {
+                QueueUrl = QueueUrl,
+                ProcessingEnabled = true,
+                EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
+                EvidenceDigestSecret = "test-secret",
+                RecipientLaneSecret = "test-lane",
+                WaitTimeSeconds = 0,
+                ReceiveTimeoutSeconds = 1,
+                ClaimTimeoutSeconds = 1,
+                NotifyTimeoutSeconds = 1,
+                AcceptanceTimeoutSeconds = 1,
+                DeleteTimeoutSeconds = 1,
+                SafetyHeadroomSeconds = 1,
+                CommandLeaseSeconds = commandLeaseSeconds,
+                VisibilityTimeoutSeconds = visibilityTimeoutSeconds,
+            }
+        );
+
+        try
+        {
+            await consumer.StartAsync(token);
+            Assert.Equal(1, await reached.Task.WaitAsync(handshakeTimeout, token));
+            await Task.Delay(
+                TimeSpan.FromSeconds(Math.Min(commandLeaseSeconds, visibilityTimeoutSeconds))
+                    + TimeSpan.FromMilliseconds(500),
+                token
+            );
+            release.TrySetResult();
+            await logger.Failed.Task.WaitAsync(handshakeTimeout, token);
+        }
+        finally
+        {
+            release.TrySetResult();
+            try
+            {
+                if (reached.Task.IsCompleted)
+                    await exited.Task.WaitAsync(handshakeTimeout, token);
+            }
+            finally
+            {
+                using var stop = new CancellationTokenSource(handshakeTimeout);
+                await consumer.StopAsync(stop.Token);
+            }
+        }
+
+        await store
+            .Received(1)
+            .Claim(
+                Arg.Any<NotificationCommand>(),
+                Arg.Any<string>(),
+                commandLeaseSeconds,
+                Arg.Any<CancellationToken>()
+            );
+        await notify
+            .DidNotReceive()
+            .Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await store
+            .DidNotReceive()
+            .RecordAcceptance(
+                Arg.Any<NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<NotifyAcceptance>(),
+                Arg.Any<CancellationToken>()
+            );
+        await sqs.DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        var exception = Assert.IsType<TimeoutException>(Assert.Single(logger.Exceptions));
+        Assert.Equal("Notification command dependency exceeded its configured timeout.", exception.Message);
+        Assert.Null(exception.InnerException);
+        Assert.Contains(
+            logger.Messages,
+            message =>
+                message.Contains(
+                    $"for other from SQS message message-1 with Notify reference {Reference}",
+                    StringComparison.Ordinal
+                )
+        );
+        foreach (var value in PrivateValues.Split(' '))
+        {
+            Assert.DoesNotContain(value, string.Join('\n', logger.Messages), StringComparison.Ordinal);
+            Assert.DoesNotContain(value, exception.ToString(), StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public async Task WhenAcceptanceConfirmationArrivesAfterItsDeadline_ShouldLeaveTheMessageUndeleted()
     {
