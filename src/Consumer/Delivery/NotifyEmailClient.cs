@@ -1,32 +1,32 @@
 using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Commands;
 using Microsoft.Extensions.Options;
-using Notify.Authentication;
+using Newtonsoft.Json.Linq;
+using Notify.Interfaces;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
 
-public sealed class NotifyEmailClient(HttpClient httpClient, IOptions<NotifyOptions> options) : INotifyEmailClient
+public sealed class NotifyEmailClient(
+    HttpClient httpClient,
+    IOptions<NotifyOptions> options,
+    Func<IHttpClient, NotifyOptions, IAsyncNotificationClient> notificationClientFactory
+) : INotifyEmailClient
 {
     public async Task CheckHealth(CancellationToken cancellationToken)
     {
         try
         {
-            using var request = CreateAuthenticatedRequest(HttpMethod.Get, "/v2/templates?type=email");
-            using var response = await httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken
-            );
+            using var transport = new NotifySdkHttpClient(httpClient, cancellationToken, HttpStatusCode.OK);
+            var client = notificationClientFactory(transport, options.Value);
+            var response = await Task.Run(() => client.GetAllTemplatesAsync("email"), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            if (response.StatusCode != HttpStatusCode.OK)
-                throw new InvalidOperationException("Notify health request did not succeed.");
+            if (response?.templates is null)
+                throw new InvalidOperationException("Notify health response is incomplete.");
         }
-        catch (OperationCanceledException)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
-            throw;
+            throw new OperationCanceledException("Notify health request was cancelled.", cancellationToken);
         }
         catch (Exception)
         {
@@ -42,44 +42,37 @@ public sealed class NotifyEmailClient(HttpClient httpClient, IOptions<NotifyOpti
     {
         try
         {
-            using var request = CreateAuthenticatedRequest(HttpMethod.Post, "/v2/notifications/email");
-            request.Content = JsonContent.Create(
-                new
-                {
-                    email_address = command.EmailAddress.Trim().ToLowerInvariant(),
-                    template_id = command.TemplateId,
-                    personalisation = command.Personalisation,
-                    reference,
-                }
-            );
-            // ResponseContentRead and the same token bound the complete request, including response buffering.
-            using var response = await httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseContentRead,
+            command.Validate();
+            using var transport = new NotifySdkHttpClient(httpClient, cancellationToken, HttpStatusCode.Created);
+            var client = notificationClientFactory(transport, options.Value);
+            var personalisation = CreatePersonalisation(command.Personalisation);
+            // The pinned SDK blocks before returning its task. Keep that off the caller while the adapter
+            // carries the actual operation token through the HTTP request and complete body buffering.
+            var response = await Task.Run(
+                () =>
+                    client.SendEmailAsync(
+                        command.EmailAddress.Trim().ToLowerInvariant(),
+                        command.TemplateId,
+                        personalisation,
+                        reference
+                    ),
                 cancellationToken
             );
-            if (response.StatusCode != HttpStatusCode.Created)
-                throw new InvalidOperationException("Notify did not accept the email request.");
-
-            using var body = await JsonDocument.ParseAsync(
-                await response.Content.ReadAsStreamAsync(cancellationToken),
-                cancellationToken: cancellationToken
+            cancellationToken.ThrowIfCancellationRequested();
+            var acceptance = new NotifyAcceptance(
+                response?.id ?? "",
+                response?.reference ?? "",
+                response?.template?.id ?? "",
+                response?.template?.version ?? 0
             );
-            var root = body.RootElement;
-            var id = root.GetProperty("id").GetString();
-            var returnedReference = root.GetProperty("reference").GetString();
-            var template = root.GetProperty("template");
-            var templateId = template.GetProperty("id").GetString();
-            var version = template.GetProperty("version").GetInt32();
-            var acceptance = new NotifyAcceptance(id ?? "", returnedReference ?? "", templateId ?? "", version);
             if (!acceptance.Matches(command, reference))
                 throw new InvalidDataException("Notify acceptance evidence is incomplete or inconsistent.");
 
             return acceptance;
         }
-        catch (OperationCanceledException)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
-            throw;
+            throw new OperationCanceledException("Notify email request was cancelled.", cancellationToken);
         }
         catch (Exception)
         {
@@ -88,17 +81,12 @@ public sealed class NotifyEmailClient(HttpClient httpClient, IOptions<NotifyOpti
         }
     }
 
-    private HttpRequestMessage CreateAuthenticatedRequest(HttpMethod method, string path)
+    private static Dictionary<string, dynamic> CreatePersonalisation(JsonElement values)
     {
-        var key = options.Value.ApiKey;
-        if (!options.Value.HasValidApiKey)
-            throw new InvalidOperationException("Notify ApiKey has not been configured.");
-        var request = new HttpRequestMessage(method, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue(
-            "Bearer",
-            Authenticator.CreateToken(key[^36..], key.Substring(key.Length - 73, 36))
-        );
+        var personalisation = new Dictionary<string, dynamic>();
+        foreach (var property in values.EnumerateObject())
+            personalisation[property.Name] = new JRaw(property.Value.GetRawText());
 
-        return request;
+        return personalisation;
     }
 }

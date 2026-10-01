@@ -14,7 +14,8 @@ public sealed record NotifyOptions
 
     public bool HasValidApiKey =>
         !string.IsNullOrEmpty(ApiKey)
-        && ApiKey.Length >= 73
+        && ApiKey.Length >= 74
+        && !ApiKey.Contains(' ')
         && Guid.TryParse(ApiKey.AsSpan(ApiKey.Length - 73, 36), out _)
         && ApiKey[^37] == '-'
         && Guid.TryParse(ApiKey.AsSpan(ApiKey.Length - 36), out _);

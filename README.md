@@ -32,6 +32,15 @@ recipient delivery. A timeout, lost response, crash, or persistence failure can
 leave an indeterminate send. After claim expiry, a queue retry may send that email
 again. There is no HTTP retry or Notify-reference reconciliation in this service.
 
+Email sends use the pinned `GovukNotify` 8.1.0 client, following Waste Obligations'
+injectable client factory. The SDK owns authentication, request serialization
+and response models. A transport adapter keeps the configured API routing,
+cancels the complete HTTP request and response buffering, requires `201 Created`,
+and disposes each operation's request and response. Personalisation retains its
+JSON values through SDK serialization; only minimal acceptance evidence leaves
+the client boundary. The SDK's synchronous wait runs off the consumer caller,
+and dependency exceptions are replaced with fixed safe failures.
+
 New suppression records retain their original eight-field shape, omitting absent
 lease and Notify fields. Claims and accepted records retain their additional
 evidence; this change does not rewrite existing documents.
@@ -95,7 +104,7 @@ queue convention configured.
 provide its FIFO queue URL, cutover timestamp,
 and distinct evidence-digest and recipient-lane secrets. Set `Notify__ApiKey` to
 the service's Notify API key; `Notify__BaseAddress` defaults to the GOV.UK Notify
-API. Enabled command processing validates the API key shape before consuming. Do not put those secrets
+API. Enabled command processing validates the SDK's API key shape before consuming. Do not put those secrets
 in source control or logs.
 Enabled command processing validates the cutover timestamp and both digest
 secrets at startup. Blank or deployment-placeholder secrets prevent startup
@@ -262,9 +271,11 @@ or command-DLQ administration is enabled.
 
 When command processing is enabled, `/health/all` also checks GOV.UK Notify with
 one authenticated `GET /v2/templates?type=email`, bounded by the existing
-ten-second health timeout. It checks connectivity and credentials without reading
-template content; it does not validate a command's template or confirm email
-delivery. Failures expose a fixed description without dependency error details.
+ten-second health timeout. It uses the SDK template-list operation to check
+connectivity and credentials. The SDK reads and deserializes the response within
+the same cancellation bound; template content is discarded and never exposed or
+logged. This does not validate a command's template or confirm email delivery.
+Failures expose a fixed description without dependency error details.
 Disabled command processing does not register or call this check. `/health`
 remains independent of Notify and the other extended dependency checks.
 

@@ -128,6 +128,43 @@ public sealed class NotificationCommandStartupTests
     }
 
     [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task WhenNotifyKeyDoesNotMeetSdkShape_ShouldRejectItOnlyForEnabledSending(
+        bool processingEnabled,
+        bool containsSpace
+    )
+    {
+        var invalidKey = containsSpace
+            ? $"private prefix-{NotifyTestCredentials.ApiKey}"
+            : NotifyTestCredentials.ApiKey[^73..];
+        var sqs = Substitute.For<IAmazonSQS>();
+        var logger = Substitute.For<ILogger>();
+        using var host = CreateHost(sqs, logger, processingEnabled, new() { ["Notify:ApiKey"] = invalidKey });
+
+        if (processingEnabled)
+        {
+            var exception = await Assert.ThrowsAsync<OptionsValidationException>(() =>
+                host.StartAsync(TestContext.Current.CancellationToken)
+            );
+
+            Assert.Contains("Notify ApiKey", exception.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(invalidKey, exception.ToString(), StringComparison.Ordinal);
+        }
+        else
+        {
+            await host.StartAsync(TestContext.Current.CancellationToken);
+            await host.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+        var logged = string.Join("\n", logger.ReceivedCalls().Select(call => string.Join(" ", call.GetArguments())));
+        Assert.DoesNotContain(invalidKey, logged, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("private-address@example.com")]
     [InlineData("Submitted")]
     [InlineData("private template")]

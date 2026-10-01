@@ -107,100 +107,14 @@ public sealed class NotificationCommandConsumer(
             }
         }
         else
-        {
-            EnsureRemaining(
+            outcome = await ProcessPostCutover(
+                command,
+                reference,
+                notificationType,
+                store,
                 receiveStartedAt,
-                options.Value.VisibilityTimeoutSeconds,
-                options.Value.ClaimTimeoutSeconds + options.Value.CompletionBudgetSeconds
+                stoppingToken
             );
-            var claimStartedAt = Stopwatch.GetTimestamp();
-            var attemptOwner = Guid.NewGuid().ToString("N");
-            DeliveryClaimResult claim;
-            try
-            {
-                claim = await RunBounded(
-                    token => store.Claim(command, attemptOwner, options.Value.CommandLeaseSeconds, token),
-                    options.Value.ClaimTimeoutSeconds,
-                    stoppingToken
-                );
-            }
-            catch
-            {
-                metrics.RecordClaimFailure(
-                    notificationType,
-                    Stopwatch.GetElapsedTime(claimStartedAt).TotalMilliseconds
-                );
-                throw;
-            }
-            metrics.RecordClaim(notificationType, claim, Stopwatch.GetElapsedTime(claimStartedAt).TotalMilliseconds);
-            if (claim == DeliveryClaimResult.TerminalDuplicate)
-            {
-                metrics.RecordDuplicate(notificationType);
-                outcome = "terminal-duplicate";
-            }
-            else
-            {
-                if (claim != DeliveryClaimResult.Claimed)
-                    throw new InvalidOperationException("Notification command cannot acquire a delivery claim.");
-                EnsureRemaining(
-                    receiveStartedAt,
-                    options.Value.VisibilityTimeoutSeconds,
-                    options.Value.CompletionBudgetSeconds
-                );
-                EnsureRemaining(
-                    claimStartedAt,
-                    options.Value.CommandLeaseSeconds,
-                    options.Value.CompletionBudgetSeconds
-                );
-                var sendStartedAt = Stopwatch.GetTimestamp();
-                NotifyAcceptance acceptance;
-                try
-                {
-                    acceptance = await RunBounded(
-                        token => notifyClient.Send(command, reference, token),
-                        options.Value.NotifyTimeoutSeconds,
-                        stoppingToken
-                    );
-                    metrics.RecordSendAccepted(notificationType);
-                }
-                catch
-                {
-                    metrics.RecordSendFailure(notificationType);
-                    throw;
-                }
-                finally
-                {
-                    metrics.RecordSendDuration(
-                        notificationType,
-                        Stopwatch.GetElapsedTime(sendStartedAt).TotalMilliseconds
-                    );
-                }
-                EnsureRemaining(
-                    claimStartedAt,
-                    options.Value.CommandLeaseSeconds,
-                    options.Value.AcceptanceTimeoutSeconds
-                        + options.Value.DeleteTimeoutSeconds
-                        + options.Value.SafetyHeadroomSeconds
-                );
-                EnsureRemaining(
-                    receiveStartedAt,
-                    options.Value.VisibilityTimeoutSeconds,
-                    options.Value.AcceptanceTimeoutSeconds
-                        + options.Value.DeleteTimeoutSeconds
-                        + options.Value.SafetyHeadroomSeconds
-                );
-                var recorded = await RunBounded(
-                    token => store.RecordAcceptance(command, attemptOwner, acceptance, token),
-                    options.Value.AcceptanceTimeoutSeconds,
-                    stoppingToken
-                );
-                if (!recorded)
-                    throw new InvalidOperationException(
-                        "Notification command acceptance was not recorded by its current owner."
-                    );
-                outcome = NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue();
-            }
-        }
 
         metrics.RecordOutcome(notificationType, outcome);
         if (logger.IsEnabled(LogLevel.Information))
@@ -216,6 +130,99 @@ public sealed class NotificationCommandConsumer(
             options.Value.DeleteTimeoutSeconds,
             stoppingToken
         );
+    }
+
+    private async Task<string> ProcessPostCutover(
+        NotificationCommand command,
+        string reference,
+        string notificationType,
+        INotificationDeliveryRecordStore store,
+        long receiveStartedAt,
+        CancellationToken stoppingToken
+    )
+    {
+        EnsureRemaining(
+            receiveStartedAt,
+            options.Value.VisibilityTimeoutSeconds,
+            options.Value.ClaimTimeoutSeconds + options.Value.CompletionBudgetSeconds
+        );
+        var claimStartedAt = Stopwatch.GetTimestamp();
+        var attemptOwner = Guid.NewGuid().ToString("N");
+        DeliveryClaimResult claim;
+        try
+        {
+            claim = await RunBounded(
+                token => store.Claim(command, attemptOwner, options.Value.CommandLeaseSeconds, token),
+                options.Value.ClaimTimeoutSeconds,
+                stoppingToken
+            );
+        }
+        catch
+        {
+            metrics.RecordClaimFailure(notificationType, Stopwatch.GetElapsedTime(claimStartedAt).TotalMilliseconds);
+            throw;
+        }
+        metrics.RecordClaim(notificationType, claim, Stopwatch.GetElapsedTime(claimStartedAt).TotalMilliseconds);
+        if (claim == DeliveryClaimResult.TerminalDuplicate)
+        {
+            metrics.RecordDuplicate(notificationType);
+
+            return "terminal-duplicate";
+        }
+
+        if (claim != DeliveryClaimResult.Claimed)
+            throw new InvalidOperationException("Notification command cannot acquire a delivery claim.");
+        EnsureRemaining(
+            receiveStartedAt,
+            options.Value.VisibilityTimeoutSeconds,
+            options.Value.CompletionBudgetSeconds
+        );
+        EnsureRemaining(claimStartedAt, options.Value.CommandLeaseSeconds, options.Value.CompletionBudgetSeconds);
+        var sendStartedAt = Stopwatch.GetTimestamp();
+        NotifyAcceptance acceptance;
+        try
+        {
+            acceptance = await RunBounded(
+                token => notifyClient.Send(command, reference, token),
+                options.Value.NotifyTimeoutSeconds,
+                stoppingToken
+            );
+            metrics.RecordSendAccepted(notificationType);
+        }
+        catch
+        {
+            metrics.RecordSendFailure(notificationType);
+            throw;
+        }
+        finally
+        {
+            metrics.RecordSendDuration(notificationType, Stopwatch.GetElapsedTime(sendStartedAt).TotalMilliseconds);
+        }
+        EnsureRemaining(
+            claimStartedAt,
+            options.Value.CommandLeaseSeconds,
+            options.Value.AcceptanceTimeoutSeconds
+                + options.Value.DeleteTimeoutSeconds
+                + options.Value.SafetyHeadroomSeconds
+        );
+        EnsureRemaining(
+            receiveStartedAt,
+            options.Value.VisibilityTimeoutSeconds,
+            options.Value.AcceptanceTimeoutSeconds
+                + options.Value.DeleteTimeoutSeconds
+                + options.Value.SafetyHeadroomSeconds
+        );
+        var recorded = await RunBounded(
+            token => store.RecordAcceptance(command, attemptOwner, acceptance, token),
+            options.Value.AcceptanceTimeoutSeconds,
+            stoppingToken
+        );
+        if (!recorded)
+            throw new InvalidOperationException(
+                "Notification command acceptance was not recorded by its current owner."
+            );
+
+        return NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue();
     }
 
     private async Task<ReceiveMessageResponse> ReceiveCommands(CancellationToken stoppingToken) =>

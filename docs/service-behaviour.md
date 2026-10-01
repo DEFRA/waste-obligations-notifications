@@ -100,6 +100,13 @@ original recipient-lane position.
   recipient for the request. Require `201 Created` and consistent minimal
   acceptance evidence; malformed success is indeterminate and remains retryable.
   Never log dependency exception text or full responses, which may contain PII.
+  The pinned `GovukNotify` client owns email authentication, serialization and
+  response models, using Waste Obligations' injectable client factory convention.
+  Its per-operation transport preserves configured routing and carries the
+  operation's cancellation through complete response buffering. SDK request and
+  response objects are disposed after success or failure without disposing the
+  shared typed `HttpClient`. JSON personalisation values retain their original
+  semantics; only minimal acceptance evidence is projected from the SDK model.
 - Validate the complete bounded attempt budget at startup. Initially visibility
   and command leases are 120 seconds; receive, claim, send, acceptance and deletion
   bounds are 30, 5, 60, 10 and 5 seconds, plus 10 seconds headroom. Measure elapsed
@@ -154,8 +161,10 @@ wait. Metrics are best effort. See the README for configuration and CDP routing.
 
 With command processing enabled, `/health/all` includes a light read-only Notify
 connectivity check. It makes one authenticated `GET /v2/templates?type=email`,
-requires `200 OK`, and disposes the response without reading template content.
-The existing ten-second health timeout cancels the HTTP request; a late response
+requires `200 OK`, and uses the pinned SDK template-list operation. The SDK
+reads and deserializes template data; it is discarded without logging, persistence
+or exposure in the health result. The existing ten-second health timeout cancels
+the complete HTTP request and response buffering; a late response
 after cancellation cannot report healthy. Results and logs expose only fixed
 descriptions, without dependency exceptions or response data. Disabled command
 processing does not register or call Notify health. `/health` stays independent
