@@ -64,6 +64,28 @@ public static class ServiceCollectionExtensions
             )
             .ValidateOnStart();
 
+        services.AddNotifySending(configuration, processingEnabled);
+
+        services.AddAWSService<IAmazonSQS>();
+        services.AddMongo(configuration);
+        services.AddMongoMigrations(configuration);
+        services.AddSingleton<INotificationCommandDigest, NotificationCommandDigest>();
+        services.AddSingleton<INotificationDeliveryRecordStore, MongoNotificationDeliveryRecordStore>();
+        services.AddSingleton<INotificationDeliveryRecordStoreFactory, NotificationDeliveryRecordStoreFactory>();
+        services.AddNotificationCommandMetrics();
+        services.AddNotificationCommandEmfExport(configuration);
+        services.AddSingleton<INotificationCommandPublisher, NotificationCommandPublisher>();
+        services.AddHostedService<NotificationCommandConsumer>();
+
+        return services;
+    }
+
+    private static void AddNotifySending(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        bool processingEnabled
+    )
+    {
         services
             .AddOptions<NotifyOptions>()
             .Bind(configuration.GetSection(NotifyOptions.SectionName))
@@ -105,18 +127,5 @@ public static class ServiceCollectionExtensions
             )
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
             .RemoveAllLoggers();
-
-        services.AddAWSService<IAmazonSQS>();
-        services.AddMongo(configuration);
-        services.AddMongoMigrations(configuration);
-        services.AddSingleton<INotificationCommandDigest, NotificationCommandDigest>();
-        services.AddSingleton<INotificationDeliveryRecordStore, MongoNotificationDeliveryRecordStore>();
-        services.AddSingleton<INotificationDeliveryRecordStoreFactory, NotificationDeliveryRecordStoreFactory>();
-        services.AddNotificationCommandMetrics();
-        services.AddNotificationCommandEmfExport(configuration);
-        services.AddSingleton<INotificationCommandPublisher, NotificationCommandPublisher>();
-        services.AddHostedService<NotificationCommandConsumer>();
-
-        return services;
     }
 }
