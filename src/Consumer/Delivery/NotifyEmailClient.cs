@@ -1,10 +1,8 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Commands;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json.Linq;
-using Notify.Authentication;
 using Notify.Interfaces;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
@@ -19,19 +17,16 @@ public sealed class NotifyEmailClient(
     {
         try
         {
-            using var request = CreateAuthenticatedRequest(HttpMethod.Get, "/v2/templates?type=email");
-            using var response = await httpClient.SendAsync(
-                request,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken
-            );
+            using var transport = new NotifySdkHttpClient(httpClient, cancellationToken, HttpStatusCode.OK);
+            var client = notificationClientFactory(transport, options.Value);
+            var response = await Task.Run(() => client.GetAllTemplatesAsync("email"), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            if (response.StatusCode != HttpStatusCode.OK)
-                throw new InvalidOperationException("Notify health request did not succeed.");
+            if (response?.templates is null)
+                throw new InvalidOperationException("Notify health response is incomplete.");
         }
-        catch (OperationCanceledException)
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
-            throw;
+            throw new OperationCanceledException("Notify health request was cancelled.", cancellationToken);
         }
         catch (Exception)
         {
@@ -93,19 +88,5 @@ public sealed class NotifyEmailClient(
             personalisation[property.Name] = new JRaw(property.Value.GetRawText());
 
         return personalisation;
-    }
-
-    private HttpRequestMessage CreateAuthenticatedRequest(HttpMethod method, string path)
-    {
-        var key = options.Value.ApiKey;
-        if (!options.Value.HasValidApiKey)
-            throw new InvalidOperationException("Notify ApiKey has not been configured.");
-        var request = new HttpRequestMessage(method, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue(
-            "Bearer",
-            Authenticator.CreateToken(key[^36..], key.Substring(key.Length - 73, 36))
-        );
-
-        return request;
     }
 }

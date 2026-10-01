@@ -159,10 +159,10 @@ wait. Metrics are best effort. See the README for configuration and CDP routing.
 
 With command processing enabled, `/health/all` includes a light read-only Notify
 connectivity check. It makes one authenticated `GET /v2/templates?type=email`,
-requires `200 OK`, and disposes the response without reading template content.
-This check currently uses the direct HTTP path; SDK template-list integration
-is a separate increment from SDK email sending.
-The existing ten-second health timeout cancels the HTTP request; a late response
+requires `200 OK`, and uses the pinned SDK template-list operation. The SDK
+reads and deserializes template data; it is discarded without logging, persistence
+or exposure in the health result. The existing ten-second health timeout cancels
+the complete HTTP request and response buffering; a late response
 after cancellation cannot report healthy. Results and logs expose only fixed
 descriptions, without dependency exceptions or response data. Disabled command
 processing does not register or call Notify health. `/health` stays independent

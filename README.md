@@ -259,9 +259,11 @@ migrations and health checks remain conditional on command processing being enab
 
 When command processing is enabled, `/health/all` also checks GOV.UK Notify with
 one authenticated `GET /v2/templates?type=email`, bounded by the existing
-ten-second health timeout. It checks connectivity and credentials without reading
-template content; it does not validate a command's template or confirm email
-delivery. Failures expose a fixed description without dependency error details.
+ten-second health timeout. It uses the SDK template-list operation to check
+connectivity and credentials. The SDK reads and deserializes the response within
+the same cancellation bound; template content is discarded and never exposed or
+logged. This does not validate a command's template or confirm email delivery.
+Failures expose a fixed description without dependency error details.
 Disabled command processing does not register or call this check. `/health`
 remains independent of Notify and the other extended dependency checks.
 

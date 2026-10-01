@@ -17,16 +17,16 @@ public sealed class NotifyEmailClientTests
     private static string ApiKey => NotifyTestCredentials.ApiKey;
 
     [Fact]
-    public async Task CheckHealth_WhenNotifyResponds_ShouldAuthenticateOneBodyFreeGetWithoutReadingItsContent()
+    public async Task CheckHealth_WhenNotifyResponds_ShouldUseSdkTemplateListAuthenticationAndDisposeContent()
     {
         var requests = 0;
-        using var content = new UnreadContent();
+        using var content = new ObservedContent(TemplateListBody());
         using var handler = new ControlledHandler(
             (request, _) =>
             {
                 requests++;
                 Assert.Equal(HttpMethod.Get, request.Method);
-                Assert.Equal("http://notify.local/v2/templates?type=email", request.RequestUri!.AbsoluteUri);
+                Assert.Equal("http://notify.local/v2/sdk-template-list?type=email", request.RequestUri!.AbsoluteUri);
                 Assert.Null(request.Content);
                 Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
                 var token = request.Headers.Authorization.Parameter!.Split('.');
@@ -53,24 +53,27 @@ public sealed class NotifyEmailClientTests
         var subject = new NotifyEmailClient(
             client,
             Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
+            (transport, notify) =>
+                new NotificationClient(transport, notify.ApiKey) { GET_ALL_TEMPLATES_URL = "v2/sdk-template-list" }
         );
 
         await subject.CheckHealth(TestContext.Current.CancellationToken);
 
         Assert.Equal(1, requests);
-        Assert.False(content.WasRead);
         Assert.True(content.WasDisposed);
     }
 
     [Theory]
     [InlineData(201)]
+    [InlineData(202)]
+    [InlineData(204)]
+    [InlineData(302)]
     [InlineData(403)]
     [InlineData(500)]
-    public async Task CheckHealth_WhenNotifyReturnsNon200_ShouldFailWithoutReadingContentOrRetrying(int statusCode)
+    public async Task CheckHealth_WhenNotifyReturnsNon200_ShouldFailWithoutRetrying(int statusCode)
     {
         var requests = 0;
-        using var content = new UnreadContent();
+        using var content = new ObservedContent(TemplateListBody());
         using var handler = new ControlledHandler(
             (_, _) =>
             {
@@ -93,7 +96,6 @@ public sealed class NotifyEmailClientTests
         Assert.Equal("Notify health request failed.", exception.Message);
         Assert.Null(exception.InnerException);
         Assert.Equal(1, requests);
-        Assert.False(content.WasRead);
         Assert.True(content.WasDisposed);
     }
 
@@ -170,7 +172,7 @@ public sealed class NotifyEmailClientTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        using var content = new UnreadContent();
+        using var content = new ObservedContent(TemplateListBody());
         using var handler = new ControlledHandler(
             async (_, _) =>
             {
@@ -196,8 +198,95 @@ public sealed class NotifyEmailClientTests
         release.SetResult();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => check);
-        Assert.False(content.WasRead);
         Assert.True(content.WasDisposed);
+    }
+
+    [Theory]
+    [InlineData("private-malformed-template-body")]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("{\"templates\":null}")]
+    [InlineData("{\"templates\":\"private-template-body\"}")]
+    public async Task CheckHealth_WhenSdkResponseIsInvalid_ShouldSanitizeAndDisposeWithoutRetry(string body)
+    {
+        var requests = 0;
+        using var content = new ObservedContent(body);
+        using var handler = new ControlledHandler(
+            (_, _) =>
+            {
+                requests++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+            }
+        );
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
+        var subject = new NotifyEmailClient(
+            client,
+            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
+            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
+        );
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            subject.CheckHealth(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("Notify health request failed.", failure.Message);
+        Assert.Null(failure.InnerException);
+        Assert.DoesNotContain(body, failure.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(ApiKey, failure.ToString(), StringComparison.Ordinal);
+        Assert.Equal(1, requests);
+        Assert.True(content.WasDisposed);
+    }
+
+    [Fact]
+    public async Task CheckHealth_WhenCancelledDuringResponseBuffering_ShouldCancelActualReadAndDisposeContent()
+    {
+        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var content = new BlockingContent(reading);
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        using var handler = new ControlledHandler(
+            (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content })
+        );
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
+        var subject = new NotifyEmailClient(
+            client,
+            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
+            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
+        );
+
+        var checking = subject.CheckHealth(source.Token);
+        await reading.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await source.CancelAsync();
+        var failure = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => checking);
+
+        Assert.Equal(source.Token, failure.CancellationToken);
+        Assert.Null(failure.InnerException);
+        Assert.True(content.WasDisposed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CheckHealth_WhenSdkOrUnexpectedCancellationThrowsPrivateError_ShouldSanitize(bool factoryFails)
+    {
+        var privateText = $"recipient@example.com private-template {ApiKey}";
+        using var handler = new ControlledHandler((_, _) => throw new OperationCanceledException(privateText));
+        using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
+        var subject = new NotifyEmailClient(
+            client,
+            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
+            (transport, notify) =>
+                factoryFails
+                    ? throw new InvalidOperationException(privateText)
+                    : new NotificationClient(transport, notify.ApiKey)
+        );
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            subject.CheckHealth(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal("Notify health request failed.", failure.Message);
+        Assert.Null(failure.InnerException);
+        Assert.DoesNotContain(privateText, failure.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -747,31 +836,6 @@ public sealed class NotifyEmailClientTests
         return Convert.FromBase64String(base64.PadRight((base64.Length + 3) / 4 * 4, '='));
     }
 
-    private sealed class UnreadContent : HttpContent
-    {
-        public bool WasRead { get; private set; }
-        public bool WasDisposed { get; private set; }
-
-        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
-        {
-            WasRead = true;
-            throw new InvalidOperationException("private-template-content");
-        }
-
-        protected override bool TryComputeLength(out long length)
-        {
-            length = 0;
-
-            return false;
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            WasDisposed = true;
-            base.Dispose(disposing);
-        }
-    }
-
     private sealed class BlockingContent(TaskCompletionSource reading) : HttpContent
     {
         public bool WasDisposed { get; private set; }
@@ -813,6 +877,9 @@ public sealed class NotifyEmailClientTests
             "template-1",
             JsonDocument.Parse("{\"body\":\"private-body\"}").RootElement.Clone()
         );
+
+    private static string TemplateListBody() =>
+        "{\"templates\":[{\"id\":\"private-template-id\",\"name\":\"private-template-name\",\"type\":\"email\",\"version\":1,\"body\":\"private-content\",\"subject\":\"private-subject\"}]}";
 
     private static string AcceptanceBody() =>
         JsonSerializer.Serialize(

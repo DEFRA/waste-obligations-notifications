@@ -29,7 +29,17 @@ public sealed class NotifyHealthTests
     public async Task WhenCommandProcessingIsEnabled_ShouldCheckNotifyOnlyOnExtendedHealth()
     {
         using var handler = new ControlledHandler(
-            (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK))
+            (_, _) =>
+                Task.FromResult(
+                    new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            "{\"templates\":[{\"id\":\"private-template\",\"type\":\"email\",\"body\":\""
+                                + PrivateData
+                                + "\"}]}"
+                        ),
+                    }
+                )
         );
         await using var factory = new HealthApplicationFactory(true, handler);
         using var client = factory.CreateClient();
@@ -49,6 +59,15 @@ public sealed class NotifyHealthTests
         Assert.Equal("Healthy", notify.GetProperty("status").GetString());
         Assert.Equal("Connected to GOV.UK Notify.", notify.GetProperty("description").GetString());
         Assert.Equal(1, handler.RequestCount);
+        var text = body.RootElement.GetRawText();
+        foreach (var value in PrivateData.Split(' ').Append(NotifyTestCredentials.ApiKey))
+        {
+            Assert.DoesNotContain(value, text, StringComparison.Ordinal);
+            Assert.All(
+                factory.Logs.Messages,
+                message => Assert.DoesNotContain(value, message, StringComparison.Ordinal)
+            );
+        }
     }
 
     [Fact]
