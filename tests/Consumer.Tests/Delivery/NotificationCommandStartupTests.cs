@@ -127,6 +127,48 @@ public sealed class NotificationCommandStartupTests
         await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData("private-address@example.com")]
+    [InlineData("Submitted")]
+    [InlineData("private template")]
+    public async Task WhenDiagnosticCategoryConfigurationIsInvalid_ShouldRejectItWithoutExposingValues(string label)
+    {
+        var sqs = Substitute.For<IAmazonSQS>();
+        using var host = CreateHost(
+            sqs,
+            Substitute.For<ILogger>(),
+            true,
+            new() { ["NotificationCommandDelivery:DiagnosticNotificationTypes:0"] = label }
+        );
+
+        var exception = await Assert.ThrowsAsync<OptionsValidationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Contains("DiagnosticNotificationTypes", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(label, exception.Message, StringComparison.Ordinal);
+        await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenDiagnosticCategoryConfigurationIsUnbounded_ShouldFailBeforeReceiving()
+    {
+        var sqs = Substitute.For<IAmazonSQS>();
+        var labels = Enumerable
+            .Range(0, 33)
+            .ToDictionary(
+                index => $"NotificationCommandDelivery:DiagnosticNotificationTypes:{index}",
+                _ => (string?)"submitted"
+            );
+        using var host = CreateHost(sqs, Substitute.For<ILogger>(), true, labels);
+
+        await Assert.ThrowsAsync<OptionsValidationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken)
+        );
+
+        await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
     private static IHost CreateHost(
         IAmazonSQS sqs,
         ILogger logger,

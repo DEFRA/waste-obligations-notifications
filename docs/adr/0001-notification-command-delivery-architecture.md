@@ -1,6 +1,6 @@
 # ADR 0001: Notification-command delivery architecture
 
-**Status:** proposed
+**Status:** accepted
 
 **Date:** 2026-09-29
 
@@ -29,6 +29,32 @@ duplicate suppression and coordinates competing hosts. The handler makes one
 GOV.UK Notify send request for a claimed command; a Notify error or an inability
 to record Notify acceptance leaves the SQS message for visibility-timeout
 redelivery and the queue redrive policy.
+
+This decision covers source-independent command delivery. Producer-specific
+recipient/template policy and administrator DLQ operations are separate scopes.
+
+Each claim has a fresh attempt owner. MongoDB's current time determines expiry,
+and recording acceptance requires that exact owner and an unexpired claim. A
+bounded attempt uses conservative monotonic deadlines from receive and claim
+request starts; startup validates that dependency timeouts and headroom fit the
+command lease and SQS visibility. Late confirmations do not authorise a send.
+Failed or indeterminate requests retain the claim until expiry rather than
+releasing it early. Delivery claims are separate from migration leases.
+
+A `201 Created` response means accepted by Notify. Recording valid acceptance
+precedes queue deletion; matching accepted, suppressed or abandoned records
+prevent another send. A crash, lost response, timeout or failed acceptance write
+can leave an indeterminate send. Retry after expiry may send the email again;
+Notify-reference reconciliation is excluded. Mongo fences acceptance writes,
+but cannot fence an HTTP request already in flight during a process stall.
+
+Minimal acceptance evidence consists of command/recipient/immutable-field HMAC
+digests, a versioned HMAC Notify reference, template ID/version, Notify
+notification ID, timestamps and outcome. Command immutable identity is preserved
+exactly, including template spelling; a canonical UUID in Notify's response can
+identify the same requested template. Diagnostics use a bounded configured
+category allowlist with a fixed fallback, preserving arbitrary producer-defined
+command types without exposing their raw values in logs or metric dimensions.
 
 ## Consequences
 

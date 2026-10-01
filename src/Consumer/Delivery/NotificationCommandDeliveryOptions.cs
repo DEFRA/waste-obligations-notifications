@@ -61,6 +61,17 @@ public sealed record NotificationCommandDeliveryOptions
         CommandLeaseSeconds >= ClaimTimeoutSeconds + CompletionBudgetSeconds
         && VisibilityTimeoutSeconds >= ReceiveTimeoutSeconds + ClaimTimeoutSeconds + CompletionBudgetSeconds;
 
+    [MaxLength(32)]
+    public string[] DiagnosticNotificationTypes { get; init; } = [];
+
+    public string GetDiagnosticNotificationType(string notificationType) =>
+        DiagnosticNotificationTypes.FirstOrDefault(label => IsDiagnosticLabel(label) && label == notificationType)
+        ?? "other";
+
+    internal static bool IsDiagnosticLabel(string? label) =>
+        label is { Length: > 0 and <= 64 }
+        && label.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
+
     public bool TryReadCutover(out DateTimeOffset cutover) =>
         UtcTimestamp.TryParse(EmailDeliveryCutoverUtc, out cutover);
 

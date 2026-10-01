@@ -60,7 +60,7 @@ The Consumer health endpoint is available at `http://localhost:8085/health`.
 - [Contributing](CONTRIBUTING.md): formatting, required checks, and change workflow.
 - [Service behaviour](docs/service-behaviour.md): message contracts, processing rules, and deployment ownership.
 - [Context](CONTEXT.md): notification-delivery terminology.
-- Proposed ADRs: [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
+- ADRs: accepted [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and proposed [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
 - [Agent guidelines](AGENTS.md): entry points and sandbox build guidance for coding agents.
 
 ## Test
@@ -123,6 +123,34 @@ three receives. Delivery does not mutate deployed queue settings. Dependency
 cancellation bounds ordinary request work, but a process stall can let an already
 in-flight request outlive ownership; acceptance remains fenced by Mongo and the
 indeterminate-send limitation above still applies.
+
+Delivery diagnostics use `NotificationType` labels from
+`NotificationCommandDelivery__DiagnosticNotificationTypes` (array entries use
+`__0`, `__1`, and so on). Configure trusted, non-PII category names: at most 32
+labels, each 1–64 lowercase ASCII letters, digits or hyphens. The default list is
+empty. Unknown values use `other` in metrics and operational logs; this changes
+no command data, validation or immutable identity. Local settings show the two
+declaration categories as diagnostic examples.
+
+The `Defra.WasteObligationsNotifications` meter follows Waste Obligations'
+DI-managed `IMeterFactory` convention. Singleton command instrumentation uses
+shared PascalCase instrument and tag names, `COUNT` counters and `MILLISECONDS`
+claim/send-duration histograms. Milliseconds match Waste Obligations' email-send
+timing and also measure the short Mongo claim operation. Instruments cover
+received commands, terminal outcomes, lease-claim outcomes and duration, Notify
+accepted and failed sends, send duration, and terminal-duplicate suppression.
+Tags contain only the fixed `Service=waste-obligations-notifications` value,
+bounded `NotificationType` category and fixed `Outcome` values. A send acceptance
+metric means Notify returned valid acceptance evidence, even if recording it
+subsequently fails. A send failure
+metric means the attempt did not confirm acceptance, including timeout or shutdown
+cancellation; it does not prove Notify rejected the email. Persistence failures
+remain errors in operational logs, and failed claims receive a fixed failure
+outcome.
+
+This increment publishes in-process instruments only. CloudWatch EMF export and
+its CDP configuration are a separate pending increment; these measurements are
+not yet emitted to CDP metrics.
 
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`

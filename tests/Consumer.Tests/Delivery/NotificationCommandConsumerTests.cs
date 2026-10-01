@@ -6,6 +6,8 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Utils.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -13,13 +15,18 @@ using NSubstitute.Core;
 
 namespace Defra.WasteObligations.Consumer.Tests.Delivery;
 
-public class NotificationCommandConsumerTests
+public sealed class NotificationCommandConsumerTests : IDisposable
 {
     private const string CommandIdempotencyKey = "command-key-1";
     private const string EmailAddress = "recipient@example.com";
     private const string Personalisation = "secret personalisation";
     private const string QueueUrl = "http://localhost:4566/000000000000/commands.fifo";
     private const string ReceiptHandle = "receipt-handle-1";
+    private readonly ServiceProvider _metricServices = new ServiceCollection()
+        .AddNotificationCommandMetrics()
+        .BuildServiceProvider();
+
+    public void Dispose() => _metricServices.Dispose();
 
     [Theory]
     [InlineData("2026-09-28T10:00:00")]
@@ -555,7 +562,7 @@ public class NotificationCommandConsumerTests
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
-    private static NotificationCommandConsumer CreateSubject(
+    private NotificationCommandConsumer CreateSubject(
         IAmazonSQS sqsClient,
         INotificationDeliveryRecordStore recordStore,
         ILogger<NotificationCommandConsumer>? logger = null,
@@ -582,7 +589,7 @@ public class NotificationCommandConsumerTests
             ),
             CreateRecordStoreFactory(recordStore),
             readiness ?? CompletedReadiness(),
-            new NotificationCommandMetrics(),
+            _metricServices.GetRequiredService<INotificationCommandMetrics>(),
             logger ?? new RecordingLogger<NotificationCommandConsumer>(),
             notify ?? Substitute.For<INotifyEmailClient>(),
             new NotificationCommandDigest(

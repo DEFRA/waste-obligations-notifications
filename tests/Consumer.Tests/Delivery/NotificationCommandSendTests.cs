@@ -1,20 +1,29 @@
+using System.Collections.Concurrent;
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Utils.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace Defra.WasteObligations.Consumer.Tests.Delivery;
 
-public sealed class NotificationCommandSendTests
+public sealed class NotificationCommandSendTests : IDisposable
 {
     private const string QueueUrl = "commands.fifo";
     private const string Reference = "v1:82334b5671ae90cb56279cc2a9924a629589f6b31ef04a870af3c0a01a2fa095";
     private const string PrivateValues = "private-key recipient@example.com private-body template-1";
+    private readonly ServiceProvider _metricServices = new ServiceCollection()
+        .AddNotificationCommandMetrics()
+        .BuildServiceProvider();
+
+    public void Dispose() => _metricServices.Dispose();
 
     [Fact]
     public async Task WhenClaimAndSendSucceed_ShouldRecordAcceptanceBeforeDeletingAndExcludePrivateDataFromLogs()
@@ -187,6 +196,7 @@ public sealed class NotificationCommandSendTests
     [InlineData(true)]
     public async Task WhenNotifyTimesOutOrHostStops_ShouldCancelActualRequestAndNeverDelete(bool shutdown)
     {
+        using var measurements = new RecordingMeasurements();
         var sqs = Sqs();
         var store = Store();
         var notify = Notify();
@@ -223,7 +233,8 @@ public sealed class NotificationCommandSendTests
                 EvidenceDigestSecret = "test-secret",
                 RecipientLaneSecret = "test-lane",
                 NotifyTimeoutSeconds = 1,
-            }
+            },
+            measurements.Instrumentation
         );
 
         await consumer.StartAsync(TestContext.Current.CancellationToken);
@@ -232,6 +243,24 @@ public sealed class NotificationCommandSendTests
             await logger.Failed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await consumer.StopAsync(TestContext.Current.CancellationToken);
 
+        Assert.Equal(
+            1,
+            Assert
+                .Single(measurements.Events, measurement => measurement.Name == "NotificationCommandNotifySendFailure")
+                .Value
+        );
+        Assert.DoesNotContain(
+            measurements.Events,
+            measurement => measurement.Name == "NotificationCommandNotifySendAccepted"
+        );
+        var duration = Assert.Single(
+            measurements.Events,
+            measurement => measurement.Name == "NotificationCommandNotifySendDuration"
+        );
+        Assert.Equal("MILLISECONDS", duration.Unit);
+        Assert.True(duration.Value > 0);
+        if (!shutdown)
+            Assert.True(duration.Value >= 900);
         Assert.True(cancelled);
         Assert.Equal(!shutdown, logger.Failed.Task.IsCompleted);
         await store
@@ -339,6 +368,287 @@ public sealed class NotificationCommandSendTests
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData("accepted", "claimed", 1, 0, 0)]
+    [InlineData("send-failed", "claimed", 0, 1, 0)]
+    [InlineData("acceptance-failed", "claimed", 1, 0, 0)]
+    [InlineData("active-claim", "active-claim", 0, 0, 0)]
+    [InlineData("terminal-duplicate", "terminal-duplicate", 0, 0, 1)]
+    [InlineData("claim-failed", "failure", 0, 0, 0)]
+    [InlineData("suppressed", null, 0, 0, 0)]
+    [InlineData("suppressed-duplicate", null, 0, 0, 1)]
+    public async Task WhenCommandProcessingProducesAnOutcome_ShouldPublishOnlyItsObservableDeliveryMetrics(
+        string condition,
+        string? claimOutcome,
+        int acceptedSends,
+        int failedSends,
+        int duplicates
+    )
+    {
+        using var measurements = new RecordingMeasurements();
+        var sqs = Sqs("metrics-test", condition.StartsWith("suppressed", StringComparison.Ordinal));
+        var store = Store();
+        var notify = Notify();
+        if (condition == "send-failed")
+            notify
+                .Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromException<NotifyAcceptance>(new InvalidOperationException(PrivateValues)));
+        if (condition == "acceptance-failed")
+            store
+                .RecordAcceptance(
+                    Arg.Any<NotificationCommand>(),
+                    Arg.Any<string>(),
+                    Arg.Any<NotifyAcceptance>(),
+                    Arg.Any<CancellationToken>()
+                )
+                .Returns(false);
+        if (condition == "active-claim")
+            store
+                .Claim(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(DeliveryClaimResult.ActiveClaim);
+        if (condition == "terminal-duplicate")
+            store
+                .Claim(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(DeliveryClaimResult.TerminalDuplicate);
+        if (condition == "claim-failed")
+            store
+                .Claim(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromException<DeliveryClaimResult>(new InvalidOperationException(PrivateValues)));
+        if (condition == "suppressed-duplicate")
+            store
+                .RecordSuppression(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
+                .Returns(SuppressionClaimResult.TerminalDuplicate);
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sqs.DeleteMessageAsync(QueueUrl, "receipt", Arg.Any<CancellationToken>())
+            .Returns(new DeleteMessageResponse())
+            .AndDoes(_ => deleted.TrySetResult());
+        var logger = new RecordingLogger();
+        using var consumer = Consumer(sqs, store, notify, logger, metrics: measurements.Instrumentation);
+
+        await consumer.StartAsync(TestContext.Current.CancellationToken);
+        await (
+            condition is "send-failed" or "acceptance-failed" or "active-claim" or "claim-failed"
+                ? logger.Failed.Task
+                : deleted.Task
+        ).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await consumer.StopAsync(TestContext.Current.CancellationToken);
+
+        var events = measurements.Events;
+        Assert.Equal(
+            1,
+            events
+                .Where(measurement => measurement.Name == "NotificationCommandReceived")
+                .Sum(measurement => measurement.Value)
+        );
+        Assert.Equal(
+            acceptedSends,
+            events
+                .Where(measurement => measurement.Name == "NotificationCommandNotifySendAccepted")
+                .Sum(measurement => measurement.Value)
+        );
+        Assert.Equal(
+            failedSends,
+            events
+                .Where(measurement => measurement.Name == "NotificationCommandNotifySendFailure")
+                .Sum(measurement => measurement.Value)
+        );
+        Assert.Equal(
+            duplicates,
+            events
+                .Where(measurement => measurement.Name == "NotificationCommandDuplicateSuppressed")
+                .Sum(measurement => measurement.Value)
+        );
+        var claims = events.Where(measurement => measurement.Name == "NotificationCommandLeaseClaim").ToArray();
+        if (claimOutcome is null)
+            Assert.Empty(claims);
+        else
+            Assert.Equal(claimOutcome, Assert.Single(claims).Tags.Single(tag => tag.Key == "Outcome").Value);
+        var claimDurations = events
+            .Where(measurement => measurement.Name == "NotificationCommandLeaseClaimDuration")
+            .ToArray();
+        Assert.Equal(claimOutcome is null ? 0 : 1, claimDurations.Length);
+        var sendDurations = events
+            .Where(measurement => measurement.Name == "NotificationCommandNotifySendDuration")
+            .ToArray();
+        Assert.Equal(acceptedSends + failedSends, sendDurations.Length);
+        Assert.All(
+            claimDurations.Concat(sendDurations),
+            measurement =>
+            {
+                Assert.Equal("MILLISECONDS", measurement.Unit);
+                Assert.True(measurement.Value >= 0);
+            }
+        );
+        Assert.All(
+            events.Where(measurement => !measurement.Name.EndsWith("Duration", StringComparison.Ordinal)),
+            measurement => Assert.Equal("COUNT", measurement.Unit)
+        );
+        Assert.All(
+            events,
+            measurement =>
+                Assert.All(
+                    measurement.Tags,
+                    tag => Assert.True(tag.Key is "Service" or "NotificationType" or "Outcome")
+                )
+        );
+        foreach (var value in PrivateValues.Split(' '))
+            Assert.DoesNotContain(
+                value,
+                string.Join(' ', events.SelectMany(measurement => measurement.Tags).Select(tag => tag.Value)),
+                StringComparison.Ordinal
+            );
+        Assert.All(
+            events,
+            measurement =>
+                Assert.Equal(
+                    "waste-obligations-notifications",
+                    Assert.Single(measurement.Tags, tag => tag.Key == "Service").Value
+                )
+        );
+        Assert.All(
+            events.SelectMany(measurement => measurement.Tags).Where(tag => tag.Key == "NotificationType"),
+            tag => Assert.Equal("metrics-test", tag.Value)
+        );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenNotificationTypeContainsPrivateText_ShouldKeepCommandIdentityAndUseFallbackDiagnostics(
+        bool sendFails
+    )
+    {
+        using var measurements = new RecordingMeasurements();
+        var sqs = Sqs(PrivateValues);
+        var store = Store();
+        var notify = Notify();
+        if (sendFails)
+            notify
+                .Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromException<NotifyAcceptance>(new InvalidOperationException(PrivateValues)));
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sqs.DeleteMessageAsync(QueueUrl, "receipt", Arg.Any<CancellationToken>())
+            .Returns(new DeleteMessageResponse())
+            .AndDoes(_ => deleted.TrySetResult());
+        var logger = new RecordingLogger();
+        using var consumer = Consumer(sqs, store, notify, logger, metrics: measurements.Instrumentation);
+
+        await consumer.StartAsync(TestContext.Current.CancellationToken);
+        await (sendFails ? logger.Failed.Task : deleted.Task).WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+        await consumer.StopAsync(TestContext.Current.CancellationToken);
+
+        await store
+            .Received(1)
+            .Claim(
+                Arg.Is<NotificationCommand>(command => command.NotificationType == PrivateValues),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            );
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("for other from SQS message", StringComparison.Ordinal)
+        );
+        Assert.DoesNotContain(PrivateValues, string.Join(' ', logger.Messages), StringComparison.Ordinal);
+        Assert.Single(measurements.Events, measurement => measurement.Name == "NotificationCommandReceived");
+        Assert.Single(measurements.Events, measurement => measurement.Name == "NotificationCommandLeaseClaim");
+        Assert.Single(measurements.Events, measurement => measurement.Name == "NotificationCommandLeaseClaimDuration");
+        Assert.Single(
+            measurements.Events,
+            measurement =>
+                measurement.Name
+                == (sendFails ? "NotificationCommandNotifySendFailure" : "NotificationCommandNotifySendAccepted")
+        );
+        Assert.Single(measurements.Events, measurement => measurement.Name == "NotificationCommandNotifySendDuration");
+        Assert.All(
+            measurements.Events.SelectMany(measurement => measurement.Tags).Where(tag => tag.Key == "NotificationType"),
+            tag => Assert.Equal("other", tag.Value)
+        );
+        foreach (var value in PrivateValues.Split(' '))
+            Assert.DoesNotContain(
+                value,
+                string.Join(
+                    ' ',
+                    measurements.Events.SelectMany(measurement => measurement.Tags).Select(tag => tag.Value)
+                ),
+                StringComparison.Ordinal
+            );
+    }
+
+    [Fact]
+    public void WhenMetricsHostsAreDisposedIndependently_ShouldKeepMeasurementsWithinTheirOwningHost()
+    {
+        using var first = new RecordingMeasurements();
+        using var second = new RecordingMeasurements();
+        Assert.Same(first.Instrumentation, first.ResolveInstrumentation());
+        Assert.Same(second.Instrumentation, second.ResolveInstrumentation());
+
+        first.Instrumentation.RecordReceived("metrics-test");
+        Assert.Single(first.Events);
+        Assert.Empty(second.Events);
+
+        first.DisposeHost();
+        first.Instrumentation.RecordSendFailure("metrics-test");
+        second.Instrumentation.RecordReceived("metrics-test");
+        second.Instrumentation.RecordSendFailure("metrics-test");
+
+        Assert.Single(first.Events);
+        Assert.Equal(
+            ["NotificationCommandReceived", "NotificationCommandNotifySendFailure"],
+            second.Events.Select(measurement => measurement.Name)
+        );
+    }
+
+    private sealed class RecordingMeasurements : IDisposable
+    {
+        private readonly MeterListener _listener = new();
+        private readonly ConcurrentQueue<Measurement> _events = new();
+        private readonly ServiceProvider _services = new ServiceCollection()
+            .AddNotificationCommandMetrics()
+            .BuildServiceProvider();
+        public INotificationCommandMetrics Instrumentation { get; }
+        public Measurement[] Events => _events.ToArray();
+
+        public RecordingMeasurements()
+        {
+            var meter = _services.GetRequiredService<IMeterFactory>().Create(Metrics.MeterName);
+            _listener.InstrumentPublished = (instrument, listener) =>
+            {
+                if (ReferenceEquals(instrument.Meter, meter))
+                    listener.EnableMeasurementEvents(instrument);
+            };
+            _listener.SetMeasurementEventCallback<long>(
+                (instrument, value, tags, _) => Record(instrument, value, tags)
+            );
+            _listener.SetMeasurementEventCallback<double>(
+                (instrument, value, tags, _) => Record(instrument, value, tags)
+            );
+            _listener.Start();
+            Instrumentation = _services.GetRequiredService<INotificationCommandMetrics>();
+        }
+
+        public INotificationCommandMetrics ResolveInstrumentation() =>
+            _services.GetRequiredService<INotificationCommandMetrics>();
+
+        public void DisposeHost() => _services.Dispose();
+
+        private void Record(Instrument instrument, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags)
+        {
+            _events.Enqueue(new(instrument.Name, value, instrument.Unit, tags.ToArray()));
+        }
+
+        public void Dispose()
+        {
+            _listener.Dispose();
+            _services.Dispose();
+        }
+    }
+
+    private sealed record Measurement(string Name, double Value, string? Unit, KeyValuePair<string, object?>[] Tags);
+
     private static async Task RunUntilFailure(NotificationCommandConsumer consumer, RecordingLogger logger)
     {
         await consumer.StartAsync(TestContext.Current.CancellationToken);
@@ -346,12 +656,13 @@ public sealed class NotificationCommandSendTests
         await consumer.StopAsync(TestContext.Current.CancellationToken);
     }
 
-    private static NotificationCommandConsumer Consumer(
+    private NotificationCommandConsumer Consumer(
         IAmazonSQS sqs,
         INotificationDeliveryRecordStore store,
         INotifyEmailClient notify,
         RecordingLogger logger,
-        NotificationCommandDeliveryOptions? options = null
+        NotificationCommandDeliveryOptions? options = null,
+        INotificationCommandMetrics? metrics = null
     )
     {
         var readiness = new MongoMigrationReadiness();
@@ -382,23 +693,36 @@ public sealed class NotificationCommandSendTests
                         EvidenceDigestSecret = "test-secret",
                         RecipientLaneSecret = "test-lane",
                         PollIntervalSeconds = 1,
+                        DiagnosticNotificationTypes = ["metrics-test"],
                     }
             ),
             factory,
             readiness,
-            new NotificationCommandMetrics(),
+            metrics ?? _metricServices.GetRequiredService<INotificationCommandMetrics>(),
             logger,
             notify,
             digest
         );
     }
 
-    private static IAmazonSQS Sqs()
+    private static IAmazonSQS Sqs(string notificationType = "submitted", bool beforeCutover = false)
     {
         var sqs = Substitute.For<IAmazonSQS>();
         sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
             .Returns(
-                _ => Task.FromResult(new ReceiveMessageResponse { Messages = [Message()] }),
+                _ =>
+                    Task.FromResult(
+                        new ReceiveMessageResponse
+                        {
+                            Messages =
+                            [
+                                Message(
+                                    notificationType,
+                                    beforeCutover ? "2026-09-28T00:00:00Z" : "2026-09-29T00:00:00Z"
+                                ),
+                            ],
+                        }
+                    ),
                 call => Wait(call.Arg<CancellationToken>())
             );
 
@@ -436,7 +760,7 @@ public sealed class NotificationCommandSendTests
     private static NotifyAcceptance Acceptance() =>
         new("01234567-89ab-cdef-0123-456789abcdef", Reference, "template-1", 1);
 
-    private static Message Message() =>
+    private static Message Message(string notificationType = "submitted", string timestamp = "2026-09-29T00:00:00Z") =>
         new()
         {
             MessageId = "message-1",
@@ -446,8 +770,8 @@ public sealed class NotificationCommandSendTests
                 {
                     schemaVersion = 1,
                     idempotencyKey = "private-key",
-                    actionOccurredAtUtc = "2026-09-29T00:00:00Z",
-                    notificationType = "submitted",
+                    actionOccurredAtUtc = timestamp,
+                    notificationType,
                     emailAddress = " Recipient@Example.com ",
                     templateId = "template-1",
                     personalisation = new { body = "private-body" },

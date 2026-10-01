@@ -12,7 +12,7 @@ public sealed class NotificationCommandConsumer(
     IOptions<NotificationCommandDeliveryOptions> options,
     INotificationDeliveryRecordStoreFactory recordStoreFactory,
     MongoMigrationReadiness migrationReadiness,
-    NotificationCommandMetrics metrics,
+    INotificationCommandMetrics metrics,
     ILogger<NotificationCommandConsumer> logger,
     INotifyEmailClient notifyClient,
     INotificationCommandDigest digest
@@ -49,7 +49,7 @@ public sealed class NotificationCommandConsumer(
                 {
                     messageId = message.MessageId;
                     var command = NotificationCommandMessageReader.Read(message).NormaliseRecipient();
-                    notificationType = command.NotificationType;
+                    notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
                     reference = digest.CreateNotifyReference(command.IdempotencyKey);
                     await Process(message, command, reference, cutover, receiveStartedAt, stoppingToken);
                 }
@@ -87,7 +87,8 @@ public sealed class NotificationCommandConsumer(
         CancellationToken stoppingToken
     )
     {
-        metrics.RecordReceived(command.NotificationType);
+        var notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
+        metrics.RecordReceived(notificationType);
         var store = recordStoreFactory.GetRecordStore();
         var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
         if (command.ActionOccurredAtUtc < cutover)
@@ -100,7 +101,10 @@ public sealed class NotificationCommandConsumer(
             if (result is SuppressionClaimResult.Conflict or SuppressionClaimResult.ActiveClaim)
                 throw new InvalidOperationException("Notification command suppression is not terminal.");
             if (result == SuppressionClaimResult.TerminalDuplicate)
+            {
+                metrics.RecordDuplicate(notificationType);
                 outcome = "terminal-duplicate";
+            }
         }
         else
         {
@@ -111,13 +115,27 @@ public sealed class NotificationCommandConsumer(
             );
             var claimStartedAt = Stopwatch.GetTimestamp();
             var attemptOwner = Guid.NewGuid().ToString("N");
-            var claim = await RunBounded(
-                token => store.Claim(command, attemptOwner, options.Value.CommandLeaseSeconds, token),
-                options.Value.ClaimTimeoutSeconds,
-                stoppingToken
-            );
+            DeliveryClaimResult claim;
+            try
+            {
+                claim = await RunBounded(
+                    token => store.Claim(command, attemptOwner, options.Value.CommandLeaseSeconds, token),
+                    options.Value.ClaimTimeoutSeconds,
+                    stoppingToken
+                );
+            }
+            catch
+            {
+                metrics.RecordClaimFailure(
+                    notificationType,
+                    Stopwatch.GetElapsedTime(claimStartedAt).TotalMilliseconds
+                );
+                throw;
+            }
+            metrics.RecordClaim(notificationType, claim, Stopwatch.GetElapsedTime(claimStartedAt).TotalMilliseconds);
             if (claim == DeliveryClaimResult.TerminalDuplicate)
             {
+                metrics.RecordDuplicate(notificationType);
                 outcome = "terminal-duplicate";
             }
             else
@@ -134,11 +152,29 @@ public sealed class NotificationCommandConsumer(
                     options.Value.CommandLeaseSeconds,
                     options.Value.CompletionBudgetSeconds
                 );
-                var acceptance = await RunBounded(
-                    token => notifyClient.Send(command, reference, token),
-                    options.Value.NotifyTimeoutSeconds,
-                    stoppingToken
-                );
+                var sendStartedAt = Stopwatch.GetTimestamp();
+                NotifyAcceptance acceptance;
+                try
+                {
+                    acceptance = await RunBounded(
+                        token => notifyClient.Send(command, reference, token),
+                        options.Value.NotifyTimeoutSeconds,
+                        stoppingToken
+                    );
+                    metrics.RecordSendAccepted(notificationType);
+                }
+                catch
+                {
+                    metrics.RecordSendFailure(notificationType);
+                    throw;
+                }
+                finally
+                {
+                    metrics.RecordSendDuration(
+                        notificationType,
+                        Stopwatch.GetElapsedTime(sendStartedAt).TotalMilliseconds
+                    );
+                }
                 EnsureRemaining(
                     claimStartedAt,
                     options.Value.CommandLeaseSeconds,
@@ -166,12 +202,12 @@ public sealed class NotificationCommandConsumer(
             }
         }
 
-        metrics.RecordOutcome(command.NotificationType, outcome);
+        metrics.RecordOutcome(notificationType, outcome);
         if (logger.IsEnabled(LogLevel.Information))
             logger.LogInformation(
                 "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}",
                 outcome,
-                command.NotificationType,
+                notificationType,
                 message.MessageId,
                 reference
             );

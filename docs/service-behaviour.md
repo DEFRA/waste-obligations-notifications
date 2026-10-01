@@ -2,8 +2,8 @@
 
 This document describes message contracts and processing requirements. Use
 [CONTEXT.md](../CONTEXT.md) for terminology and the linked ADRs for decision
-rationale. Both ADRs are currently proposed; current implementation scope is described
-below.
+rationale. The command architecture is accepted; the cutover ADR remains proposed. Current
+implementation scope is described below.
 
 ## Current scope
 
@@ -115,6 +115,23 @@ original recipient-lane position.
   command serialisation and immutable-field digests so sub-millisecond precision
   lost on a Mongo roundtrip does not create a conflict. Do not use processing time
   or mutable entity state.
+
+Operational logs and metrics use a diagnostics-only allowlist of notification
+categories, with an `other` fallback for unknown values. Startup bounds the list
+to 32 non-PII labels of at most 64 lowercase ASCII letters, digits or hyphens.
+This does not restrict producer-defined command types or alter stored immutable
+identity. Claim results and durations, Notify accepted/failed attempts and send
+durations, and terminal duplicates are observed at the hosted-consumer boundary.
+Notify acceptance is counted before persistence; failure means an attempt lacked
+confirmed acceptance and includes indeterminate cancellation and timeout. These
+metrics do not claim recipient delivery or rejection.
+
+Instruments follow Waste Obligations' DI-owned meter and singleton instrumentation
+conventions. Shared names and tag keys use PascalCase; counters use CloudWatch
+`COUNT` and claim/send durations use `MILLISECONDS`, matching email-send timing.
+The only dimensions are the fixed Notifications `Service`, bounded
+`NotificationType` and fixed `Outcome`. The current slice exposes in-process
+instruments; CloudWatch EMF export remains pending.
 
 The command architecture is described in
 [ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the

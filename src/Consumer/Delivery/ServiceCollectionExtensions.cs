@@ -1,6 +1,7 @@
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Utils.Metrics;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
 
@@ -15,6 +16,12 @@ public static class ServiceCollectionExtensions
             .AddOptions<NotificationCommandDeliveryOptions>()
             .Bind(configuration.GetRequiredSection(NotificationCommandDeliveryOptions.SectionName))
             .ValidateDataAnnotations()
+            .Validate(
+                options =>
+                    options.DiagnosticNotificationTypes is not null
+                    && options.DiagnosticNotificationTypes.All(NotificationCommandDeliveryOptions.IsDiagnosticLabel),
+                "DiagnosticNotificationTypes must contain only bounded lowercase ASCII category labels"
+            )
             .Validate(
                 options => !options.ProcessingEnabled || options.HasValidProcessingBudget,
                 "CommandLeaseSeconds and VisibilityTimeoutSeconds must cover ReceiveTimeoutSeconds, ClaimTimeoutSeconds, NotifyTimeoutSeconds, AcceptanceTimeoutSeconds, DeleteTimeoutSeconds and SafetyHeadroomSeconds"
@@ -79,7 +86,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<INotificationCommandDigest, NotificationCommandDigest>();
         services.AddSingleton<INotificationDeliveryRecordStore, MongoNotificationDeliveryRecordStore>();
         services.AddSingleton<INotificationDeliveryRecordStoreFactory, NotificationDeliveryRecordStoreFactory>();
-        services.AddSingleton<NotificationCommandMetrics>();
+        services.AddNotificationCommandMetrics();
         services.AddSingleton<INotificationCommandPublisher, NotificationCommandPublisher>();
         services.AddHostedService<NotificationCommandConsumer>();
 

@@ -3,7 +3,7 @@
 This glossary defines notification-delivery terms. See
 [service behaviour](docs/service-behaviour.md) for current scope and processing
 requirements, and the [architecture ADR](docs/adr/0001-notification-command-delivery-architecture.md)
-for the proposed delivery design.
+for the accepted command-delivery design.
 
 ## Language
 
