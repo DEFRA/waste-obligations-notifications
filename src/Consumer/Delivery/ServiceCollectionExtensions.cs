@@ -87,6 +87,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<INotificationDeliveryRecordStore, MongoNotificationDeliveryRecordStore>();
         services.AddSingleton<INotificationDeliveryRecordStoreFactory, NotificationDeliveryRecordStoreFactory>();
         services.AddNotificationCommandMetrics();
+        services.AddNotificationCommandEmfExport(configuration);
         services.AddSingleton<INotificationCommandPublisher, NotificationCommandPublisher>();
         services.AddHostedService<NotificationCommandConsumer>();
 

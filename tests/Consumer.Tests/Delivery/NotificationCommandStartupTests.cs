@@ -178,6 +178,7 @@ public sealed class NotificationCommandStartupTests
     {
         var values = new Dictionary<string, string?>
         {
+            ["AWS_EMF_ENABLED"] = "false",
             ["NotificationCommandDelivery:ProcessingEnabled"] = processingEnabled.ToString(),
             ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
             ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",

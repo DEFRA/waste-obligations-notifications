@@ -130,8 +130,21 @@ Instruments follow Waste Obligations' DI-owned meter and singleton instrumentati
 conventions. Shared names and tag keys use PascalCase; counters use CloudWatch
 `COUNT` and claim/send durations use `MILLISECONDS`, matching email-send timing.
 The only dimensions are the fixed Notifications `Service`, bounded
-`NotificationType` and fixed `Outcome`. The current slice exposes in-process
-instruments; CloudWatch EMF export remains pending.
+`NotificationType` and fixed `Outcome`. A DI-owned CloudWatch EMF exporter starts
+before the command consumer and observes only its host's meter. It uses the Waste
+Obligations SDK/configuration mechanism without shared SDK configuration or
+platform-property decoration. One measurement emits one EMF document; optional
+agent log-group/stream routing is preserved outside metric dimensions.
+
+Export defaults to enabled and requires a configured namespace, except that
+`AWS_EMF_ENVIRONMENT=Local` allows a blank namespace and uses the Notifications
+namespace. Disabled export does not resolve an SDK environment. Local development
+and isolated tests disable it. Unknown-environment discovery uses bounded,
+cancellable startup metadata requests; delivery never fetches metadata. Export
+failures and full-buffer drops yield fixed sanitized diagnostics and do not affect
+command processing. Observation stops before sink shutdown; the host bounds its
+wait, but the SDK's background worker has no cancellation API and may outlive that
+wait. Metrics are best effort. See the README for configuration and CDP routing.
 
 The command architecture is described in
 [ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the
@@ -143,8 +156,10 @@ cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
   queue, with its own redrive policy. Never reuse the producer queue.
 - `AnalyticsEventConsumer__QueueUrl` and
   `AnalyticsEventConsumer__ProcessingEnabled` are deployment-owned settings.
-- Command queue, MongoDB, cutover, and digest-secret settings are also
+- Command queue, MongoDB, cutover, digest-secret and `AWS_EMF_*` settings are also
   deployment-owned. Local Compose settings do not configure CDP environments.
+  Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
+  Fluent-host endpoint derivation is malformed.
 
 ## Behaviour verification
 

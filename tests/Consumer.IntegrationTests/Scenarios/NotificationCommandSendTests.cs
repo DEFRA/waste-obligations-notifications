@@ -203,6 +203,7 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                 ).QueueUrl;
                 var values = new Dictionary<string, string?>
                 {
+                    ["AWS_EMF_ENABLED"] = "false",
                     ["NotificationCommandDelivery:QueueUrl"] = fixture.QueueUrl,
                     ["NotificationCommandDelivery:ProcessingEnabled"] = "true",
                     ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2026-09-29T00:00:00Z",

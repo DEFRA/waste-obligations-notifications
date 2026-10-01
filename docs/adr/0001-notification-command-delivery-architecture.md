@@ -56,6 +56,13 @@ identify the same requested template. Diagnostics use a bounded configured
 category allowlist with a fixed fallback, preserving arbitrary producer-defined
 command types without exposing their raw values in logs or metric dimensions.
 
+Delivery metrics use Waste Obligations' DI-managed instruments and CloudWatch
+EMF mechanism. Each host owns its configuration, SDK environment and observer;
+only bounded command dimensions are exported, with no SDK platform decoration.
+Metric failures do not alter delivery. Observation stops before a bounded sink
+shutdown wait; the SDK worker can outlive that wait because it has no cancellation
+API.
+
 ## Consequences
 
 The delivery service is source-independent: it does not consume a raw analytics

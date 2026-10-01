@@ -142,15 +142,50 @@ accepted and failed sends, send duration, and terminal-duplicate suppression.
 Tags contain only the fixed `Service=waste-obligations-notifications` value,
 bounded `NotificationType` category and fixed `Outcome` values. A send acceptance
 metric means Notify returned valid acceptance evidence, even if recording it
-subsequently fails. A send failure
-metric means the attempt did not confirm acceptance, including timeout or shutdown
+subsequently fails. A send failure metric means the attempt did not confirm acceptance, including timeout or shutdown
 cancellation; it does not prove Notify rejected the email. Persistence failures
 remain errors in operational logs, and failed claims receive a fixed failure
 outcome.
 
-This increment publishes in-process instruments only. CloudWatch EMF export and
-its CDP configuration are a separate pending increment; these measurements are
-not yet emitted to CDP metrics.
+A host-owned exporter starts before the command consumer and observes only that
+host's command meter. It uses Waste Obligations' CloudWatch EMF 2.2.0 mechanism,
+emitting one SDK JSON document per measurement. SDK platform decoration is skipped;
+dimensions remain `Service`, `NotificationType` and, where applicable, `Outcome`.
+Configured agent log-group/stream routing is preserved.
+
+EMF configuration uses the same root `AWS_EMF_*` keys as Waste Obligations:
+
+| Setting | Default and behaviour |
+| --- | --- |
+| `AWS_EMF_ENABLED` | `true`; Development, Compose and isolated tests disable export. |
+| `AWS_EMF_NAMESPACE` | Required when enabled; the deployment placeholder is rejected. `Local` permits a missing, empty or whitespace value and uses `Defra.WasteObligationsNotifications`. |
+| `AWS_EMF_ENVIRONMENT` | Empty or unknown values use SDK discovery in Lambda, ECS, EC2, then Agent order. Explicit `Local`, `Lambda`, `Agent`, `ECS` or `EC2` selects that SDK environment. |
+| `AWS_EMF_AGENT_ENDPOINT` | SDK default `tcp://127.0.0.1:25888`; configure the actual CDP collector endpoint explicitly. |
+| `AWS_EMF_AGENT_BUFFER_SIZE` | `100` documents; valid range 1–10000. A full SDK buffer drops new documents and produces a sanitized warning. |
+| `AWS_EMF_SERVICE_NAME`, `AWS_EMF_SERVICE_TYPE` | Optional SDK service/routing settings; service name defaults to `waste-obligations-notifications`. The metric `Service` dimension stays fixed. |
+| `AWS_EMF_LOG_GROUP_NAME`, `AWS_EMF_LOG_STREAM_NAME` | Optional agent routing values; they do not become metric dimensions. |
+| `AWS_EMF_SHUTDOWN_TIMEOUT_SECONDS` | `5`, with a range of 1–30; bounds the host's wait for SDK sink shutdown. |
+
+Unknown-environment metadata discovery runs once during enabled startup. Each
+request is cancellable and bounded to two seconds; late results cannot pass the
+eight-second startup confirmation budget. No metadata request runs during command
+processing. Export startup, serialization, transport and buffer failures produce
+fixed support diagnostics without SDK state or exception text and do not change
+command delivery or queue deletion. Export is best effort; the SDK handles agent
+transport on its existing background worker. `Local`/`Lambda` use the SDK's
+synchronous console sink.
+
+Shutdown detaches observation before asking the sink to stop. The SDK worker has
+no cancellation API and may remain active after the bounded wait ends; late
+completion cannot restart export or affect another host. Pending metrics may be
+lost when the process exits.
+
+Set the namespace, environment and collector routing in CDP separately; local
+settings do not configure deployments. For CDP/FluentBit, specify
+`AWS_EMF_AGENT_ENDPOINT` rather than relying on `FLUENT_HOST` endpoint derivation:
+the pinned SDK's [ECS implementation](https://github.com/awslabs/aws-embedded-metrics-dotnet/blob/v2.2.0/src/Amazon.CloudWatch.EMF/Environment/ECSEnvironment.cs)
+builds an invalid derived endpoint. `AWS_EMF_ENVIRONMENT=Agent` also avoids metadata
+discovery when the collector route is already known.
 
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
