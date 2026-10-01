@@ -14,8 +14,7 @@ sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
 cutover. Analytics does not yet create notification commands. Configured Basic
-administrators can inspect and redrive one command-DLQ message; discard remains
-unavailable. Redrive does not restore a command's
+administrators can inspect, redrive or discard one command-DLQ message. Redrive does not restore a command's
 original recipient-lane position.
 
 ## Consumers and message handling
@@ -202,7 +201,7 @@ content, works across correctly configured hosts and is not persisted. Expiry
 is anchored before receive, is strictly within AWS's five-minute attempt window,
 and is not extended by a delayed response. Pass bounded cancellation to queue
 and storage calls and reject late confirmations. Redrive uses this selection
-contract; discard remains unavailable.
+contract; discard uses the same authenticated selection body.
 
 `POST /admin/notification-commands/dlq/redrive` accepts the selection token in its
 JSON body and requires the same Basic Admin policy. Invalid or expired tokens
@@ -229,6 +228,32 @@ transport identity. Outside SQS's deduplication window, another copy remains
 subject to durable command identity. Redrive responses and logs contain fixed
 safe results, no raw command fields, receipt, selection token or dependency
 exception text. No additional HTTP retries or Notify reconciliation are added.
+
+`POST /admin/notification-commands/dlq/discard` applies the same authenticated,
+bounded replay and command verification. Invalid, expired, changed or malformed
+selections cannot create evidence or delete. Atomically record abandonment before
+selected deletion. New records retain only the original eight minimal fields;
+notification/recipient/immutable fields are keyed digests, notification type is
+the configured safe diagnostic category or `other`, and timestamps/outcome record
+abandonment. The immutable digest still covers the original type and delivery
+identity. Never store raw key, recipient, personalisation or template in new
+abandonment evidence.
+
+A per-key unique index and Mongo server-time pipeline permit a new record or a
+matching expired pending claim. Active claims, immutable conflicts, accepted or
+suppressed records and unknown states return conflict without changing history
+or deleting. An expired transition clears obsolete owner/lease fields and
+preserves record identity; matching abandonment allows idempotent removal.
+Claim recovery and acceptance cannot win the same atomic transition as
+abandonment. Future consumer duplicates are acknowledged without Notify.
+
+The entire discard operation shares its dependency timeout, capped by selection
+expiry. Failed or late abandonment confirmation leaves the source even if the
+write completed. Failed deletion retains durable abandonment, allowing a repeat
+on another host. Abandonment prevents future attempts and does not establish
+whether an earlier indeterminate Notify request succeeded. Responses/logs remain
+fixed and safe; the raw inspection identity exception does not extend to discard
+responses or persisted abandonment.
 
 Floci lacks native receive-attempt replay. Local tests explicitly supply that
 one API behavior with a test-only adapter while real FIFO queues verify

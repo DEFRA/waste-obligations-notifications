@@ -40,7 +40,8 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = databaseName }
             ),
             digest,
-            readiness
+            readiness,
+            DiagnosticOptions()
         );
         var command = new NotificationCommand(
             1,
@@ -170,7 +171,8 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = databaseName }
             ),
             digest,
-            readiness
+            readiness,
+            DiagnosticOptions()
         );
         var command = new NotificationCommand(
             1,
@@ -289,7 +291,8 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                     new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = databaseName }
                 ),
                 digest,
-                readiness
+                readiness,
+                DiagnosticOptions()
             ))
             .ToArray();
         var command = new NotificationCommand(
@@ -400,7 +403,8 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = databaseName }
             ),
             digest,
-            readiness
+            readiness,
+            DiagnosticOptions()
         );
         var command = new NotificationCommand(
             1,
@@ -482,7 +486,8 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = databaseName }
             ),
             digest,
-            readiness
+            readiness,
+            DiagnosticOptions()
         );
         var command = new NotificationCommand(
             1,
@@ -541,4 +546,15 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
 
         public required DateTime RecordedAtUtc { get; init; }
     }
+
+    private static IOptions<NotificationCommandDeliveryOptions> DiagnosticOptions() =>
+        Options.Create(
+            new NotificationCommandDeliveryOptions
+            {
+                QueueUrl = "local",
+                EmailDeliveryCutoverUtc = "2026-10-01T00:00:00Z",
+                EvidenceDigestSecret = "test-evidence-secret",
+                RecipientLaneSecret = "test-lane-secret",
+            }
+        );
 }

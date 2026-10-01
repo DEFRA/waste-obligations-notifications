@@ -8,6 +8,43 @@ public static class CommandDlqEndpoints
     {
         builder.MapPost("/notification-commands/dlq/inspect", Inspect).ExcludeFromDescription();
         builder.MapPost("/notification-commands/dlq/redrive", Redrive).ExcludeFromDescription();
+        builder.MapPost("/notification-commands/dlq/discard", Discard).ExcludeFromDescription();
+    }
+
+    private static async Task<IResult> Discard(
+        CommandDlqSelectionRequest request,
+        CommandDlqDiscarder discarder,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            var result = await discarder.Discard(request.SelectionToken, cancellationToken);
+
+            return result switch
+            {
+                CommandDlqDiscardResult.Discarded => Results.NoContent(),
+                CommandDlqDiscardResult.InvalidSelection => Results.Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    detail: "Command DLQ selection is invalid or expired."
+                ),
+                _ => Results.Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    detail: "Selected command cannot be discarded."
+                ),
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                detail: "Command DLQ discard failed."
+            );
+        }
     }
 
     private static async Task<IResult> Redrive(

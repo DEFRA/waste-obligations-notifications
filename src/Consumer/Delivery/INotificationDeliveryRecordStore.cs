@@ -6,6 +6,8 @@ public interface INotificationDeliveryRecordStore
 {
     Task<NotificationDeliveryState> Inspect(NotificationCommand command, CancellationToken cancellationToken);
 
+    Task<AbandonmentResult> RecordAbandonment(NotificationCommand command, CancellationToken cancellationToken);
+
     Task<SuppressionClaimResult> RecordSuppression(NotificationCommand command, CancellationToken cancellationToken);
 
     Task<DeliveryClaimResult> Claim(

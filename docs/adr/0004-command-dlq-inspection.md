@@ -1,4 +1,4 @@
-# 0004: Authenticated command-DLQ inspection and redrive
+# 0004: Authenticated command-DLQ inspection, redrive and discard
 
 Status: Accepted
 
@@ -47,6 +47,22 @@ selection expiry, rejecting late confirmations before further effects. Redrive
 never changes delivery evidence; normal consumption retains terminal, conflict
 and active-claim guards.
 
+Discard repeats selection validation under one bounded deadline and records
+`delivery-abandoned` before deleting only the selected receipt. Use the unique
+notification-key index and a server-`$$NOW` pipeline: create minimal abandonment
+or replace only matching expired pending evidence, retaining its record ID and
+clearing the obsolete owner/lease. A matching abandoned record supports
+idempotent deletion. Refuse active owners, immutable conflicts, accepted,
+suppressed and unknown outcomes without rewriting their history. The claim and
+acceptance predicates cannot both win against the abandonment transition.
+
+New abandonment retains the original eight-field shape. Store the configured
+safe diagnostic category/fallback, while the immutable digest preserves the
+original command type and fields. Do not persist raw identity, recipient, body
+or template. Failed or late writes preserve the source; failed deletion retains
+abandonment for later completion. Future duplicates are suppressed without
+Notify.
+
 ## Consequences
 
 Inspection temporarily changes visibility and receive count. Disabled
@@ -56,7 +72,8 @@ Recovery joins current lane order. An indeterminate publication can leave both
 source and destination; failed deletion preserves publication. Repeated recovery
 is deduplicated inside SQS's window and checked against durable command identity
 on consumption. A prior indeterminate Notify request retains its accepted
-duplicate-email risk. Discard and abandonment writes remain unavailable.
+duplicate-email risk. Abandonment prevents future attempts but does not prove an
+earlier indeterminate request failed.
 
 Floci does not implement receive-attempt replay. A labelled test-only API adapter
 supplies that boundary while FIFO effects and Mongo remain real; deployment

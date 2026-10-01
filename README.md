@@ -23,8 +23,9 @@ by default. Inspection returns minimal metadata and a signed expiring selection;
 `POST /admin/notification-commands/dlq/redrive` accepts that selection in a JSON
 body, republishes the unchanged command, then removes only the selected source
 after publication is confirmed. Neither operation changes delivery evidence.
-Inspection temporarily changes visibility and receive count. Discard is not yet
-available.
+Inspection temporarily changes visibility and receive count.
+`POST /admin/notification-commands/dlq/discard` records eligible abandonment before
+removing the selected source, so future duplicates remain suppressed.
 
 Notify acceptance means Notify accepted the email request; it does not prove
 recipient delivery. A timeout, lost response, crash, or persistence failure can
@@ -267,13 +268,13 @@ delivery. Failures expose a fixed description without dependency error details.
 Disabled command processing does not register or call this check. `/health`
 remains independent of Notify and the other extended dependency checks.
 
-`CommandDlqAdministration__Enabled=true` enables inspection and redrive independently of
+`CommandDlqAdministration__Enabled=true` enables inspection, redrive and discard independently of
 command sending. Configure its FIFO `QueueUrl`, a distinct command FIFO URL and both
 delivery digest secrets. `SelectionLifetimeSeconds` defaults to 120 and must be
 strictly below AWS's 300-second receive-attempt window;
 `DependencyTimeoutSeconds` defaults to 10 and must be positive and shorter than
-the selection lifetime. Inspection and redrive wait for verified Mongo migrations
-before receiving. Redrive applies the dependency timeout to the whole operation,
+the selection lifetime. All administrator operations wait for verified Mongo migrations
+before receiving. Redrive and discard apply the dependency timeout to each whole operation,
 further limited by the signed selection's remaining lifetime. Notify credentials, cutover and sending budgets are required only
 when sending is enabled. Disabled administration ignores its unvalidated ACL
 and permits deployment placeholders; its endpoints remain absent.
@@ -320,7 +321,22 @@ request retry. A later retry outside SQS's deduplication window may create anoth
 copy, protected by normal durable command identity. Responses and logs use fixed
 safe outcomes and expose no command content, receipt or selection token.
 
-Local redrive tests label their controlled `ReceiveMessage` replay adapter because
+Discard accepts the same selection body and revalidates the selected command.
+It atomically creates minimal `delivery-abandoned` evidence or transitions a
+matching expired pending claim using Mongo server time. Active claims, immutable
+conflicts, accepted/suppressed records and unknown states return a fixed conflict
+without changing history or deleting the message. Matching abandonment permits
+idempotent removal. New abandonment evidence stores only digests, action/outcome
+timestamps and the safe diagnostic category; its immutable digest retains the
+original command identity. It contains no raw identity, address, template or body.
+
+Only confirmed abandonment permits selected deletion. A failed or late write
+leaves the source even when the write took effect; inspection/retry can observe
+that evidence. Failed deletion retains abandonment and permits completion on
+another correctly configured host. Abandonment suppresses future attempts; it
+does not prove an earlier indeterminate Notify request failed.
+
+Local administrator tests label their controlled `ReceiveMessage` replay adapter because
 Floci does not implement native receive-attempt replay. FIFO publication,
 deduplication, deletion, selected-message isolation and Mongo readiness/evidence
 remain real. Native AWS replay must be checked during deployment validation;

@@ -57,6 +57,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<CommandDlqSelectionTokens>();
         services.AddSingleton<CommandDlqInspector>();
         services.AddSingleton<CommandDlqRedriver>();
+        services.AddSingleton<CommandDlqDiscarder>();
 
         return services;
     }
