@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
-    <PackageReference Include="AWSSDK.SQS" Version="4.0.100.14" />
+    <PackageReference Include="AWSSDK.SQS" Version="4.0.100.15" />
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.2" />
     <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" Version="2.4.1" />
     <!-- Do not update Verify beyond major version 32: newer major versions require a licence. -->
