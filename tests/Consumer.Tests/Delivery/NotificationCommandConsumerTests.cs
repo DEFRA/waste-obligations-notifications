@@ -75,16 +75,34 @@ public class NotificationCommandConsumerTests
             .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
             .Returns(new DeleteMessageResponse())
             .AndDoes(_ => deleted.TrySetResult());
-        using var subject = CreateSubject(sqsClient, recordStore, logger, cutover: cutover);
+        var notify = Substitute.For<INotifyEmailClient>();
+        notify
+            .Send(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new NotifyAcceptance("01234567-89ab-cdef-0123-456789abcdef", "reference", "template-1", 1));
+        recordStore
+            .Claim(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(DeliveryClaimResult.Claimed);
+        recordStore
+            .RecordAcceptance(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<NotifyAcceptance>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(true);
+        using var subject = CreateSubject(sqsClient, recordStore, logger, cutover: cutover, notify: notify);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
-        if (suppressed)
-            await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        else
-            await logger.WaitForMessage(
-                "Notification command consumption failed",
-                TestContext.Current.CancellationToken
-            );
+        await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
         await recordStore
@@ -93,9 +111,14 @@ public class NotificationCommandConsumerTests
                 Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
                 Arg.Any<CancellationToken>()
             );
-        await sqsClient
-            .Received(suppressed ? 1 : 0)
-            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+        await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+        await notify
+            .Received(suppressed ? 0 : 1)
+            .Send(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            );
     }
 
     [Theory]
@@ -514,7 +537,7 @@ public class NotificationCommandConsumerTests
     }
 
     [Fact]
-    public async Task Start_WhenCommandIsAtOrAfterCutover_ShouldNotDeleteMessage()
+    public async Task Start_WhenPostCutoverCommandCannotAcquireAClaim_ShouldNotDeleteMessage()
     {
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
@@ -539,7 +562,8 @@ public class NotificationCommandConsumerTests
         MongoMigrationReadiness? readiness = null,
         int pollIntervalSeconds = 1,
         int receiveTimeoutSeconds = 30,
-        string cutover = "2026-09-29T00:00:00Z"
+        string cutover = "2026-09-29T00:00:00Z",
+        INotifyEmailClient? notify = null
     ) =>
         new(
             sqsClient,
@@ -559,7 +583,19 @@ public class NotificationCommandConsumerTests
             CreateRecordStoreFactory(recordStore),
             readiness ?? CompletedReadiness(),
             new NotificationCommandMetrics(),
-            logger ?? new RecordingLogger<NotificationCommandConsumer>()
+            logger ?? new RecordingLogger<NotificationCommandConsumer>(),
+            notify ?? Substitute.For<INotifyEmailClient>(),
+            new NotificationCommandDigest(
+                Options.Create(
+                    new NotificationCommandDeliveryOptions
+                    {
+                        QueueUrl = QueueUrl,
+                        EmailDeliveryCutoverUtc = cutover,
+                        EvidenceDigestSecret = "test-evidence-secret",
+                        RecipientLaneSecret = "test-lane-secret",
+                    }
+                )
+            )
         );
 
     private static MongoMigrationReadiness CompletedReadiness()
@@ -681,7 +717,7 @@ public class NotificationCommandConsumerTests
             {
                 lock (_messages)
                 {
-                    if (_messages.Contains(expected))
+                    if (_messages.Any(message => message.StartsWith(expected, StringComparison.Ordinal)))
                     {
                         return;
                     }

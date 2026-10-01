@@ -19,6 +19,9 @@ public sealed class NotificationCommandStartupTests
     [Theory]
     [InlineData("EvidenceDigestSecret", "set-automatically-by-deployment-evidence-secret")]
     [InlineData("RecipientLaneSecret", "set-automatically-by-deployment-lane-secret")]
+    [InlineData("VisibilityTimeoutSeconds", "119")]
+    [InlineData("CommandLeaseSeconds", "89")]
+    [InlineData("NotifyTimeoutSeconds", "61")]
     [InlineData("EvidenceDigestSecret", " ")]
     [InlineData("RecipientLaneSecret", " ")]
     [InlineData("EmailDeliveryCutoverUtc", "set-automatically-when-deployed")]
@@ -99,12 +102,28 @@ public sealed class NotificationCommandStartupTests
                 ["NotificationCommandDelivery:EvidenceDigestSecret"] = placeholder,
                 ["NotificationCommandDelivery:RecipientLaneSecret"] = placeholder,
                 ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = placeholder,
+                ["Notify:ApiKey"] = placeholder,
             }
         );
 
         await host.StartAsync(TestContext.Current.CancellationToken);
         await host.StopAsync(TestContext.Current.CancellationToken);
 
+        await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenEnabledWithInvalidNotifyCredentials_ShouldFailBeforeReceivingWithoutExposingKey()
+    {
+        const string invalidKey = "private-invalid-api-key";
+        var sqs = Substitute.For<IAmazonSQS>();
+        using var host = CreateHost(sqs, Substitute.For<ILogger>(), true, new() { ["Notify:ApiKey"] = invalidKey });
+
+        var exception = await Assert.ThrowsAsync<OptionsValidationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken)
+        );
+
+        Assert.DoesNotContain(invalidKey, exception.ToString(), StringComparison.Ordinal);
         await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
     }
 
@@ -122,6 +141,7 @@ public sealed class NotificationCommandStartupTests
             ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",
             ["NotificationCommandDelivery:EvidenceDigestSecret"] = EvidenceSecret,
             ["NotificationCommandDelivery:RecipientLaneSecret"] = LaneSecret,
+            ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
             ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
             ["Mongo:DatabaseName"] = "startup-test",
         };

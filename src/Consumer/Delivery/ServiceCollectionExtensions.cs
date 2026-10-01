@@ -16,6 +16,10 @@ public static class ServiceCollectionExtensions
             .Bind(configuration.GetRequiredSection(NotificationCommandDeliveryOptions.SectionName))
             .ValidateDataAnnotations()
             .Validate(
+                options => !options.ProcessingEnabled || options.HasValidProcessingBudget,
+                "CommandLeaseSeconds and VisibilityTimeoutSeconds must cover ReceiveTimeoutSeconds, ClaimTimeoutSeconds, NotifyTimeoutSeconds, AcceptanceTimeoutSeconds, DeleteTimeoutSeconds and SafetyHeadroomSeconds"
+            )
+            .Validate(
                 options => options.ReceiveTimeoutSeconds > options.WaitTimeSeconds,
                 "Notification command receive timeout must exceed the long-poll wait"
             )
@@ -36,6 +40,38 @@ public static class ServiceCollectionExtensions
                 "EmailDeliveryCutoverUtc must include an explicit UTC offset when notification command processing is enabled"
             )
             .ValidateOnStart();
+
+        services
+            .AddOptions<NotifyOptions>()
+            .Bind(configuration.GetSection(NotifyOptions.SectionName))
+            .ValidateDataAnnotations()
+            .Validate(
+                options =>
+                    !configuration.GetValue<bool>($"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled")
+                    || options.HasValidApiKey,
+                "Notify ApiKey must be configured when notification command processing is enabled"
+            )
+            .Validate(
+                options =>
+                    Uri.TryCreate(options.BaseAddress, UriKind.Absolute, out var uri)
+                    && uri.Scheme is "https" or "http",
+                "Notify BaseAddress must be an absolute HTTP URL"
+            )
+            .ValidateOnStart();
+        services
+            .AddHttpClient<INotifyEmailClient, NotifyEmailClient>(
+                (provider, client) =>
+                {
+                    client.BaseAddress = new Uri(
+                        provider
+                            .GetRequiredService<Microsoft.Extensions.Options.IOptions<NotifyOptions>>()
+                            .Value.BaseAddress
+                    );
+                    client.Timeout = Timeout.InfiniteTimeSpan;
+                }
+            )
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+            .RemoveAllLoggers();
 
         services.AddAWSService<IAmazonSQS>();
         services.AddMongo(configuration);

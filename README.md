@@ -10,11 +10,17 @@ entity ID, then deletes the successfully processed message. It deliberately does
 not send notifications, persist data, or act on the event payload.
 
 The command consumer records pre-cutover commands as `delivery-suppressed` and
-deletes them without sending to GOV.UK Notify. Post-cutover delivery belongs to
-ticket 02. Until then, commands at or after the boundary fail without deletion,
-retry after visibility timeout, and can reach the DLQ under queue redrive policy.
-Operators may need to redrive them after ticket 02 enables delivery. A redriven
-command does not regain its original position in the recipient lane.
+sends at-or-after-cutover commands through GOV.UK Notify. It acquires a Mongo
+claim, makes one send request, records acceptance, and then deletes the command.
+Matching accepted, suppressed, or abandoned commands are deleted without another
+send. Conflicts, active claims, failed sends and incomplete persistence remain on
+SQS for visibility-timeout retry and queue redrive. A redriven command does not
+regain its original recipient-lane position.
+
+Notify acceptance means Notify accepted the email request; it does not prove
+recipient delivery. A timeout, lost response, crash, or persistence failure can
+leave an indeterminate send. After claim expiry, a queue retry may send that email
+again. There is no HTTP retry or Notify-reference reconciliation in this service.
 
 The idempotency key is used unchanged as the FIFO deduplication ID. Publishing
 and consumption reject keys longer than 128 characters or containing whitespace,
@@ -41,7 +47,10 @@ docker compose up --build
 
 The local bootstrap creates `waste_obligations_analytics_events` and subscribes
 `waste_obligations_notifications_analytics_events_queue` with raw message delivery.
-It also creates isolated FIFO command and command dead-letter queues, plus MongoDB.
+It also creates isolated FIFO command and command dead-letter queues, MongoDB,
+and a controlled Notify HTTP fixture. The fixture uses a dummy API key and records
+requests only in memory for local integration tests; it does not contact GOV.UK
+Notify. Its port is `8086`.
 
 The Consumer health endpoint is available at `http://localhost:8085/health`.
 
@@ -69,7 +78,9 @@ queue convention configured.
 
 `NotificationCommandDelivery` is deployment-owned. Before enabling it, CDP must
 provide its FIFO queue URL, cutover timestamp,
-and distinct evidence-digest and recipient-lane secrets. Do not put those secrets
+and distinct evidence-digest and recipient-lane secrets. Set `Notify__ApiKey` to
+the service's Notify API key; `Notify__BaseAddress` defaults to the GOV.UK Notify
+API. Enabled command processing validates the API key shape before consuming. Do not put those secrets
 in source control or logs.
 Enabled command processing validates the cutover timestamp and both digest
 secrets at startup. Blank or deployment-placeholder secrets prevent startup
@@ -92,6 +103,26 @@ retries, and defaults to 30 seconds. It must exceed `WaitTimeSeconds`. These
 command settings leave analytics polling and the shared SQS client unchanged.
 CDP can override them through the `NotificationCommandDelivery` section;
 local Compose values do not configure deployed environments.
+
+Each receive requests `VisibilityTimeoutSeconds` explicitly (120 seconds initially).
+The delivery claim is separate from migration leases and defaults to 120 seconds.
+`ClaimTimeoutSeconds`, `NotifyTimeoutSeconds`, `AcceptanceTimeoutSeconds`, and
+`DeleteTimeoutSeconds` initially bound operations to 5, 60, 10, and 5 seconds.
+`SafetyHeadroomSeconds` adds 10 seconds. Startup requires the command lease to
+cover claim plus send, persistence, deletion and headroom, and visibility to cover
+that budget plus the conservative 30-second receive bound: 120 seconds in total.
+The receive and claim clocks start before their dependency requests; late
+confirmations cannot start a send. Mongo uses its own clock for claim expiry and
+owner checks when acceptance is recorded. Failed or indeterminate sends retain
+the claim until expiry; the service does not release it early.
+
+These values are initial estimates. Measure dependency latency and validate the
+entire budget before deployment. Configure the deployed FIFO queue visibility and
+DLQ redrive policy separately; local Compose sets visibility to 120 seconds and
+three receives. Delivery does not mutate deployed queue settings. Dependency
+cancellation bounds ordinary request work, but a process stall can let an already
+in-flight request outlive ownership; acceptance remains fenced by Mongo and the
+indeterminate-send limitation above still applies.
 
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
@@ -156,3 +187,10 @@ GitHub Actions runs Consumer tests, validates Compose, builds and scans the
 container image, and sends coverage to SonarCloud under
 `DEFRA_waste-obligations-notifications`. Dependabot manages NuGet, actions, and
 container dependency updates. Journey tests are not currently part of this service.
+
+The isolated Notify fixture creates random synthetic API credentials at startup.
+Compose supplies them to the consumer through a local ephemeral volume and fixture
+bootstrap script; integration
+tests read the same fixture credential from its test-only API. No Notify account
+credential is stored in development settings or test source. Compose teardown
+removes the generated volume.

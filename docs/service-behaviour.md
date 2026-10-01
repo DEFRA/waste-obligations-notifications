@@ -2,19 +2,20 @@
 
 This document describes message contracts and processing requirements. Use
 [CONTEXT.md](../CONTEXT.md) for terminology and the linked ADRs for decision
-rationale. Both ADRs are currently proposed; their planned delivery behaviour
-must not be read as a claim that sending is implemented.
+rationale. Both ADRs are currently proposed; current implementation scope is described
+below.
 
 ## Current scope
 
 The analytics consumer logs event and entity IDs and deletes successfully
 processed messages. It does not deliver notifications or persist event data.
 The command consumer records pre-cutover commands as `delivery-suppressed` and
-deletes them without sending to GOV.UK Notify. Post-cutover delivery belongs to
-ticket 02. Until then, commands at or after the boundary fail without deletion,
-retry after visibility timeout, and can reach the DLQ under queue redrive policy.
-Operators may need to redrive them once delivery is enabled. Redrive does not
-restore a command's original recipient-lane position.
+sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
+Notify acceptance must be recorded before SQS deletion. Matching accepted,
+suppressed, or abandoned records suppress duplicates regardless of the current
+cutover. Analytics does not yet create notification commands, and there is no
+administrator DLQ management surface. Redrive does not restore a command's
+original recipient-lane position.
 
 ## Consumers and message handling
 
@@ -81,7 +82,30 @@ restore a command's original recipient-lane position.
   responses.
 - Treat a duplicate command with different immutable fields as a conflict and
   leave it retryable. A pre-cutover command is terminal only after its
-  `delivery-suppressed` outcome is recorded.
+  `delivery-suppressed` outcome is recorded. A nonterminal claim cannot be
+  mistaken for suppressed evidence or overwritten by suppression.
+- Claim a post-cutover command atomically using the unique notification-key
+  index, matching immutable digest, fresh attempt owner, and Mongo's expiry
+  clock. Active claims cannot send again; expired claims permit one new owner.
+  Acceptance updates require the same owner and an unexpired lease using Mongo's
+  clock. Accepted evidence includes the opaque versioned HMAC Notify reference,
+  template ID/version, Notify notification ID, correlation digests, and timestamps.
+- Make one Notify request per claim with no HTTP retry or redirect. Normalize the
+  recipient for the request. Require `201 Created` and consistent minimal
+  acceptance evidence; malformed success is indeterminate and remains retryable.
+  Never log dependency exception text or full responses, which may contain PII.
+- Validate the complete bounded attempt budget at startup. Initially visibility
+  and command leases are 120 seconds; receive, claim, send, acceptance and deletion
+  bounds are 30, 5, 60, 10 and 5 seconds, plus 10 seconds headroom. Measure elapsed
+  time monotonically from receive/claim request starts and reject late confirmations
+  before sending. Request visibility explicitly on receive without changing shared
+  queue configuration. Pass cancellation through the entire Notify request and
+  response buffering. A failed send retains its claim until expiry.
+- A Notify timeout, lost response, crash, or failed acceptance write does not prove
+  rejection. Queue retry after expiry may send a duplicate email. An already
+  in-flight request can outlive ownership during a process stall; Mongo rejects
+  stale acceptance. No Notify-reference reconciliation is implemented. Queue
+  deletion failure after durable acceptance retries as a terminal duplicate.
 - Compare the immutable UTC business-action timestamp with the deployment-owned
   cutover value. Both configured cutover and serialized action timestamps must
   explicitly include `Z` or a zero offset (`+00:00` or `-00:00`). Reject absent

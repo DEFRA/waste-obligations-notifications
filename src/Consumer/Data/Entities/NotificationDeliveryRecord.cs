@@ -21,4 +21,18 @@ public sealed record NotificationDeliveryRecord
     public required string Outcome { get; init; }
 
     public required DateTime RecordedAtUtc { get; init; }
+
+    public string? AttemptOwner { get; init; }
+
+    public DateTime? LeaseExpiresAtUtc { get; init; }
+
+    public string? NotifyReference { get; init; }
+
+    public string? TemplateId { get; init; }
+
+    public int? TemplateVersion { get; init; }
+
+    public string? NotifyNotificationId { get; init; }
+
+    public DateTime? AcceptedAtUtc { get; init; }
 }

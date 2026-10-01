@@ -14,6 +14,9 @@ public sealed class NotificationCommandDigest(IOptions<NotificationCommandDelive
     public string CreateIdempotencyKeyDigest(string idempotencyKey) =>
         CreateDigest(options.Value.EvidenceDigestSecret, "idempotency-key", idempotencyKey);
 
+    public string CreateNotifyReference(string idempotencyKey) =>
+        CreateDigest(options.Value.EvidenceDigestSecret, "notify-reference", idempotencyKey);
+
     public string CreateImmutableFieldsDigest(NotificationCommand command)
     {
         using var stream = new MemoryStream();
