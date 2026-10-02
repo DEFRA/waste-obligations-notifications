@@ -64,7 +64,7 @@ public static class ServiceCollectionExtensions
             )
             .ValidateOnStart();
         services.AddSingleton(TimeProvider.System);
-        services.AddSingleton<MongoMigrationReadiness>();
+        services.AddSingleton<MongoMigrationCompletion>();
         services.AddSingleton<IMongoMigrationLeaseService, MongoMigrationLeaseService>();
         services.AddSingleton<IMongoMigrationRunner, MongoMigrationRunner>();
         if (configuration.GetValue<bool>($"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled"))

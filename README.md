@@ -99,8 +99,11 @@ local Compose values do not configure deployed environments.
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
-Each host checks migration history and the required unique index before command
-consumption starts. A host can become ready after another host applies migrations
+Each host checks migration history and the latest migration's current-schema
+validation before command consumption starts. Migration 001 verifies its unique
+notification-key index. The consumer waits once at startup; record stores do not
+wait on migration completion. Future migrations explicitly define the current
+schema checks rather than inheriting obsolete index requirements. A host can become ready after another host applies migrations
 without acquiring the lease itself. Commands stay on SQS while migrations are
 incomplete; analytics consumption and `/health` continue independently.
 Failures are retried up to `MongoMigrations__MaximumAttempts` across all lease

@@ -16,7 +16,7 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         var databaseName = $"notifications_readiness_test_{Guid.NewGuid():N}";
         var database = client.GetDatabase(databaseName);
         var cancellationToken = TestContext.Current.CancellationToken;
-        var waitingReadiness = new MongoMigrationReadiness();
+        var waitingReadiness = new MongoMigrationCompletion();
         var waitingRunner = new MongoMigrationRunner(
             database,
             NullLogger<MongoMigrationRunner>.Instance,
@@ -26,7 +26,7 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         var migratingRunner = new MongoMigrationRunner(
             database,
             NullLogger<MongoMigrationRunner>.Instance,
-            new MongoMigrationReadiness()
+            new MongoMigrationCompletion()
         );
 
         try
@@ -49,9 +49,10 @@ public sealed class MongoMigrationTests : IntegrationTestBase
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task WhenMigrationHistoryExistsWithoutRequiredIndex_ShouldNotCompleteReadiness(bool wrongIndex)
+    [InlineData("missing")]
+    [InlineData("wrong-key")]
+    [InlineData("non-unique")]
+    public async Task WhenMigrationHistoryExistsWithoutRequiredIndex_ShouldNotCompleteReadiness(string invalidIndex)
     {
         using var client = CreateMongoClient();
         var databaseName = $"notifications_index_test_{Guid.NewGuid():N}";
@@ -60,7 +61,7 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         var migratingRunner = new MongoMigrationRunner(
             database,
             NullLogger<MongoMigrationRunner>.Instance,
-            new MongoMigrationReadiness()
+            new MongoMigrationCompletion()
         );
 
         try
@@ -68,17 +69,23 @@ public sealed class MongoMigrationTests : IntegrationTestBase
             await migratingRunner.Run(cancellationToken);
             var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
             await records.Indexes.DropOneAsync("notificationKey_unique", cancellationToken);
-            if (wrongIndex)
+            if (invalidIndex != "missing")
             {
                 await records.Indexes.CreateOneAsync(
                     new CreateIndexModel<BsonDocument>(
-                        Builders<BsonDocument>.IndexKeys.Ascending("wrongField"),
-                        new CreateIndexOptions { Name = "notificationKey_unique", Unique = true }
+                        Builders<BsonDocument>.IndexKeys.Ascending(
+                            invalidIndex == "wrong-key" ? "wrongField" : "notificationKey"
+                        ),
+                        new CreateIndexOptions
+                        {
+                            Name = "notificationKey_unique",
+                            Unique = invalidIndex != "non-unique",
+                        }
                     ),
                     cancellationToken: cancellationToken
                 );
             }
-            var readiness = new MongoMigrationReadiness();
+            var readiness = new MongoMigrationCompletion();
             var runner = new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, readiness);
 
             Assert.False(await runner.CheckReadiness(cancellationToken));
@@ -126,7 +133,7 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         var databaseName = $"notifications_migration_test_{Guid.NewGuid():N}";
         var database = client.GetDatabase(databaseName);
         var cancellationToken = TestContext.Current.CancellationToken;
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         var runner = new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, readiness);
 
         try

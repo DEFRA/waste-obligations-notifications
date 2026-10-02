@@ -18,7 +18,7 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
         using var client = CreateMongoClient();
         var databaseName = $"notifications_store_test_{Guid.NewGuid():N}";
         var database = client.GetDatabase(databaseName);
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
         var cancellationToken = TestContext.Current.CancellationToken;
         var digest = new NotificationCommandDigest(
@@ -37,8 +37,7 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             Options.Create(
                 new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = databaseName }
             ),
-            digest,
-            readiness
+            digest
         );
         var command = new NotificationCommand(
             1,
@@ -52,13 +51,13 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
 
         try
         {
-            using var beforeMigration = new CancellationTokenSource();
-            await beforeMigration.CancelAsync();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-                store.RecordSuppression(command, beforeMigration.Token)
-            );
             await new MongoMigrationRunner(database, loggerFactory.CreateLogger<MongoMigrationRunner>(), readiness).Run(
                 cancellationToken
+            );
+            using var cancelledOperation = new CancellationTokenSource();
+            await cancelledOperation.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                store.RecordSuppression(command, cancelledOperation.Token)
             );
             Assert.Equal(SuppressionClaimResult.Recorded, await store.RecordSuppression(command, cancellationToken));
             Assert.Equal(

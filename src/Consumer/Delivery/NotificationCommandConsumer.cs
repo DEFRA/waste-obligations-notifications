@@ -10,7 +10,7 @@ public sealed class NotificationCommandConsumer(
     IAmazonSQS sqsClient,
     IOptions<NotificationCommandDeliveryOptions> options,
     INotificationDeliveryRecordStoreFactory recordStoreFactory,
-    MongoMigrationReadiness migrationReadiness,
+    MongoMigrationCompletion migrationCompletion,
     NotificationCommandMetrics metrics,
     ILogger<NotificationCommandConsumer> logger
 ) : BackgroundService
@@ -26,7 +26,7 @@ public sealed class NotificationCommandConsumer(
         }
 
         var cutover = ReadCutover();
-        await migrationReadiness.Wait(stoppingToken);
+        await migrationCompletion.Wait(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {

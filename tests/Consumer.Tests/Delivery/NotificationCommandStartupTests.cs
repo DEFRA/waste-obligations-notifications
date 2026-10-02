@@ -166,7 +166,7 @@ public sealed class NotificationCommandStartupTests
 
         var loggerProvider = Substitute.For<ILoggerProvider>();
         loggerProvider.CreateLogger(Arg.Any<string>()).Returns(logger);
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         readiness.MarkCompleted();
         var runner = Substitute.For<IMongoMigrationRunner>();
         runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(true);

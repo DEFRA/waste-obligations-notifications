@@ -316,7 +316,7 @@ public class NotificationCommandConsumerTests
     [InlineData(true)]
     public async Task Start_WhenMigrationsAreIncomplete_ShouldWaitBeforeReceivingCommands(bool completeMigrations)
     {
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
@@ -539,7 +539,7 @@ public class NotificationCommandConsumerTests
         IAmazonSQS sqsClient,
         INotificationDeliveryRecordStore recordStore,
         ILogger<NotificationCommandConsumer>? logger = null,
-        MongoMigrationReadiness? readiness = null,
+        MongoMigrationCompletion? readiness = null,
         int pollIntervalSeconds = 1,
         int receiveTimeoutSeconds = 30,
         string? cutover = "2026-09-29T00:00:00Z"
@@ -565,9 +565,9 @@ public class NotificationCommandConsumerTests
             logger ?? new RecordingLogger<NotificationCommandConsumer>()
         );
 
-    private static MongoMigrationReadiness CompletedReadiness()
+    private static MongoMigrationCompletion CompletedReadiness()
     {
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         readiness.MarkCompleted();
 
         return readiness;

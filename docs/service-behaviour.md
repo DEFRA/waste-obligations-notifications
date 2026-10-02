@@ -60,8 +60,12 @@ restore a command's original recipient-lane position.
   the key to fit the queue constraints.
 - Run versioned Mongo migrations under a renewable exclusive lease when command
   processing is enabled. Each host must verify the required migration version
-  and unique notification-key index before receiving commands from SQS or
-  persisting them. Completion by another host can satisfy this check, including
+  and latest migration's current schema before receiving commands from SQS.
+  Migration 001 validates its unique notification-key index; future migrations
+  explicitly define their own current-schema requirements. Migration completion
+  is a one-time startup signal. The consumer waits before its first receive,
+  while record stores have no completion dependency or per-operation wait.
+  This does not detect later manual schema changes. Completion by another host can satisfy this check, including
   after the local host exhausts its migration attempts. A lease-renewal failure
   cancels the engine; only after it stops can the host release and reacquire
   the lease. Attempts share a bounded host-wide budget across acquisitions.

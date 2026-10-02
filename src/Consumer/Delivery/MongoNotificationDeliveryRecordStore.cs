@@ -10,21 +10,18 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
 {
     internal const string CollectionName = nameof(NotificationDeliveryRecord);
     private readonly INotificationCommandDigest _digest;
-    private readonly MongoMigrationReadiness _migrationReadiness;
     private readonly IMongoCollection<NotificationDeliveryRecord> _records;
 
     public MongoNotificationDeliveryRecordStore(
         IMongoClient mongoClient,
         IOptions<MongoDbOptions> options,
-        INotificationCommandDigest digest,
-        MongoMigrationReadiness migrationReadiness
+        INotificationCommandDigest digest
     )
     {
         _digest = digest;
         _records = mongoClient
             .GetDatabase(options.Value.DatabaseName)
             .GetCollection<NotificationDeliveryRecord>(CollectionName);
-        _migrationReadiness = migrationReadiness;
     }
 
     // A future PR will add delivery claims and leases; this path only records terminal suppression.
@@ -33,7 +30,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
-        await _migrationReadiness.Wait(cancellationToken);
         var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
         var record = new NotificationDeliveryRecord

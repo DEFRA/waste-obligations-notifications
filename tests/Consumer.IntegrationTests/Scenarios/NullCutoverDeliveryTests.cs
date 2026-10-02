@@ -27,7 +27,7 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
             token
         );
         var database = mongo.GetDatabase(databaseName);
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         BsonDocument? original = null;
         try
         {
@@ -46,8 +46,7 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
                 Options.Create(
                     new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = databaseName }
                 ),
-                new NotificationCommandDigest(Options.Create(settings)),
-                readiness
+                new NotificationCommandDigest(Options.Create(settings))
             );
             using var services = new ServiceCollection()
                 .AddSingleton<INotificationDeliveryRecordStore>(store)

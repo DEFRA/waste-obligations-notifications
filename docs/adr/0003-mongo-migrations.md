@@ -18,8 +18,16 @@ retry policy and attempt timeouts as Waste Obligations. Run migrations in a
 background service when command processing is enabled. Migration 001 creates
 `notificationKey_unique` on `NotificationDeliveryRecord` and retains an
 existing matching index. Each host checks the latest applied migration version
-and required unique index before receiving commands from SQS. The record store
-also guards persistence with readiness. A host can observe another host's
+and asks that migration to validate the current schema before receiving commands
+from SQS. Migration 001 validates its unique notification-key index. Every new
+migration explicitly defines the complete schema checks its application version
+needs; the generic runner does not retain obsolete index requirements.
+
+`MongoMigrationCompletion` is a one-time application startup signal. The command
+consumer waits once before its first receive. Delivery stores have no dependency
+on migration completion and perform no repeated startup waits. This is not an
+ongoing schema watchdog: manual index removal after completion is outside this
+protection. A host can observe another host's
 successful migration without acquiring the lease itself. Analytics consumption
 and `/health` do not depend on migrations.
 
