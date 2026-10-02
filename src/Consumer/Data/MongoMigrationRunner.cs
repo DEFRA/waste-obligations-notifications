@@ -3,6 +3,7 @@ using AdaskoTheBeAsT.MongoDbMigrations;
 using AdaskoTheBeAsT.MongoDbMigrations.Abstractions;
 using AdaskoTheBeAsT.MongoDbMigrations.Core.Contracts;
 using Defra.WasteObligations.Consumer.Data.Migrations;
+using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MigrationVersion = AdaskoTheBeAsT.MongoDbMigrations.Abstractions.Version;
@@ -16,18 +17,24 @@ public sealed class MongoMigrationRunner : IMongoMigrationRunner
     private readonly MongoMigrationCompletion _criticalCompletion;
     private readonly Assembly _migrationAssembly;
     private readonly MongoMigration[] _migrations;
+    private readonly MongoMigrationOptions _options;
+    private readonly TimeProvider _timeProvider;
 
     public MongoMigrationRunner(
         IMongoDatabase database,
         ILogger<MongoMigrationRunner> logger,
         MongoMigrationCompletion criticalCompletion,
-        Assembly? migrationAssembly = null
+        Assembly? migrationAssembly = null,
+        IOptions<MongoMigrationOptions>? options = null,
+        TimeProvider? timeProvider = null
     )
     {
         _database = database;
         _logger = logger;
         _criticalCompletion = criticalCompletion;
         _migrationAssembly = migrationAssembly ?? typeof(MongoMigration).Assembly;
+        _options = options?.Value ?? new MongoMigrationOptions();
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _migrations = _migrationAssembly
             .GetTypes()
             .Where(type => type.IsAssignableTo(typeof(MongoMigration)) && !type.IsAbstract)
@@ -68,6 +75,24 @@ public sealed class MongoMigrationRunner : IMongoMigrationRunner
 
     public async Task Run(CancellationToken cancellationToken)
     {
+        using var deadline = new CancellationTokenSource(Timeout.InfiniteTimeSpan, _timeProvider);
+        using var execution = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        try
+        {
+            await RunMigrations(execution.Token, deadline);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (Exception) when (deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException("Mongo migration operation exceeded its configured timeout.");
+        }
+    }
+
+    private async Task RunMigrations(CancellationToken cancellationToken, CancellationTokenSource deadline)
+    {
         using var engine = new MigrationEngineBuilder().UseDatabase(
             _database.Client,
             _database.DatabaseNamespace.DatabaseName
@@ -76,7 +101,22 @@ public sealed class MongoMigrationRunner : IMongoMigrationRunner
         var configuredEngine = engine
             .UseAssembly(_migrationAssembly)
             .UseSchemeValidation(false)
-            .UseAfterMigration(LogMigrationCompletion);
+            .UseBeforeMigration(migration =>
+                deadline.CancelAfter(
+                    TimeSpan.FromSeconds(
+                        migration is MongoMigration { Critical: true }
+                            ? _options.CriticalOperationTimeoutSeconds
+                            : _options.AttemptTimeoutSeconds
+                    )
+                )
+            )
+            .UseAfterMigration(
+                (migration, success) =>
+                {
+                    deadline.CancelAfter(Timeout.InfiniteTimeSpan);
+                    LogMigrationCompletion(migration, success);
+                }
+            );
         var critical = _migrations.LastOrDefault(migration => migration.Critical);
         if (critical is not null && !_criticalCompletion.IsCompleted)
         {

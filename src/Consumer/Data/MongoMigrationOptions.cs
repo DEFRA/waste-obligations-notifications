@@ -13,6 +13,9 @@ public sealed record MongoMigrationOptions
     public int LeaseRenewalIntervalSeconds { get; init; } = 15;
 
     [Range(1, 86400)]
+    public int CriticalOperationTimeoutSeconds { get; init; } = 20;
+
+    [Range(1, 86400)]
     public int AttemptTimeoutSeconds { get; init; } = 300;
 
     [Range(1, 3600)]

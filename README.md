@@ -120,7 +120,10 @@ attempt budget. After exhaustion,
 the host releases the lease and continues checking for completion by another host.
 It needs a restart to make further migration attempts itself. Failed attempts,
 exhaustion and prolonged readiness waits produce error logs for support alerts.
-An attempt timeout or host shutdown requests cancellation and continues renewing
+Each critical migration operation has a 20-second cooperative deadline; standard
+operations retain a 300-second deadline. Each ordered operation receives its own
+budget, including standard work between two critical migrations. A deadline or
+host shutdown requests cancellation and continues renewing
 the lease while renewal succeeds until execution stops; a migration that does not
 stop needs support intervention.
 
@@ -133,10 +136,12 @@ the engine and outstanding renewal work to stop. This requests cancellation befo
 lease expiry; the migration engine has synchronous operations that can outlive
 cancellation, and the lease does not fence those operations after ownership is lost.
 
-`MongoMigrations` configures lease duration, renewal interval, attempt timeout,
+`MongoMigrations` configures lease duration, renewal interval, standard operation timeout,
 retry delay and readiness-wait alert threshold in seconds (the latter uses
 `LeaseAcquisitionAlertThresholdSeconds`). The defaults are
-60, 15, 300, 30 and 300 respectively, with three attempts. Renewal must be no
+60, 15, 300, 30 and 300 respectively, with three attempts.
+`CriticalOperationTimeoutSeconds` defaults to 20; `AttemptTimeoutSeconds` is the
+per-operation standard budget, rather than a deadline for the whole migration chain. Renewal must be no
 more than half the lease duration. CDP can override these defaults separately
 from local Compose configuration.
 

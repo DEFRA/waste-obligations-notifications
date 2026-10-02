@@ -17,6 +17,7 @@ COPY global.json global.json
 COPY src/Consumer/Consumer.csproj src/Consumer/Consumer.csproj
 COPY tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj
 COPY tests/Consumer.Tests/Consumer.Tests.csproj tests/Consumer.Tests/Consumer.Tests.csproj
+COPY tests/Consumer.MigrationFixtures/Consumer.MigrationFixtures.csproj tests/Consumer.MigrationFixtures/Consumer.MigrationFixtures.csproj
 COPY waste-obligations-notifications.slnx waste-obligations-notifications.slnx
 
 RUN dotnet tool restore
@@ -25,6 +26,7 @@ RUN dotnet restore
 COPY src/Consumer src/Consumer
 COPY tests/Consumer.IntegrationTests tests/Consumer.IntegrationTests
 COPY tests/Consumer.Tests tests/Consumer.Tests
+COPY tests/Consumer.MigrationFixtures tests/Consumer.MigrationFixtures
 
 RUN dotnet csharpier check .
 RUN dotnet build --no-restore --warnaserror

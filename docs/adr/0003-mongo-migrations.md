@@ -106,3 +106,11 @@ reported by extended health. CDP controls replacement of hosts that remain
 unhealthy. Long critical migrations must fit the actual platform startup budget
 or be applied before rollout; the documented 95 seconds is not an overall
 deployment deadline. Metrics and startup logging remain available for diagnosis.
+
+## Operation deadline amendment
+
+Critical operations have a 20-second cooperative deadline; standard operations
+retain 300 seconds. The actual engine hooks arm a separate deadline for each
+operation. A whole-chain timeout must not truncate an intervening standard
+migration or report readiness before a later critical prerequisite. Cancellation
+requests do not release ownership until engine and renewal work have stopped.

@@ -80,6 +80,9 @@ restore a command's original recipient-lane position.
   renewal work before local release or reacquisition. Cancellation-resistant
   engine operations can still outlive ownership loss; the lease provides no
   fencing after expiry.
+  Bound each critical operation by 20 seconds and each standard operation by
+  300 seconds. Preserve ordered prerequisites; a standard migration between
+  two critical versions does not inherit the earlier critical deadline.
   Migration failures and
   prolonged readiness waits produce error logs. Unapplied critical migrations
   keep `/health` unhealthy and consumers paused.

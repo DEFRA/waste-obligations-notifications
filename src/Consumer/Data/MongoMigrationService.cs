@@ -164,7 +164,7 @@ public sealed class MongoMigrationService(
             while (_attemptCount < maximumAttempts && !migrationCancellationTokenSource.IsCancellationRequested)
             {
                 var attempt = ++_attemptCount;
-                if (await RunMigrationAttempt(attempt, migrationCancellationTokenSource.Token, stoppingToken))
+                if (await RunMigrationAttempt(attempt, migrationCancellationTokenSource.Token))
                     return true;
 
                 if (migrationCancellationTokenSource.IsCancellationRequested)
@@ -204,41 +204,19 @@ public sealed class MongoMigrationService(
         return false;
     }
 
-    private async Task<bool> RunMigrationAttempt(
-        int attempt,
-        CancellationToken migrationCancellationToken,
-        CancellationToken stoppingToken
-    )
+    private async Task<bool> RunMigrationAttempt(int attempt, CancellationToken migrationCancellationToken)
     {
-        using var attemptCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+        // The runner bounds each actual migration separately; a batch deadline would truncate ordered prerequisites.
+        var result = await WaitForMigrationAttempt(
+            migrationRunner.Run(migrationCancellationToken),
             migrationCancellationToken
         );
-        using var timeoutCancellationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        var migrationTask = migrationRunner.Run(attemptCancellationTokenSource.Token);
-        var timeout = TimeSpan.FromSeconds(options.Value.AttemptTimeoutSeconds);
-        var timeoutTask = Task.Delay(timeout, timeoutCancellationTokenSource.Token);
-        var completedTask = await Task.WhenAny(migrationTask, timeoutTask);
-        await timeoutCancellationTokenSource.CancelAsync();
-
-        if (completedTask != migrationTask)
-        {
-            if (stoppingToken.IsCancellationRequested || migrationCancellationToken.IsCancellationRequested)
-                return (await WaitForMigrationAttempt(migrationTask, attemptCancellationTokenSource.Token)).Completed;
-
-            logger.LogError(
-                "Mongo migration attempt {Attempt} exceeded its {AttemptTimeout} limit. Cancellation was requested; the exclusive lease will be retained until the migration engine stops.",
-                attempt,
-                timeout
-            );
-            await attemptCancellationTokenSource.CancelAsync();
-
-            return (await WaitForMigrationAttempt(migrationTask, attemptCancellationTokenSource.Token)).Completed;
-        }
-
-        var result = await WaitForMigrationAttempt(migrationTask, attemptCancellationTokenSource.Token);
-
         if (result.Exception is not null)
-            logger.LogError(result.Exception, "Mongo migration attempt {Attempt} failed.", attempt);
+            logger.LogError(
+                "Mongo migration attempt {Attempt} failed ({ExceptionType}).",
+                attempt,
+                result.Exception.GetType().Name
+            );
 
         return result.Completed;
     }
