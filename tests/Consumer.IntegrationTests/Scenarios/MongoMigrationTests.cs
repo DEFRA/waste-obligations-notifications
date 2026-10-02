@@ -128,6 +128,7 @@ public sealed class MongoMigrationTests : IntegrationTestBase
     [InlineData("missing")]
     [InlineData("wrong-key")]
     [InlineData("non-unique")]
+    [InlineData("partial")]
     public async Task WhenMigrationHistoryExistsWithoutRequiredIndex_ShouldNotCompleteReadiness(string invalidIndex)
     {
         using var client = CreateMongoClient();
@@ -152,10 +153,12 @@ public sealed class MongoMigrationTests : IntegrationTestBase
                         Builders<BsonDocument>.IndexKeys.Ascending(
                             invalidIndex == "wrong-key" ? "wrongField" : "notificationKey"
                         ),
-                        new CreateIndexOptions
+                        new CreateIndexOptions<BsonDocument>
                         {
                             Name = "notificationKey_unique",
                             Unique = invalidIndex != "non-unique",
+                            PartialFilterExpression =
+                                invalidIndex == "partial" ? new BsonDocument("outcome", "delivery-accepted") : null,
                         }
                     ),
                     cancellationToken: cancellationToken
@@ -167,6 +170,55 @@ public sealed class MongoMigrationTests : IntegrationTestBase
             Assert.False(await runner.CheckCompletion(cancellationToken));
             Assert.False(readiness.IsCompleted);
             await Assert.ThrowsAsync<InvalidOperationException>(() => runner.Run(cancellationToken));
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task WhenRequiredIndexIsPartial_ShouldRejectMigrationAndPreserveExistingIndex()
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_partial_index_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var token = TestContext.Current.CancellationToken;
+        var completion = new MongoMigrationCompletion();
+        var runner = new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, completion);
+        var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
+
+        try
+        {
+            await records.Indexes.CreateOneAsync(
+                new CreateIndexModel<BsonDocument>(
+                    Builders<BsonDocument>.IndexKeys.Ascending("notificationKey"),
+                    new CreateIndexOptions<BsonDocument>
+                    {
+                        Name = "notificationKey_unique",
+                        Unique = true,
+                        PartialFilterExpression = new BsonDocument("outcome", "delivery-accepted"),
+                    }
+                ),
+                cancellationToken: token
+            );
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => runner.Run(token));
+
+            Assert.False(completion.IsCompleted);
+            Assert.False(await runner.CheckCompletion(token));
+            using var cursor = await records.Indexes.ListAsync(token);
+            var index = Assert.Single(
+                await cursor.ToListAsync(token),
+                index => index["name"] == "notificationKey_unique"
+            );
+            Assert.Equal(new BsonDocument("outcome", "delivery-accepted"), index["partialFilterExpression"]);
+            Assert.Equal(
+                0,
+                await database
+                    .GetCollection<BsonDocument>("_migrations")
+                    .CountDocumentsAsync(new BsonDocument(), cancellationToken: token)
+            );
         }
         finally
         {

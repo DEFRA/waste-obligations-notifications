@@ -43,6 +43,7 @@ public sealed class NotificationDeliveryRecordIndexes : MongoMigration
 
         if (
             index is null
+            || index.Contains("partialFilterExpression")
             || index.GetValue("unique", false) != BsonBoolean.True
             || !index.GetValue("key", new BsonDocument()).Equals(new BsonDocument("notificationKey", 1))
         )

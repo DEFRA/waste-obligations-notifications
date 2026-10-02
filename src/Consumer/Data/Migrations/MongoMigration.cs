@@ -48,6 +48,11 @@ public abstract class MongoMigration : IMigration
 
             if (existingByName is not null)
             {
+                if (existingByName.Contains("partialFilterExpression"))
+                    throw new InvalidOperationException(
+                        "An existing partial index cannot satisfy the required full index."
+                    );
+
                 var existingKeys = existingByName.GetValue("key", new BsonDocument()).AsBsonDocument;
                 var existingUnique =
                     existingByName.TryGetValue("unique", out var existingUniqueValue)
