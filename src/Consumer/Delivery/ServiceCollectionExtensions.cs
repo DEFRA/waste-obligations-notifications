@@ -33,7 +33,7 @@ public static class ServiceCollectionExtensions
             )
             .Validate(
                 options => !options.ProcessingEnabled || options.TryReadCutover(out _),
-                "EmailDeliveryCutoverUtc must include an explicit UTC offset when notification command processing is enabled"
+                "EmailDeliveryCutoverUtc must be null or include an explicit UTC offset when notification command processing is enabled"
             )
             .ValidateOnStart();
 

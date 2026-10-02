@@ -1,3 +1,4 @@
+using System.Text;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
@@ -27,6 +28,8 @@ public sealed class NotificationCommandStartupTests
     [InlineData("EmailDeliveryCutoverUtc", "2026-10-01T00:00:00+01:00")]
     [InlineData("EmailDeliveryCutoverUtc", "2026-10-01T00:00:00")]
     [InlineData("EmailDeliveryCutoverUtc", "00:00Z")]
+    [InlineData("EmailDeliveryCutoverUtc", "")]
+    [InlineData("EmailDeliveryCutoverUtc", " ")]
     public async Task WhenEnabledWithInvalidConfiguration_ShouldFailStartupBeforeReceivingAndNotExposeValues(
         string field,
         string invalidValue
@@ -56,10 +59,11 @@ public sealed class NotificationCommandStartupTests
     }
 
     [Theory]
+    [InlineData(null)]
     [InlineData("2100-01-01T00:00:00Z")]
     [InlineData("2100-01-01T00:00:00+00:00")]
     [InlineData("2100-01-01T00:00:00-00:00")]
-    public async Task WhenEnabledWithConfiguredSecretsAndUtcCutover_ShouldStartAndReceive(string cutover)
+    public async Task WhenEnabledWithConfiguredSecretsAndUtcCutover_ShouldStartAndReceive(string? cutover)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqs = Substitute.For<IAmazonSQS>();
@@ -82,6 +86,32 @@ public sealed class NotificationCommandStartupTests
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await host.StopAsync(TestContext.Current.CancellationToken);
 
+        await sqs.Received(1).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task WhenEnabledWithJsonNullCutover_ShouldOverrideConfiguredValueAndReceive()
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sqs = Substitute.For<IAmazonSQS>();
+        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                received.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+
+                return new ReceiveMessageResponse();
+            });
+        using var host = CreateHost(sqs, Substitute.For<ILogger>(), true, jsonNullCutover: true);
+
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Null(
+            host.Services.GetRequiredService<
+                IOptions<NotificationCommandDeliveryOptions>
+            >().Value.EmailDeliveryCutoverUtc
+        );
+        await host.StopAsync(TestContext.Current.CancellationToken);
         await sqs.Received(1).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
     }
 
@@ -112,7 +142,8 @@ public sealed class NotificationCommandStartupTests
         IAmazonSQS sqs,
         ILogger logger,
         bool processingEnabled,
-        Dictionary<string, string?>? overrides = null
+        Dictionary<string, string?>? overrides = null,
+        bool jsonNullCutover = false
     )
     {
         var values = new Dictionary<string, string?>
@@ -126,7 +157,12 @@ public sealed class NotificationCommandStartupTests
             ["Mongo:DatabaseName"] = "startup-test",
         };
         foreach (var entry in overrides ?? [])
-            values[entry.Key] = entry.Value;
+        {
+            if (entry.Value is null)
+                values.Remove(entry.Key);
+            else
+                values[entry.Key] = entry.Value;
+        }
 
         var loggerProvider = Substitute.For<ILoggerProvider>();
         loggerProvider.CreateLogger(Arg.Any<string>()).Returns(logger);
@@ -136,7 +172,18 @@ public sealed class NotificationCommandStartupTests
         runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(true);
 
         return new HostBuilder()
-            .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(values))
+            .ConfigureAppConfiguration(configuration =>
+            {
+                configuration.AddInMemoryCollection(values);
+                if (jsonNullCutover)
+                    configuration.AddJsonStream(
+                        new MemoryStream(
+                            Encoding.UTF8.GetBytes(
+                                """{"NotificationCommandDelivery":{"EmailDeliveryCutoverUtc":null}}"""
+                            )
+                        )
+                    );
+            })
             .ConfigureLogging(logging => logging.AddProvider(loggerProvider))
             .ConfigureServices(
                 (context, services) =>

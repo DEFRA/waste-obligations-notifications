@@ -9,7 +9,9 @@ The service receives every message from its service-owned SQS subscription to th
 entity ID, then deletes the successfully processed message. It deliberately does
 not send notifications, persist data, or act on the event payload.
 
-The command consumer records pre-cutover commands as `delivery-suppressed` and
+With the default null cutover, the command consumer records all valid commands
+as `delivery-suppressed` and deletes them for the producer dry run. With a
+configured cutover, it records pre-cutover commands as `delivery-suppressed` and
 deletes them without sending to GOV.UK Notify. Post-cutover delivery belongs to
 ticket 02. Until then, commands at or after the boundary fail without deletion,
 retry after visibility timeout, and can reach the DLQ under queue redrive policy.
@@ -51,7 +53,7 @@ The Consumer health endpoint is available at `http://localhost:8085/health`.
 - [Contributing](CONTRIBUTING.md): formatting, required checks, and change workflow.
 - [Service behaviour](docs/service-behaviour.md): message contracts, processing rules, and deployment ownership.
 - [Context](CONTEXT.md): notification-delivery terminology.
-- Proposed ADRs: [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
+- ADRs: [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and accepted [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
 - [Agent guidelines](AGENTS.md): entry points and sandbox build guidance for coding agents.
 
 ## Test
@@ -68,10 +70,11 @@ separate subscription from the producer queue and must have the CDP dead-letter
 queue convention configured.
 
 `NotificationCommandDelivery` is deployment-owned. Before enabling it, CDP must
-provide its FIFO queue URL, cutover timestamp,
+provide its FIFO queue URL, optional cutover timestamp,
 and distinct evidence-digest and recipient-lane secrets. Do not put those secrets
 in source control or logs.
-Enabled command processing validates the cutover timestamp and both digest
+Enabled command processing permits a null cutover and validates any supplied
+explicit UTC timestamp and both digest
 secrets at startup. Blank or deployment-placeholder secrets prevent startup
 before commands are consumed. Disabled command processing permits the shipped
 deployment placeholders so analytics-only hosts can start. Digest creation also
@@ -156,3 +159,18 @@ GitHub Actions runs Consumer tests, validates Compose, builds and scans the
 container image, and sends coverage to SonarCloud under
 `DEFRA_waste-obligations-notifications`. Dependabot manages NuGet, actions, and
 container dependency updates. Journey tests are not currently part of this service.
+
+## Nullable initial cutover and handover
+
+`NotificationCommandDelivery:EmailDeliveryCutoverUtc` defaults to null. With
+otherwise valid configuration, processing can run in suppression mode while
+Waste Obligations sends every action. Suppression is durable before queue deletion;
+malformed or conflicting commands still retry. Suppressed evidence remains terminal
+and is never backfilled into a send after configuration changes. Empty strings,
+whitespace, deployment placeholders and non-UTC values are invalid supplied cutovers.
+
+After the producer dry run, configure the identical future X in both services and
+verify both deployments complete before X. Notifications sends actions at or after
+X once ticket02 is present; Waste Obligations sends only actions before X. The
+handover is forward-only after X; do not clear the cutover to restore direct sends.
+See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).

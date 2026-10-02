@@ -40,7 +40,7 @@ public sealed class NotificationCommandConsumer(
                     metrics.RecordReceived(command.NotificationType);
 
                     // Ticket 02 adds Notify delivery. These failures retry and can reach the DLQ under queue redrive policy.
-                    if (command.ActionOccurredAtUtc >= cutover)
+                    if (cutover is not null && command.ActionOccurredAtUtc >= cutover)
                     {
                         throw new InvalidOperationException(
                             "Notification command delivery after cutover is not yet enabled."
@@ -102,10 +102,12 @@ public sealed class NotificationCommandConsumer(
         }
     }
 
-    private DateTimeOffset ReadCutover()
+    private DateTimeOffset? ReadCutover()
     {
         if (!options.Value.TryReadCutover(out var cutover))
-            throw new InvalidOperationException("EmailDeliveryCutoverUtc must include an explicit UTC offset.");
+            throw new InvalidOperationException(
+                "EmailDeliveryCutoverUtc must be null or include an explicit UTC offset."
+            );
 
         return cutover;
     }

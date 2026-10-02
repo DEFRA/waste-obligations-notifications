@@ -9,7 +9,9 @@ must not be read as a claim that sending is implemented.
 
 The analytics consumer logs event and entity IDs and deletes successfully
 processed messages. It does not deliver notifications or persist event data.
-The command consumer records pre-cutover commands as `delivery-suppressed` and
+With a null cutover, the command consumer records all valid commands as
+`delivery-suppressed` and deletes them. With a configured boundary it records
+pre-cutover commands as `delivery-suppressed` and
 deletes them without sending to GOV.UK Notify. Post-cutover delivery belongs to
 ticket 02. Until then, commands at or after the boundary fail without deletion,
 retry after visibility timeout, and can reach the DLQ under queue redrive policy.
@@ -45,7 +47,7 @@ restore a command's original recipient-lane position.
   payloads, or persist event data.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
-- Validate the UTC cutover and configured evidence and recipient-lane secrets
+- Allow an unset cutover; validate any supplied UTC cutover and configured evidence and recipient-lane secrets
   at startup when command processing is enabled. Invalid configuration must
   not consume commands; disabled processing permits deployment placeholders.
   Digest creation also rejects unconfigured secrets independently of processing.
@@ -83,7 +85,7 @@ restore a command's original recipient-lane position.
   leave it retryable. A pre-cutover command is terminal only after its
   `delivery-suppressed` outcome is recorded.
 - Compare the immutable UTC business-action timestamp with the deployment-owned
-  cutover value. Both configured cutover and serialized action timestamps must
+  cutover value. Any supplied cutover and serialized action timestamps must
   explicitly include `Z` or a zero offset (`+00:00` or `-00:00`). Reject absent
   or nonzero offsets instead of interpreting them in the host timezone or
   converting them. Truncate both timestamps to whole milliseconds before
@@ -112,3 +114,18 @@ Compose-backed integration tests cover health and SNS-to-SQS-to-consumer wiring.
 Test that stored command evidence and logs do not disclose protected identifiers,
 addresses, templates, or personalisation. Analytics event and entity IDs are
 logged as required by the analytics contract above.
+
+## Initial suppression mode
+
+The default cutover is null. Enabled processing suppresses all valid commands
+without a Notify send while Waste Obligations retains direct delivery. Suppression
+must be durable before deletion; malformed commands, conflicts and persistence
+failures retain the message. Existing suppressed evidence is terminal when a
+future cutover is configured. A non-null cutover requires explicit UTC and the
+same millisecond precision as command identity. Other configuration requirements
+remain in force.
+
+Use the producer dry run before choosing the identical future X in both services.
+Verify both deployments complete before X; after X use Notifications recovery
+and do not clear or move the cutover backward. ADR0002 records this accepted,
+forward-only handover. Local examples do not configure deployed values.

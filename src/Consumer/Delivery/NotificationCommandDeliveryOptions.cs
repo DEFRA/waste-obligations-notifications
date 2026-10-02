@@ -12,8 +12,7 @@ public sealed record NotificationCommandDeliveryOptions
 
     public bool ProcessingEnabled { get; init; }
 
-    [Required]
-    public required string EmailDeliveryCutoverUtc { get; init; }
+    public string? EmailDeliveryCutoverUtc { get; init; }
 
     [Required]
     public required string EvidenceDigestSecret { get; init; }
@@ -33,8 +32,17 @@ public sealed record NotificationCommandDeliveryOptions
     [Range(1, 300)]
     public int PollIntervalSeconds { get; init; } = 15;
 
-    public bool TryReadCutover(out DateTimeOffset cutover) =>
-        UtcTimestamp.TryParse(EmailDeliveryCutoverUtc, out cutover);
+    public bool TryReadCutover(out DateTimeOffset? cutover)
+    {
+        cutover = null;
+        if (EmailDeliveryCutoverUtc is null)
+            return true;
+        if (!UtcTimestamp.TryParse(EmailDeliveryCutoverUtc, out var parsed))
+            return false;
+        cutover = parsed;
+
+        return true;
+    }
 
     internal static bool IsSecretConfigured(string? secret) =>
         !string.IsNullOrWhiteSpace(secret) && !secret.StartsWith("set-automatically", StringComparison.Ordinal);
