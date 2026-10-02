@@ -186,16 +186,8 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
             {
                 Assert.Equal("delivery-abandoned", record["outcome"].AsString);
                 Assert.Equal(8, record.ElementCount);
-                Assert.Equal("other", record["notificationType"].AsString);
-                foreach (
-                    var value in new[]
-                    {
-                        command.IdempotencyKey,
-                        command.EmailAddress,
-                        command.NotificationType,
-                        PrivateContent,
-                    }
-                )
+                Assert.Equal(command.NotificationType, record["notificationType"].AsString);
+                foreach (var value in new[] { command.IdempotencyKey, command.EmailAddress, PrivateContent })
                     Assert.DoesNotContain(value, record.ToJson(), StringComparison.Ordinal);
                 Assert.False(record.Contains("attemptOwner"));
                 if (before is not null)
@@ -594,8 +586,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                             mongo,
                             provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<MongoDbOptions>>(),
                             provider.GetRequiredService<INotificationCommandDigest>(),
-                            provider.GetRequiredService<MongoMigrationReadiness>(),
-                            provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<NotificationCommandDeliveryOptions>>()
+                            provider.GetRequiredService<MongoMigrationReadiness>()
                         )
                     ));
                 }

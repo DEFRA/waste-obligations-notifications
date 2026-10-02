@@ -20,7 +20,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private const string PendingOutcome = "delivery-pending";
     private const string AbandonedOutcome = "delivery-abandoned";
     private readonly INotificationCommandDigest _digest;
-    private readonly NotificationCommandDeliveryOptions _delivery;
     private readonly MongoMigrationReadiness _migrationReadiness;
     private readonly IMongoCollection<NotificationDeliveryRecord> _records;
 
@@ -28,12 +27,10 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         IMongoClient mongoClient,
         IOptions<MongoDbOptions> options,
         INotificationCommandDigest digest,
-        MongoMigrationReadiness migrationReadiness,
-        IOptions<NotificationCommandDeliveryOptions> delivery
+        MongoMigrationReadiness migrationReadiness
     )
     {
         _digest = digest;
-        _delivery = delivery.Value;
         _records = mongoClient
             .GetDatabase(options.Value.DatabaseName)
             .GetCollection<NotificationDeliveryRecord>(CollectionName);
@@ -120,7 +117,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { NotificationKeyField, Literal(notificationKey) },
             { ImmutableFieldsField, Literal(immutableFields) },
             { "recipient", Literal(_digest.CreateRecipientDigest(command.EmailAddress)) },
-            { "notificationType", Literal(_delivery.GetDiagnosticNotificationType(command.NotificationType)) },
+            { "notificationType", Literal(command.NotificationType) },
             { "actionOccurredAtUtc", command.ActionOccurredAtUtc.UtcDateTime },
             { OutcomeField, AbandonedOutcome },
             { RecordedAtField, ServerNow },

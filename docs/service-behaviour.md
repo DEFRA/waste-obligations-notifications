@@ -275,10 +275,13 @@ bounded replay and command verification. Invalid, expired, changed or malformed
 selections cannot create evidence or delete. Atomically record abandonment before
 selected deletion. New records retain only the original eight minimal fields;
 notification/recipient/immutable fields are keyed digests, notification type is
-the configured safe diagnostic category or `other`, and timestamps/outcome record
+the exact command type consistent with accepted/suppressed records, and timestamps/outcome record
 abandonment. The immutable digest still covers the original type and delivery
 identity. Never store raw key, recipient, personalisation or template in new
-abandonment evidence.
+abandonment evidence. The notification type can contain private-bearing text;
+the safe diagnostic projection still applies to logs and metrics.
+Existing abandoned records retain their stored label without backfill or history
+rewrite; their original type may no longer be recoverable.
 
 A per-key unique index and Mongo server-time pipeline permit a new record or a
 matching expired pending claim. Active claims, immutable conflicts, accepted or
@@ -294,7 +297,7 @@ write completed. Failed deletion retains durable abandonment, allowing a repeat
 on another host. Abandonment prevents future attempts and does not establish
 whether an earlier indeterminate Notify request succeeded. Responses/logs remain
 fixed and safe; the raw inspection identity exception does not extend to discard
-responses or persisted abandonment.
+responses. Only notification type is stored raw, matching other delivery outcomes.
 
 Floci lacks native receive-attempt replay. Local tests explicitly supply that
 one API behavior with a test-only adapter while real FIFO queues verify

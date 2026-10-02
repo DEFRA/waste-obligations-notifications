@@ -17,7 +17,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         await using var context = new AbandonmentContext();
         await context.Initialise();
         var token = TestContext.Current.CancellationToken;
-        var command = Command() with { NotificationType = "private-recipient@example.com" };
+        var command = Command() with { NotificationType = "private-type@example.com" };
         var before = (
             await context.Database.RunCommandAsync<BsonDocument>(new BsonDocument("hello", 1), cancellationToken: token)
         )["localTime"]
@@ -47,8 +47,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
             record.Names.Order(StringComparer.Ordinal)
         );
         Assert.Equal("delivery-abandoned", record["outcome"].AsString);
-        Assert.Equal("other", record["notificationType"].AsString);
-        Assert.DoesNotContain(command.NotificationType, record.ToJson(), StringComparison.Ordinal);
+        Assert.Equal(command.NotificationType, record["notificationType"].AsString);
         Assert.Equal(
             context.Digest.CreateIdempotencyKeyDigest(command.IdempotencyKey),
             record["notificationKey"].AsString
@@ -327,17 +326,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
                     new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = _databaseName }
                 ),
                 Digest,
-                _readiness,
-                Options.Create(
-                    new NotificationCommandDeliveryOptions
-                    {
-                        QueueUrl = "local",
-                        EmailDeliveryCutoverUtc = "2026-10-01T00:00:00Z",
-                        EvidenceDigestSecret = "local-abandonment-evidence-secret",
-                        RecipientLaneSecret = "local-abandonment-lane-secret",
-                        DiagnosticNotificationTypes = ["submitted"],
-                    }
-                )
+                _readiness
             );
 
         public async ValueTask DisposeAsync()

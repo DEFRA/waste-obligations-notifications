@@ -73,9 +73,13 @@ idempotent deletion. Refuse active owners, immutable conflicts, accepted,
 suppressed and unknown outcomes without rewriting their history. The claim and
 acceptance predicates cannot both win against the abandonment transition.
 
-New abandonment retains the original eight-field shape. Store the configured
-safe diagnostic category/fallback, while the immutable digest preserves the
-original command type and fields. Do not persist raw identity, recipient, body
+New abandonment retains the original eight-field shape. Store the exact command
+notification type, consistent with accepted/suppressed records, while the immutable
+digest preserves the original command type and fields. This supersedes the
+earlier abandonment-only diagnostic projection following the PR review.
+Existing abandoned records retain their stored diagnostic label; their original
+type may be unrecoverable and no backfill or terminal-history rewrite is performed.
+Private-bearing type values remain excluded from logs and metrics. Do not persist raw key, recipient, body
 or template. Failed or late writes preserve the source; failed deletion retains
 abandonment for later completion. Future duplicates are suppressed without
 Notify.

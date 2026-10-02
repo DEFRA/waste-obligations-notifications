@@ -373,9 +373,13 @@ It atomically creates minimal `delivery-abandoned` evidence or transitions a
 matching expired pending claim using Mongo server time. Active claims, immutable
 conflicts, accepted/suppressed records and unknown states return a fixed conflict
 without changing history or deleting the message. Matching abandonment permits
-idempotent removal. New abandonment evidence stores only digests, action/outcome
-timestamps and the safe diagnostic category; its immutable digest retains the
-original command identity. It contains no raw identity, address, template or body.
+idempotent removal. New abandonment evidence stores digests, action/outcome
+timestamps and the exact notification type, consistent with accepted/suppressed
+records. The type may contain private-bearing text; logs and metrics still use
+only the configured safe diagnostic category. Its immutable digest retains the
+original command identity. It contains no raw key, recipient, template or body.
+Existing abandoned records retain their earlier diagnostic label; no backfill
+or terminal-history rewrite is performed, and the original type may be unavailable.
 
 Only confirmed abandonment permits selected deletion. A failed or late write
 leaves the source even when the write took effect; inspection/retry can observe
