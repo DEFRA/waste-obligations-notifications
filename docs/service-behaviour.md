@@ -2,8 +2,8 @@
 
 This document describes message contracts and processing requirements. Use
 [CONTEXT.md](../CONTEXT.md) for terminology and the linked ADRs for decision
-rationale. Both ADRs are currently proposed; their planned delivery behaviour
-must not be read as a claim that sending is implemented.
+rationale. The command architecture remains proposed in this initial slice; the cutover
+ADR is accepted. Current scope below does not include Notify sending.
 
 ## Current scope
 

@@ -40,7 +40,7 @@ public sealed class NotificationCommandConsumer(
                     metrics.RecordReceived(command.NotificationType);
 
                     // Ticket 02 adds Notify delivery. These failures retry and can reach the DLQ under queue redrive policy.
-                    if (cutover is not null && command.ActionOccurredAtUtc >= cutover)
+                    if (IsAtOrAfterCutover(command.ActionOccurredAtUtc, cutover))
                     {
                         throw new InvalidOperationException(
                             "Notification command delivery after cutover is not yet enabled."
@@ -101,6 +101,9 @@ public sealed class NotificationCommandConsumer(
             throw new TimeoutException("Notification command receive exceeded its configured timeout.", exception);
         }
     }
+
+    private static bool IsAtOrAfterCutover(DateTimeOffset actionOccurredAtUtc, DateTimeOffset? cutover) =>
+        cutover is not null && actionOccurredAtUtc >= cutover;
 
     private DateTimeOffset? ReadCutover()
     {
