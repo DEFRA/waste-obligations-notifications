@@ -59,7 +59,22 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
                 store.RecordSuppression(command, cancelledOperation.Token)
             );
+            Assert.Null(await store.GetSuppression(command, cancellationToken));
+            Assert.Equal(
+                0,
+                await database
+                    .GetCollection<BsonDocument>("NotificationDeliveryRecord")
+                    .CountDocumentsAsync(new BsonDocument(), cancellationToken: cancellationToken)
+            );
             Assert.Equal(SuppressionClaimResult.Recorded, await store.RecordSuppression(command, cancellationToken));
+            Assert.Equal(
+                SuppressionClaimResult.TerminalDuplicate,
+                await store.GetSuppression(command, cancellationToken)
+            );
+            Assert.Equal(
+                SuppressionClaimResult.Conflict,
+                await store.GetSuppression(command with { TemplateId = "changed" }, cancellationToken)
+            );
             Assert.Equal(
                 SuppressionClaimResult.TerminalDuplicate,
                 await store.RecordSuppression(
@@ -89,6 +104,14 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             Assert.DoesNotContain(command.IdempotencyKey, stored, StringComparison.Ordinal);
             Assert.DoesNotContain(command.TemplateId, stored, StringComparison.Ordinal);
             Assert.DoesNotContain("private-body", stored, StringComparison.Ordinal);
+            await database
+                .GetCollection<BsonDocument>("NotificationDeliveryRecord")
+                .UpdateOneAsync(
+                    new BsonDocument(),
+                    Builders<BsonDocument>.Update.Set("outcome", "delivery-pending"),
+                    cancellationToken: cancellationToken
+                );
+            Assert.Null(await store.GetSuppression(command, cancellationToken));
         }
         finally
         {

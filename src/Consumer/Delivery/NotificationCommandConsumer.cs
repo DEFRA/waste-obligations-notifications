@@ -36,22 +36,28 @@ public sealed class NotificationCommandConsumer(
 
                 foreach (var message in response.Messages ?? [])
                 {
-                    failureReason = "invalid-command";
-                    var command = NotificationCommandMessageReader.Read(message);
+                    var command = ReadCommand(message, ref failureReason);
                     var notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
                     metrics.RecordReceived(notificationType);
 
-                    // Ticket 02 adds Notify delivery. These failures retry and can reach the DLQ under queue redrive policy.
+                    failureReason = "store-error";
+                    var store = recordStoreFactory.GetRecordStore();
+                    SuppressionClaimResult result;
                     if (IsAtOrAfterCutover(command.ActionOccurredAtUtc, cutover))
                     {
-                        failureReason = "delivery-unavailable";
-                        throw new InvalidOperationException(
-                            "Notification command delivery after cutover is not yet enabled."
-                        );
+                        var existing = await store.GetSuppression(command, stoppingToken);
+                        if (existing is null)
+                        {
+                            // Ticket 02 adds sending; only already-suppressed commands can complete this path.
+                            failureReason = "delivery-unavailable";
+                            throw new InvalidOperationException(
+                                "Notification command delivery after cutover is not yet enabled."
+                            );
+                        }
+                        result = existing.Value;
                     }
-
-                    failureReason = "store-error";
-                    var result = await recordStoreFactory.GetRecordStore().RecordSuppression(command, stoppingToken);
+                    else
+                        result = await store.RecordSuppression(command, stoppingToken);
 
                     if (result == SuppressionClaimResult.Conflict)
                     {
@@ -87,6 +93,13 @@ public sealed class NotificationCommandConsumer(
                 await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
             }
         }
+    }
+
+    private static NotificationCommand ReadCommand(Message message, ref string failureReason)
+    {
+        failureReason = "invalid-command";
+
+        return NotificationCommandMessageReader.Read(message);
     }
 
     private void LogFailure(string failureReason, Exception exception)

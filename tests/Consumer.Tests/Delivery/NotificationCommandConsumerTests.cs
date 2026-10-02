@@ -808,6 +808,56 @@ public class NotificationCommandConsumerTests
         return Convert.ToBase64String(output.ToArray());
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(SuppressionClaimResult.Conflict, false)]
+    [InlineData(SuppressionClaimResult.TerminalDuplicate, true)]
+    public async Task Start_WhenPostCutoverCommandHasSuppressionEvidence_ShouldDeleteOnlyMatchingTerminalDuplicate(
+        SuppressionClaimResult? existing,
+        bool deleted
+    )
+    {
+        var sqs = Substitute.For<IAmazonSQS>();
+        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(MessageThenWait(CreateMessage(CommandBody("2101-01-01T00:00:00Z"))));
+        var deletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sqs.DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
+            .Returns(new DeleteMessageResponse())
+            .AndDoes(_ => deletion.TrySetResult());
+        var store = Substitute.For<INotificationDeliveryRecordStore>();
+        store
+            .GetSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(existing);
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        using var subject = CreateSubject(sqs, store, logger, cutover: "2100-01-01T00:00:00Z");
+        try
+        {
+            await subject.StartAsync(TestContext.Current.CancellationToken);
+            if (deleted)
+                await deletion.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            else
+                await logger.WaitForMessage(
+                    "Notification command consumption failed",
+                    TestContext.Current.CancellationToken
+                );
+        }
+        finally
+        {
+            await subject.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        await store
+            .DidNotReceive()
+            .RecordSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            );
+        await sqs.Received(deleted ? 1 : 0).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+    }
+
     private sealed class RecordingLoggerProvider(ILogger logger) : ILoggerProvider
     {
         public ILogger CreateLogger(string categoryName) => logger;

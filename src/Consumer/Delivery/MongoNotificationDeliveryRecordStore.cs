@@ -24,6 +24,25 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             .GetCollection<NotificationDeliveryRecord>(CollectionName);
     }
 
+    public async Task<SuppressionClaimResult?> GetSuppression(
+        NotificationCommand command,
+        CancellationToken cancellationToken
+    )
+    {
+        var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
+        var existing = await _records
+            .Find(record => record.NotificationKey == notificationKey)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (existing is null)
+            return null;
+        if (existing.ImmutableFields != _digest.CreateImmutableFieldsDigest(command))
+            return SuppressionClaimResult.Conflict;
+
+        return existing.Outcome == NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue()
+            ? SuppressionClaimResult.TerminalDuplicate
+            : null;
+    }
+
     // A future PR will add delivery claims and leases; this path only records terminal suppression.
     public async Task<SuppressionClaimResult> RecordSuppression(
         NotificationCommand command,

@@ -12,8 +12,12 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
 public sealed class NullCutoverDeliveryTests : IntegrationTestBase
 {
-    [Fact]
-    public async Task WhenCutoverIsUnsetThenConfigured_ShouldDeleteCommandsAndPreserveTerminalSuppression()
+    [Theory]
+    [InlineData("2026-09-28T10:00:00Z")]
+    [InlineData("2101-01-01T00:00:00Z")]
+    public async Task WhenCutoverIsUnsetThenConfigured_ShouldDeleteCommandsAndPreserveTerminalSuppression(
+        string actionTimestamp
+    )
     {
         using var sqs = CreateSqsClient();
         using var mongo = CreateMongoClient();
@@ -73,7 +77,11 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
                         MessageGroupId = "null-cutover-test-lane",
                         MessageDeduplicationId = Guid.NewGuid().ToString(),
                         MessageBody =
-                            """{"schemaVersion":1,"idempotencyKey":"null-cutover-key","actionOccurredAtUtc":"2026-09-28T10:00:00Z","notificationType":"submitted","emailAddress":"recipient@example.com","templateId":"private-template","personalisation":{"body":"private-body"}}""",
+                            """{"schemaVersion":1,"idempotencyKey":"null-cutover-key","actionOccurredAtUtc":"2026-09-28T10:00:00Z","notificationType":"submitted","emailAddress":"recipient@example.com","templateId":"private-template","personalisation":{"body":"private-body"}}""".Replace(
+                                "2026-09-28T10:00:00Z",
+                                actionTimestamp,
+                                StringComparison.Ordinal
+                            ),
                     },
                     token
                 );

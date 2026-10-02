@@ -60,3 +60,7 @@ analytics event.
 `delivery-suppressed` is a terminal, duplicate-suppressing outcome distinct
 from Notify acceptance and operator abandonment. A later replay of the same
 command must not be sent by Notifications.
+
+A command already suppressed while cutover was null remains terminal even when
+its action timestamp is at or after the later configured boundary. Matching
+replays are deleted; a fresh post-cutover command is not recorded as suppressed.

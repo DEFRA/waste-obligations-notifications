@@ -211,3 +211,8 @@ reported by extended health. CDP controls replacement of hosts that remain
 unhealthy. Long critical migrations must fit the actual platform startup budget
 or be applied before rollout; the documented 95 seconds is not an overall
 deployment deadline. Metrics and startup logging remain available for diagnosis.
+
+Suppression recorded with an unset cutover remains terminal after configuration,
+including an action at or after the new boundary. Delete matching replays without
+changing the record. Fresh post-cutover commands remain undeleted in this
+foundation slice; later Notify delivery owns them.
