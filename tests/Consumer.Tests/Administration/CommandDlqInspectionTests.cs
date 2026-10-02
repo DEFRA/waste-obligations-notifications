@@ -134,10 +134,7 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(Identity, body.RootElement.GetProperty("idempotencyKey").GetString());
         Assert.Equal(Identity, body.RootElement.GetProperty("notificationType").GetString());
         Assert.Equal("unrecorded", body.RootElement.GetProperty("failureClassification").GetString());
-        Assert.Equal(
-            "Historical dependency error details are unavailable.",
-            body.RootElement.GetProperty("failureDetails").GetString()
-        );
+        Assert.False(body.RootElement.TryGetProperty("failureDetails", out _));
         Assert.Equal(3, body.RootElement.GetProperty("receiveCount").GetInt32());
         Assert.Equal("2026-10-01T00:00:00+00:00", body.RootElement.GetProperty("actionOccurredAtUtc").GetString());
         Assert.Equal("2026-10-01T00:00:00+00:00", body.RootElement.GetProperty("sentAtUtc").GetString());
@@ -146,7 +143,6 @@ public sealed class CommandDlqInspectionTests
             [
                 "actionOccurredAtUtc",
                 "failureClassification",
-                "failureDetails",
                 "idempotencyKey",
                 "leaseExpiresAtUtc",
                 "notificationType",

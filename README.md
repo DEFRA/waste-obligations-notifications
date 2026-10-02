@@ -333,7 +333,8 @@ An authenticated inspection response retains the exact idempotency key and notif
 type, including private-bearing spellings: these two fields are the approved
 operator-view exception. Other fields contain timestamps, receive count, fixed
 state/parsing classifications, recipient digest and the selection token.
-Historical dependency error details are unavailable. Malformed or unsupported
+Historical dependency errors are not persisted; inspection returns its current
+classification without a placeholder failure-details field. Malformed or unsupported
 commands disclose no partial command identity and receive no usable selection.
 Logs use the diagnostic category allowlist and never expose raw identities.
 

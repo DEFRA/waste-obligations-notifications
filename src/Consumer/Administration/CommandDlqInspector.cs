@@ -20,8 +20,6 @@ public sealed class CommandDlqInspector(
     CommandDlqDiagnostics diagnostics
 )
 {
-    private const string UnavailableHistory = "Historical dependency error details are unavailable.";
-
     public async Task<CommandDlqInspection?> Inspect(CancellationToken cancellationToken)
     {
         var started = Stopwatch.GetTimestamp();
@@ -69,7 +67,6 @@ public sealed class CommandDlqInspector(
                     SentAt(message),
                     ReceiveCount(message),
                     "invalid-or-unsupported-command",
-                    UnavailableHistory,
                     null,
                     null,
                     null,
@@ -98,7 +95,6 @@ public sealed class CommandDlqInspector(
                 SentAt(message),
                 ReceiveCount(message),
                 state.Classification,
-                UnavailableHistory,
                 digest.CreateRecipientDigest(command.EmailAddress),
                 state.RecordedAtUtc,
                 state.LeaseExpiresAtUtc,

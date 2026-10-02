@@ -7,7 +7,6 @@ public sealed record CommandDlqInspection(
     DateTimeOffset? SentAtUtc,
     int? ReceiveCount,
     string FailureClassification,
-    string FailureDetails,
     string? RecipientDigest,
     DateTimeOffset? RecordedAtUtc,
     DateTimeOffset? LeaseExpiresAtUtc,

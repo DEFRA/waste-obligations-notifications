@@ -39,7 +39,8 @@ Return only minimal metadata. The user explicitly approved exact raw idempotency
 key and notification type in authenticated responses, including private-bearing
 spellings. This exception does not extend to logs, metrics, tokens or other
 message fields. Invalid commands expose neither partial identity nor a usable
-selection. Historical dependency errors remain unavailable.
+selection. Historical dependency errors remain unavailable, so the response
+contains current classification without a constant failure-details placeholder.
 
 Sign a content-free selection with the existing evidence secret and a distinct
 HMAC domain. Format `v2` contains receive-attempt ID, opaque SQS message ID, HMAC

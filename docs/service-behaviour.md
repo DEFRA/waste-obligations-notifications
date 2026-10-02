@@ -225,8 +225,8 @@ The response retains a valid command's exact raw idempotency key and notificatio
 type, even when these contain private-bearing text. This approved exception is
 limited to those two authenticated response fields. Other fields contain only
 business/SQS/evidence timestamps, receive count, recipient digest, fixed parsing
-or delivery-state classification, a statement that historical dependency errors
-are unavailable, and a signed selection token. Do not expose recipient-address,
+or delivery-state classification and a signed selection token. Historical errors
+are not persisted and no placeholder failure-details field is returned. Do not expose recipient-address,
 personalisation, template, rendered-content or Notify-response fields. Malformed
 or unsupported commands expose no partially extracted command fields and no
 usable selection. Logs retain the safe diagnostic-label rules above.
