@@ -11,7 +11,7 @@ public sealed class NotificationCommandConsumer(
     IAmazonSQS sqsClient,
     IOptions<NotificationCommandDeliveryOptions> options,
     INotificationDeliveryRecordStoreFactory recordStoreFactory,
-    MongoMigrationReadiness migrationReadiness,
+    MongoMigrationCompletion migrationCompletion,
     INotificationCommandMetrics metrics,
     ILogger<NotificationCommandConsumer> logger,
     INotifyEmailClient notifyClient,
@@ -33,7 +33,7 @@ public sealed class NotificationCommandConsumer(
             throw new InvalidOperationException(
                 "Notification command lease and visibility do not cover the processing budget."
             );
-        await migrationReadiness.Wait(stoppingToken);
+        await migrationCompletion.Wait(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -97,7 +97,7 @@ public sealed class NotificationCommandConsumer(
         Message message,
         NotificationCommand command,
         string reference,
-        DateTimeOffset cutover,
+        DateTimeOffset? cutover,
         long receiveStartedAt,
         CancellationToken stoppingToken
     )
@@ -106,7 +106,7 @@ public sealed class NotificationCommandConsumer(
         metrics.RecordReceived(notificationType);
         var store = recordStoreFactory.GetRecordStore();
         var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
-        if (command.ActionOccurredAtUtc < cutover)
+        if (cutover is null || command.ActionOccurredAtUtc < cutover)
         {
             var result = await RunBounded(
                 token => store.RecordSuppression(command, token),
@@ -310,10 +310,12 @@ public sealed class NotificationCommandConsumer(
             );
     }
 
-    private DateTimeOffset ReadCutover()
+    private DateTimeOffset? ReadCutover()
     {
         if (!options.Value.TryReadCutover(out var cutover))
-            throw new InvalidOperationException("EmailDeliveryCutoverUtc must include an explicit UTC offset.");
+            throw new InvalidOperationException(
+                "EmailDeliveryCutoverUtc must be null or include an explicit UTC offset."
+            );
 
         return cutover;
     }

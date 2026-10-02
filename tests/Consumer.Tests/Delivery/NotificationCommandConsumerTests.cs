@@ -66,13 +66,16 @@ public sealed class NotificationCommandConsumerTests : IDisposable
     }
 
     [Theory]
+    [InlineData("2026-09-28T10:00:00Z", null, true)]
+    [InlineData("2026-09-29T00:00:00Z", null, true)]
+    [InlineData("2101-01-01T00:00:00Z", null, true)]
     [InlineData("2026-09-28T10:00:00.1229999Z", "2026-09-28T10:00:00.1234567Z", true)]
     [InlineData("2026-09-28T10:00:00.1234567+00:00", "2026-09-28T10:00:00.1234567Z", false)]
     [InlineData("2026-09-28T10:00:00.12345676Z", "2026-09-28T10:00:00.12345676Z", false)]
     [InlineData("2026-09-28T10:00:00.123Z", "2026-09-28T10:00:00.12399996Z", false)]
     public async Task Start_WhenActionIsBeforeOrAtCutoverAtMongoPrecision_ShouldPreserveBoundary(
         string timestamp,
-        string cutover,
+        string? cutover,
         bool suppressed
     )
     {
@@ -352,7 +355,7 @@ public sealed class NotificationCommandConsumerTests : IDisposable
     [InlineData(true)]
     public async Task Start_WhenMigrationsAreIncomplete_ShouldWaitBeforeReceivingCommands(bool completeMigrations)
     {
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
@@ -575,10 +578,10 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         IAmazonSQS sqsClient,
         INotificationDeliveryRecordStore recordStore,
         ILogger<NotificationCommandConsumer>? logger = null,
-        MongoMigrationReadiness? readiness = null,
+        MongoMigrationCompletion? readiness = null,
         int pollIntervalSeconds = 1,
         int receiveTimeoutSeconds = 30,
-        string cutover = "2026-09-29T00:00:00Z",
+        string? cutover = "2026-09-29T00:00:00Z",
         INotifyEmailClient? notify = null
     ) =>
         new(
@@ -614,9 +617,9 @@ public sealed class NotificationCommandConsumerTests : IDisposable
             )
         );
 
-    private static MongoMigrationReadiness CompletedReadiness()
+    private static MongoMigrationCompletion CompletedReadiness()
     {
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         readiness.MarkCompleted();
 
         return readiness;

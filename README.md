@@ -9,7 +9,9 @@ The service receives every message from its service-owned SQS subscription to th
 entity ID, then deletes the successfully processed message. It deliberately does
 not send notifications, persist data, or act on the event payload.
 
-The command consumer records pre-cutover commands as `delivery-suppressed` and
+With the default null cutover, the command consumer durably suppresses every
+valid command and deletes it without Notify. With a supplied boundary, it
+records pre-cutover commands as `delivery-suppressed` and
 sends at-or-after-cutover commands through GOV.UK Notify. It acquires a Mongo
 claim, makes one send request, records acceptance, and then deletes the command.
 Matching accepted, suppressed, or abandoned commands are deleted without another
@@ -73,7 +75,7 @@ The Consumer health endpoint is available at `http://localhost:8085/health`.
 - [Contributing](CONTRIBUTING.md): formatting, required checks, and change workflow.
 - [Service behaviour](docs/service-behaviour.md): message contracts, processing rules, and deployment ownership.
 - [Context](CONTEXT.md): notification-delivery terminology.
-- ADRs: accepted [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and proposed [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
+- ADRs: accepted [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and accepted [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
 - [Agent guidelines](AGENTS.md): entry points and sandbox build guidance for coding agents.
 
 ## Test
@@ -90,12 +92,12 @@ separate subscription from the producer queue and must have the CDP dead-letter
 queue convention configured.
 
 `NotificationCommandDelivery` is deployment-owned. Before enabling it, CDP must
-provide its FIFO queue URL, cutover timestamp,
+provide its FIFO queue URL, optional cutover timestamp,
 and distinct evidence-digest and recipient-lane secrets. Set `Notify__ApiKey` to
 the service's Notify API key; `Notify__BaseAddress` defaults to the GOV.UK Notify
 API. Enabled command processing validates the SDK's API key shape before consuming. Do not put those secrets
 in source control or logs.
-Enabled command processing validates the cutover timestamp and both digest
+Enabled command processing permits null and validates any supplied cutover timestamp and both digest
 secrets at startup. Blank or deployment-placeholder secrets prevent startup
 before commands are consumed. Disabled command processing permits the shipped
 deployment placeholders so analytics-only hosts can start. Digest creation also
@@ -216,8 +218,11 @@ discovery when the collector route is already known.
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
-Each host checks migration history and the required unique index before command
-consumption starts. A host can become ready after another host applies migrations
+Each host checks migration history and the latest migration's current-schema
+validation before command consumption starts. Migration 001 verifies its unique
+notification-key index. The consumer waits once at startup; stores have no
+migration-completion dependency. Future migrations explicitly define the
+current schema requirements. A host can become ready after another host applies migrations
 without acquiring the lease itself. Commands stay on SQS while migrations are
 incomplete; analytics consumption and `/health` continue independently.
 Failures are retried up to `MongoMigrations__MaximumAttempts` across all lease
@@ -293,3 +298,25 @@ an ephemeral volume and fixture bootstrap script. Integration
 tests read the same fixture credential from its test-only API. No Notify account
 credential is stored in development settings or test source. Compose teardown
 removes the generated volume.
+
+## Nullable initial cutover and handover
+
+`NotificationCommandDelivery:EmailDeliveryCutoverUtc` defaults to null. With
+otherwise valid configuration, processing can run in suppression mode while
+Waste Obligations sends every action. Suppression is durable before queue deletion;
+malformed or conflicting commands still retry. Suppressed evidence remains terminal
+and is never backfilled into a send after configuration changes. Empty strings,
+whitespace, deployment placeholders and non-UTC values are invalid supplied cutovers.
+
+After the producer dry run, configure the identical future X in both services and
+verify both deployments complete before X. Notifications sends actions at or after
+X once ticket02 is present; Waste Obligations sends only actions before X. The
+handover is forward-only after X; do not clear the cutover to restore direct sends.
+See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
+
+Migration completion is reported by the `MongoMigrationCompletion` entry in
+`/health/all` while command processing is enabled. Until completion that endpoint
+returns 503, while `/health` and analytics remain available. If every host
+exhausts its migration attempts, repair the migration problem and restart a host
+to retry; hosts continue observing completion by a peer meanwhile. This check
+reads the startup signal and performs no schema or index queries.

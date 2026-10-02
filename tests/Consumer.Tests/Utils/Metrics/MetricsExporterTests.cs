@@ -60,7 +60,7 @@ public sealed class MetricsExporterTests
             .Returns(DeliveryClaimResult.TerminalDuplicate);
         var factory = Substitute.For<INotificationDeliveryRecordStoreFactory>();
         factory.GetRecordStore().Returns(store);
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         readiness.MarkCompleted();
         var runner = Substitute.For<IMongoMigrationRunner>();
         runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(true);

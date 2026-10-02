@@ -961,7 +961,7 @@ public sealed class NotificationCommandSendTests : IDisposable
         INotificationCommandMetrics? metrics = null
     )
     {
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         readiness.MarkCompleted();
         var factory = Substitute.For<INotificationDeliveryRecordStoreFactory>();
         factory.GetRecordStore().Returns(store);

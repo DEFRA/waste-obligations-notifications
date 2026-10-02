@@ -2,23 +2,25 @@ using Defra.WasteObligations.Consumer.Data;
 
 namespace Defra.WasteObligations.Consumer.Tests.Data;
 
-public sealed class MongoMigrationReadinessTests
+public sealed class MongoMigrationCompletionTests
 {
     [Fact]
     public async Task WhenMigrationsHaveNotCompleted_ShouldWaitUntilCompletion()
     {
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         var waiting = readiness.Wait(TestContext.Current.CancellationToken);
         Assert.False(waiting.IsCompleted);
+        Assert.False(readiness.IsCompleted);
         readiness.MarkCompleted();
         await waiting;
+        Assert.True(readiness.IsCompleted);
         await readiness.Wait(TestContext.Current.CancellationToken);
     }
 
     [Fact]
     public async Task WhenWaitIsCancelled_ShouldAllowOtherWaitersToComplete()
     {
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new MongoMigrationCompletion();
         using var cancellation = new CancellationTokenSource();
         var waiting = readiness.Wait(cancellation.Token);
         await cancellation.CancelAsync();

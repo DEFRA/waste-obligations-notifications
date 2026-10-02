@@ -2,14 +2,16 @@
 
 This document describes message contracts and processing requirements. Use
 [CONTEXT.md](../CONTEXT.md) for terminology and the linked ADRs for decision
-rationale. The command architecture is accepted; the cutover ADR remains proposed. Current
+rationale. The command architecture is accepted; the cutover ADR is accepted. Current
 implementation scope is described below.
 
 ## Current scope
 
 The analytics consumer logs event and entity IDs and deletes successfully
 processed messages. It does not deliver notifications or persist event data.
-The command consumer records pre-cutover commands as `delivery-suppressed` and
+With the default null cutover, the command consumer durably suppresses every
+valid command and deletes it without Notify. With a supplied boundary, it
+records pre-cutover commands as `delivery-suppressed` and
 sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
@@ -46,7 +48,7 @@ original recipient-lane position.
   payloads, or persist event data.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
-- Validate the UTC cutover and configured evidence and recipient-lane secrets
+- Allow a null cutover; validate any supplied UTC cutover and configured evidence and recipient-lane secrets
   at startup when command processing is enabled. Invalid configuration must
   not consume commands; disabled processing permits deployment placeholders.
   Digest creation also rejects unconfigured secrets independently of processing.
@@ -59,8 +61,10 @@ original recipient-lane position.
   the key to fit the queue constraints.
 - Run versioned Mongo migrations under a renewable exclusive lease when command
   processing is enabled. Each host must verify the required migration version
-  and unique notification-key index before receiving commands from SQS or
-  persisting them. Completion by another host can satisfy this check, including
+  and latest migration's current schema before its first command receive.
+  Migration 001 validates its unique notification-key index. Completion is a
+  one-time startup signal, with no store dependency or per-operation wait; it
+  does not detect later manual schema changes. Completion by another host can satisfy this check, including
   after the local host exhausts its migration attempts. A lease-renewal failure
   cancels the engine; only after it stops can the host release and reacquire
   the lease. Attempts share a bounded host-wide budget across acquisitions.
@@ -121,7 +125,7 @@ original recipient-lane position.
   No Notify-reference reconciliation is implemented. Queue
   deletion failure after durable acceptance retries as a terminal duplicate.
 - Compare the immutable UTC business-action timestamp with the deployment-owned
-  cutover value. Both configured cutover and serialized action timestamps must
+  cutover value. Any supplied cutover and serialized action timestamps must
   explicitly include `Z` or a zero offset (`+00:00` or `-00:00`). Reject absent
   or nonzero offsets instead of interpreting them in the host timezone or
   converting them. Truncate both timestamps to whole milliseconds before
@@ -203,3 +207,25 @@ Compose-backed integration tests cover health and SNS-to-SQS-to-consumer wiring.
 Test that stored command evidence and logs do not disclose protected identifiers,
 addresses, templates, or personalisation. Analytics event and entity IDs are
 logged as required by the analytics contract above.
+
+## Initial deployment and cutover
+
+The default cutover is null. Enabled processing suppresses all valid commands
+without a Notify send while Waste Obligations retains direct delivery. Suppression
+must be durable before deletion; malformed commands, conflicts and persistence
+failures retain the message. Existing suppressed evidence is terminal when a
+future cutover is configured. A non-null cutover requires explicit UTC and the
+same millisecond precision as command identity. Other configuration requirements
+remain in force.
+
+Use the producer dry run before choosing the identical future X in both services.
+Verify both deployments complete before X; after X use Notifications recovery
+and do not clear or move the cutover backward. ADR0002 records this accepted,
+forward-only handover. Local examples do not configure deployed values.
+
+Migration completion is reported by the `MongoMigrationCompletion` entry in
+`/health/all` while command processing is enabled. Until completion that endpoint
+returns 503, while `/health` and analytics remain available. If every host
+exhausts its migration attempts, repair the migration problem and restart a host
+to retry; hosts continue observing completion by a peer meanwhile. This check
+reads the startup signal and performs no schema or index queries.

@@ -18,8 +18,16 @@ retry policy and attempt timeouts as Waste Obligations. Run migrations in a
 background service when command processing is enabled. Migration 001 creates
 `notificationKey_unique` on `NotificationDeliveryRecord` and retains an
 existing matching index. Each host checks the latest applied migration version
-and required unique index before receiving commands from SQS. The record store
-also guards persistence with readiness. A host can observe another host's
+and asks that migration to validate the current schema before receiving commands
+from SQS. Migration 001 validates its unique notification-key index. Every new
+migration explicitly defines the complete schema checks its application version
+needs; the generic runner does not retain obsolete index requirements.
+
+`MongoMigrationCompletion` is a one-time application startup signal. The command
+consumer waits once before its first receive. Delivery stores have no dependency
+on migration completion and perform no repeated startup waits. This is not an
+ongoing schema watchdog: manual index removal after completion is outside this
+protection. A host can observe another host's
 successful migration without acquiring the lease itself. Analytics consumption
 and `/health` do not depend on migrations.
 
@@ -73,3 +81,10 @@ camel-case element and string-enum conventions as Waste Obligations, registered
 before entity mapping. Lease documents therefore use `owner` and `expiresAt`;
 existing documents using `Owner` and `ExpiresAt` must be reconciled with all
 command-processing hosts stopped before rollout.
+
+Migration completion is reported by the `MongoMigrationCompletion` entry in
+`/health/all` while command processing is enabled. Until completion that endpoint
+returns 503, while `/health` and analytics remain available. If every host
+exhausts its migration attempts, repair the migration problem and restart a host
+to retry; hosts continue observing completion by a peer meanwhile. This check
+reads the startup signal and performs no schema or index queries.

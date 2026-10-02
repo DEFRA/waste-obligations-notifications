@@ -15,6 +15,8 @@ public abstract class MongoMigration : IMigration
 
     public abstract Task DownAsync(MigrationContext context);
 
+    public abstract Task<bool> ValidateSchema(IMongoDatabase database, CancellationToken cancellationToken);
+
     protected static async Task CreateIndex<T>(
         MigrationContext context,
         string name,

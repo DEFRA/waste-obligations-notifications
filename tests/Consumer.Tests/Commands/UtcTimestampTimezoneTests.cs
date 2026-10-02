@@ -41,7 +41,7 @@ public sealed class UtcTimestampTimezoneTests
                 )
             );
             Assert.True((options with { EmailDeliveryCutoverUtc = timestamp + "Z" }).TryReadCutover(out var cutover));
-            Assert.Equal(TimeSpan.Zero, cutover.Offset);
+            Assert.Equal(TimeSpan.Zero, cutover!.Value.Offset);
         }
         finally
         {

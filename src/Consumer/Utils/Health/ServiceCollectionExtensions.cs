@@ -31,6 +31,10 @@ public static class ServiceCollectionExtensions
         if (configuration.GetValue<bool>($"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled"))
         {
             healthChecks
+                .AddCheck<MongoMigrationCompletionHealthCheck>(
+                    "MongoMigrationCompletion",
+                    tags: [WebApplicationExtensions.Extended]
+                )
                 .Add(
                     new HealthCheckRegistration(
                         "NotificationCommandQueue",
