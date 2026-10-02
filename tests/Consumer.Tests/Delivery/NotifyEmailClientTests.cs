@@ -438,7 +438,7 @@ public sealed class NotifyEmailClientTests
             (transport, notify) => new NotificationClient(transport, notify.ApiKey)
         );
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<NotificationCommandProcessingException>(() =>
             subject.Send(
                 Command() with
                 {
@@ -454,6 +454,9 @@ public sealed class NotifyEmailClientTests
 
     [Theory]
     [InlineData(400, "{\"private-address\":\"recipient@example.com\"}")]
+    [InlineData(403, "private-forbidden-response")]
+    [InlineData(429, "private-rate-limit-response")]
+    [InlineData(500, "private-server-response")]
     [InlineData(201, "not-json-private-body")]
     [InlineData(201, "{}")]
     [InlineData(201, "{\"id\":\"invalid\",\"reference\":\"wrong\",\"template\":{\"id\":\"template-1\",\"version\":0}}")]
@@ -478,12 +481,20 @@ public sealed class NotifyEmailClientTests
             (transport, notify) => new NotificationClient(transport, notify.ApiKey)
         );
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<NotificationCommandProcessingException>(() =>
             subject.Send(Command(), Reference, TestContext.Current.CancellationToken)
         );
 
         Assert.Null(exception.InnerException);
         Assert.DoesNotContain(body, exception.ToString(), StringComparison.Ordinal);
+        Assert.Equal(
+            statusCode is >= 400 and < 500
+                ? NotificationCommandFailureReason.NotifyRejected4xx
+                : NotificationCommandFailureReason.NotifyIndeterminate,
+            exception.Reason
+        );
+        if (statusCode is >= 400 and < 500)
+            Assert.Equal(nameof(HttpRequestException), exception.ExceptionType);
         Assert.Equal(1, requests);
     }
 
@@ -670,11 +681,11 @@ public sealed class NotifyEmailClientTests
             (transport, notify) => new NotificationClient(transport, notify.ApiKey)
         );
 
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var failure = await Assert.ThrowsAsync<NotificationCommandProcessingException>(() =>
             subject.Send(Command(), Reference, TestContext.Current.CancellationToken)
         );
 
-        Assert.Equal("Notify email request failed or returned invalid acceptance evidence.", failure.Message);
+        Assert.Equal("Notification command processing failed.", failure.Message);
         Assert.Null(failure.InnerException);
         Assert.Equal(1, requests);
         Assert.True(content.WasDisposed);
@@ -706,7 +717,7 @@ public sealed class NotifyEmailClientTests
             (transport, notify) => new NotificationClient(transport, notify.ApiKey)
         );
         if (malformed)
-            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            await Assert.ThrowsAsync<NotificationCommandProcessingException>(() =>
                 subject.Send(Command(), Reference, TestContext.Current.CancellationToken)
             );
         else
@@ -781,11 +792,11 @@ public sealed class NotifyEmailClientTests
                     : new NotificationClient(transport, notify.ApiKey)
         );
 
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var failure = await Assert.ThrowsAsync<NotificationCommandProcessingException>(() =>
             subject.Send(Command(), Reference, TestContext.Current.CancellationToken)
         );
 
-        Assert.Equal("Notify email request failed or returned invalid acceptance evidence.", failure.Message);
+        Assert.Equal("Notification command processing failed.", failure.Message);
         Assert.Null(failure.InnerException);
         Assert.DoesNotContain(privateText, failure.ToString(), StringComparison.Ordinal);
     }

@@ -149,6 +149,13 @@ empty. Unknown values use `other` in metrics and operational logs; this changes
 no command data, validation or immutable identity. Local settings show the two
 declaration categories as diagnostic examples.
 
+Failures include fixed `FailureReason` labels and the original `ExceptionType`
+name: `invalid-command`, `conflict`, `active-claim`, `notify-rejected-4xx`,
+`notify-indeterminate`, `store-error`, `queue-error`, `ownership-lost`,
+`processing-timeout` or `unexpected-error`. No exception text, inner exception
+or response content is logged. Operators can search these logs using the DLQ
+message ID; historical failure details are not stored or reconstructed.
+
 The `Defra.WasteObligationsNotifications` meter follows Waste Obligations'
 DI-managed `IMeterFactory` convention. Singleton command instrumentation uses
 shared PascalCase instrument and tag names, `COUNT` counters and `MILLISECONDS`

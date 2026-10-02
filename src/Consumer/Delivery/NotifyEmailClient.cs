@@ -69,14 +69,18 @@ public sealed class NotifyEmailClient(
 
             return acceptance;
         }
-        catch (Exception) when (cancellationToken.IsCancellationRequested)
-        {
-            throw new OperationCanceledException("Notify email request was cancelled.", cancellationToken);
-        }
-        catch (Exception)
+        catch (Exception exception)
         {
             // HTTP and SDK exception text can contain the recipient, request or response. Keep it outside logs.
-            throw new InvalidOperationException("Notify email request failed or returned invalid acceptance evidence.");
+            var cause = exception.GetBaseException();
+            if (cause is NotificationCommandProcessingException failure)
+                throw new NotificationCommandProcessingException(failure.Reason, failure);
+            if (cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException("Notify email request was cancelled.", cancellationToken);
+            throw new NotificationCommandProcessingException(
+                NotificationCommandFailureReason.NotifyIndeterminate,
+                cause
+            );
         }
     }
 

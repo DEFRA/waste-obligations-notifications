@@ -50,7 +50,12 @@ public sealed class NotifySdkHttpClient : IHttpClient
         // Buffer with the operation token before the SDK's non-cancellable response read.
         _response = await _client.SendAsync(request, HttpCompletionOption.ResponseContentRead, _cancellationToken);
         if (_response.StatusCode != _expectedStatus)
-            throw new InvalidOperationException("Notify operation did not confirm its expected result.");
+            throw new NotificationCommandProcessingException(
+                (int)_response.StatusCode is >= 400 and < 500
+                    ? NotificationCommandFailureReason.NotifyRejected4xx
+                    : NotificationCommandFailureReason.NotifyIndeterminate,
+                new HttpRequestException("Notify operation did not confirm its expected result.")
+            );
 
         return _response;
     }

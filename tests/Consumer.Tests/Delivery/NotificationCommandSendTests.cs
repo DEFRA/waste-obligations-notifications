@@ -10,6 +10,7 @@ using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MongoDB.Driver;
 using NSubstitute;
 
 namespace Defra.WasteObligations.Consumer.Tests.Delivery;
@@ -185,6 +186,15 @@ public sealed class NotificationCommandSendTests : IDisposable
 
         await RunUntilFailure(consumer, logger);
 
+        var reason = claim switch
+        {
+            DeliveryClaimResult.Conflict => "conflict",
+            DeliveryClaimResult.ActiveClaim => "active-claim",
+            _ => "store-error",
+        };
+        Assert.Contains(logger.Messages, message => message.Contains(reason, StringComparison.Ordinal));
+        Assert.Empty(logger.Exceptions);
+
         await notify
             .DidNotReceive()
             .Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -228,6 +238,20 @@ public sealed class NotificationCommandSendTests : IDisposable
 
         await RunUntilFailure(consumer, logger);
 
+        var reason = failure switch
+        {
+            "send" => "notify-indeterminate",
+            "persistence" => "store-error",
+            _ => "ownership-lost",
+        };
+        Assert.Contains(logger.Messages, message => message.Contains(reason, StringComparison.Ordinal));
+        if (failure != "ownership")
+            Assert.Contains(
+                logger.Messages,
+                message => message.Contains(nameof(InvalidOperationException), StringComparison.Ordinal)
+            );
+        Assert.Empty(logger.Exceptions);
+
         await sqs.DidNotReceive()
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
         Assert.DoesNotContain(PrivateValues, string.Join('\n', logger.Messages), StringComparison.Ordinal);
@@ -235,6 +259,48 @@ public sealed class NotificationCommandSendTests : IDisposable
             logger.Exceptions,
             exception => exception.ToString().Contains(PrivateValues, StringComparison.Ordinal)
         );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenStoreOrUnexpectedCodeFails_ShouldLogFixedReasonAndOriginalTypeWithoutPrivateDetails(
+        bool storeError
+    )
+    {
+        var sqs = Sqs();
+        var store = Store();
+        var notify = Notify();
+        var metrics = Substitute.For<INotificationCommandMetrics>();
+        if (storeError)
+            store
+                .Claim(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromException<DeliveryClaimResult>(new MongoException(PrivateValues)));
+        else
+            metrics
+                .When(instrumentation => instrumentation.RecordReceived(Arg.Any<string>()))
+                .Do(_ => throw new NullReferenceException(PrivateValues));
+        var logger = new RecordingLogger();
+        using var consumer = Consumer(sqs, store, notify, logger, metrics: metrics);
+
+        await RunUntilFailure(consumer, logger);
+
+        Assert.Contains(
+            logger.Messages,
+            message =>
+                message.Contains(
+                    storeError ? "store-error (MongoException)" : "unexpected-error (NullReferenceException)",
+                    StringComparison.Ordinal
+                )
+        );
+        Assert.Empty(logger.Exceptions);
+        foreach (var value in PrivateValues.Split(' '))
+            Assert.DoesNotContain(value, string.Join(' ', logger.Messages), StringComparison.Ordinal);
+        await notify
+            .DidNotReceive()
+            .Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await sqs.DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -537,9 +603,11 @@ public sealed class NotificationCommandSendTests : IDisposable
             );
         await sqs.DidNotReceive()
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-        var exception = Assert.IsType<TimeoutException>(Assert.Single(logger.Exceptions));
-        Assert.Equal("Notification command dependency exceeded its configured timeout.", exception.Message);
-        Assert.Null(exception.InnerException);
+        Assert.Empty(logger.Exceptions);
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("processing-timeout (TimeoutException)", StringComparison.Ordinal)
+        );
         Assert.Contains(
             logger.Messages,
             message =>
@@ -551,7 +619,6 @@ public sealed class NotificationCommandSendTests : IDisposable
         foreach (var value in PrivateValues.Split(' '))
         {
             Assert.DoesNotContain(value, string.Join('\n', logger.Messages), StringComparison.Ordinal);
-            Assert.DoesNotContain(value, exception.ToString(), StringComparison.Ordinal);
         }
     }
 
