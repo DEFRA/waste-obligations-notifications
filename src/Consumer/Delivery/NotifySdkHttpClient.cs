@@ -4,26 +4,20 @@ using Notify.Interfaces;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
 
-public sealed class NotifySdkHttpClient : IHttpClient
+public sealed class NotifySdkHttpClient(
+    HttpClient client,
+    HttpStatusCode expectedStatus,
+    CancellationToken cancellationToken
+) : IHttpClient
 {
-    private readonly HttpClient _client;
-    private readonly CancellationToken _cancellationToken;
-    private readonly HttpStatusCode _expectedStatus;
     private HttpRequestMessage? _request;
     private HttpResponseMessage? _response;
     private string? _accept;
     private string? _userAgent;
 
-    public NotifySdkHttpClient(HttpClient client, HttpStatusCode expectedStatus, CancellationToken cancellationToken)
-    {
-        _client = client;
-        _cancellationToken = cancellationToken;
-        _expectedStatus = expectedStatus;
-        BaseAddress = client.BaseAddress ?? throw new InvalidOperationException("Notify transport is not configured.");
-    }
-
     // The SDK's logical address must not replace the configured typed client's routing.
-    public Uri BaseAddress { get; set; }
+    public Uri BaseAddress { get; set; } =
+        client.BaseAddress ?? throw new InvalidOperationException("Notify transport is not configured.");
 
     public void SetClientBaseAddress()
     {
@@ -42,14 +36,14 @@ public sealed class NotifySdkHttpClient : IHttpClient
             throw new InvalidOperationException("Notify operation cannot issue another request.");
         }
         _request = request;
-        _cancellationToken.ThrowIfCancellationRequested();
+        cancellationToken.ThrowIfCancellationRequested();
         if (_accept is not null)
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(_accept));
         if (_userAgent is not null)
             request.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
         // Buffer with the operation token before the SDK's non-cancellable response read.
-        _response = await _client.SendAsync(request, HttpCompletionOption.ResponseContentRead, _cancellationToken);
-        if (_response.StatusCode != _expectedStatus)
+        _response = await client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
+        if (_response.StatusCode != expectedStatus)
             throw new NotificationCommandProcessingException(
                 (int)_response.StatusCode is >= 400 and < 500
                     ? NotificationCommandFailureReason.NotifyRejected4xx
