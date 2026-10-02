@@ -70,7 +70,11 @@ restore a command's original recipient-lane position.
   This does not detect later manual schema changes. Completion by another host can satisfy this check, including
   after the local host exhausts its migration attempts. A lease-renewal failure
   cancels the engine; only after it stops can the host release and reacquire
-  the lease. Attempts share a bounded host-wide budget across acquisitions.
+  the lease. While critical readiness is incomplete, an attempt failure also
+  relinquishes the lease after stopped work, followed by a five-second backoff.
+  Once readiness is established, standard failures retry under the lease with
+  the existing 30-second delay. Use a 30-second lease renewed every ten seconds.
+  Attempts share one bounded host-wide budget across acquisitions and phases.
   Host shutdown cancels the migration engine but continues renewing its lease
   while renewal succeeds until execution stops.
   Bound acquisition and renewal confirmation by a deadline measured from the

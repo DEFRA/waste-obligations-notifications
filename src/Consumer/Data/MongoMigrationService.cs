@@ -5,6 +5,7 @@ namespace Defra.WasteObligations.Consumer.Data;
 public sealed class MongoMigrationService(
     IMongoMigrationLeaseService leaseService,
     IMongoMigrationRunner migrationRunner,
+    MongoMigrationCompletion criticalCompletion,
     IOptions<MongoMigrationOptions> options,
     TimeProvider timeProvider,
     ILogger<MongoMigrationService> logger
@@ -40,15 +41,14 @@ public sealed class MongoMigrationService(
                         _attemptCount < options.Value.MaximumAttempts
                         && await leaseService.TryAcquire(leaseDuration, stoppingToken);
                 }
-                catch (Exception exception) when (exception is not OperationCanceledException)
+                catch (Exception) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception exception)
                 {
                     if (failedChecks == 0)
-                    {
-                        logger.LogError(
-                            exception,
-                            "Mongo migration readiness check or lease acquisition failed. Retrying."
-                        );
-                    }
+                        LogDependencyFailure(LogLevel.Error, "readiness-check-or-acquisition", exception);
                     failedChecks++;
                     readinessAlertLogged = await WaitForReadinessRetry(
                         readinessStartedAt,
@@ -72,11 +72,13 @@ public sealed class MongoMigrationService(
                     return;
 
                 LogAttemptExhaustionIfRequired();
+                if (!criticalCompletion.IsCompleted && _attemptCount < options.Value.MaximumAttempts)
+                    await Task.Delay(ReadinessCheckInterval, timeProvider, stoppingToken);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            return;
+            // Expected while stopping or waiting between acquisitions.
         }
     }
 
@@ -167,7 +169,7 @@ public sealed class MongoMigrationService(
                 if (await RunMigrationAttempt(attempt, migrationCancellationTokenSource.Token))
                     return true;
 
-                if (migrationCancellationTokenSource.IsCancellationRequested)
+                if (migrationCancellationTokenSource.IsCancellationRequested || !criticalCompletion.IsCompleted)
                     return false;
 
                 if (attempt < maximumAttempts)
@@ -181,6 +183,7 @@ public sealed class MongoMigrationService(
                     {
                         await Task.Delay(
                             TimeSpan.FromSeconds(options.Value.RetryDelaySeconds),
+                            timeProvider,
                             migrationCancellationTokenSource.Token
                         );
                     }
@@ -319,7 +322,7 @@ public sealed class MongoMigrationService(
         }
         catch (Exception exception)
         {
-            logger.LogError(exception, "Mongo migration lease renewal failed. Cancelling the migration engine.");
+            LogDependencyFailure(LogLevel.Error, "lease-renewal", exception);
 
             await migrationCancellationTokenSource.CancelAsync();
         }
@@ -338,6 +341,14 @@ public sealed class MongoMigrationService(
         - TimeSpan.FromSeconds(options.Value.LeaseRenewalIntervalSeconds / 2.0)
         - timeProvider.GetElapsedTime(requestStartedAt);
 
+    private void LogDependencyFailure(LogLevel level, string reason, Exception exception) =>
+        logger.Log(
+            level,
+            "Mongo migration {FailureReason} failed ({ExceptionType}).",
+            reason,
+            exception.GetType().Name
+        );
+
     private async Task ReleaseLease()
     {
         using var releaseCancellationTokenSource = new CancellationTokenSource(LeaseReleaseTimeout);
@@ -348,11 +359,11 @@ public sealed class MongoMigrationService(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            logger.LogWarning(exception, "Mongo migration lease could not be released. It will expire automatically.");
+            LogDependencyFailure(LogLevel.Warning, "lease-release", exception);
         }
         catch (OperationCanceledException exception)
         {
-            logger.LogWarning(exception, "Mongo migration lease release timed out. It will expire automatically.");
+            LogDependencyFailure(LogLevel.Warning, "lease-release-timeout", exception);
         }
     }
 }

@@ -44,6 +44,11 @@ database. Hosts coordinate through the lease and retain it until a cancelled
 migration attempt stops. Failures receive bounded retries using one host-wide
 attempt budget across lease acquisitions. Renewal failures cancel the engine;
 after it stops the host may reacquire the lease and use its remaining attempts.
+While critical readiness is incomplete, failed attempts relinquish ownership
+after engine and renewal work stop, then wait five seconds before reacquiring.
+Once readiness is established, standard failures keep the lease and retry after
+30 seconds. One host-wide three-attempt budget spans acquisitions and phases.
+The lease lasts 30 seconds and is renewed every ten seconds.
 Exhausted hosts
 release the lease and continue checking for completion by another host; they
 need a restart to execute further migration attempts themselves. Failed attempts,

@@ -7,10 +7,10 @@ public sealed record MongoMigrationOptions
     public const string SectionName = "MongoMigrations";
 
     [Range(10, 3600)]
-    public int LeaseDurationSeconds { get; init; } = 60;
+    public int LeaseDurationSeconds { get; init; } = 30;
 
     [Range(1, 1800)]
-    public int LeaseRenewalIntervalSeconds { get; init; } = 15;
+    public int LeaseRenewalIntervalSeconds { get; init; } = 10;
 
     [Range(1, 86400)]
     public int CriticalOperationTimeoutSeconds { get; init; } = 20;

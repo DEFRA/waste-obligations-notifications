@@ -114,7 +114,10 @@ before `/health` can succeed. Both consumers start only after the first successf
 health response. Record stores do not wait on migrations. A peer can establish
 the prerequisite; non-critical failures do not block deployment readiness.
 Failures are retried up to `MongoMigrations__MaximumAttempts` across all lease
-acquisitions on the host. A renewal error cancels the attempt; once the engine
+acquisitions and phase changes on the host. While critical prerequisites are
+incomplete, a failed attempt relinquishes the lease after engine and renewal
+work stop, then waits five seconds before reacquiring. Once critical readiness
+is established, standard failures retain the lease and the 30-second retry delay. A renewal error cancels the attempt; once the engine
 stops, the host releases the lease and can reacquire it using the remaining
 attempt budget. After exhaustion,
 the host releases the lease and continues checking for completion by another host.
@@ -139,7 +142,7 @@ cancellation, and the lease does not fence those operations after ownership is l
 `MongoMigrations` configures lease duration, renewal interval, standard operation timeout,
 retry delay and readiness-wait alert threshold in seconds (the latter uses
 `LeaseAcquisitionAlertThresholdSeconds`). The defaults are
-60, 15, 300, 30 and 300 respectively, with three attempts.
+30, 10, 300, 30 and 300 respectively, with three attempts.
 `CriticalOperationTimeoutSeconds` defaults to 20; `AttemptTimeoutSeconds` is the
 per-operation standard budget, rather than a deadline for the whole migration chain. Renewal must be no
 more than half the lease duration. CDP can override these defaults separately

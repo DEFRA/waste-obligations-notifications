@@ -138,6 +138,7 @@ public sealed class MongoMigrationTimingTests : IntegrationTestBase
         using var service = new MongoMigrationService(
             lease,
             CreateRunner(database, completion, settings),
+            completion,
             Options.Create(settings),
             TimeProvider.System,
             NullLogger<MongoMigrationService>.Instance
@@ -176,6 +177,62 @@ public sealed class MongoMigrationTimingTests : IntegrationTestBase
             await control.DeleteManyAsync(new BsonDocument(), cleanup.Token);
             await service.StopAsync(cleanup.Token);
             await peer.Release(cleanup.Token);
+            await client.DropDatabaseAsync(databaseName, cleanup.Token);
+        }
+    }
+
+    [Fact]
+    public async Task WhenCriticalAttemptTimesOut_ShouldLetPeerCompleteBeforeFailedHostReacquires()
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"migration_handover_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var token = TestContext.Current.CancellationToken;
+        var completion = new MongoMigrationCompletion();
+        var settings = new MongoMigrationOptions { CriticalOperationTimeoutSeconds = 1 };
+        var peerLease = new MongoMigrationLeaseService(database, TimeProvider.System);
+        using var service = new MongoMigrationService(
+            new MongoMigrationLeaseService(database, TimeProvider.System),
+            CreateRunner(database, completion, settings),
+            completion,
+            Options.Create(settings),
+            TimeProvider.System,
+            NullLogger<MongoMigrationService>.Instance
+        );
+        var control = database.GetCollection<BsonDocument>("timing_fixture");
+        try
+        {
+            await control.InsertOneAsync(new BsonDocument("_id", "hold-critical-1"), cancellationToken: token);
+            await service.StartAsync(token);
+            await WaitForAsync(async () =>
+                Assert.True(await control.Find(new BsonDocument("_id", "critical-1-started")).AnyAsync(token))
+            );
+            Assert.False(await peerLease.TryAcquire(TimeSpan.FromSeconds(30), token));
+            await WaitForAsync(async () => Assert.True(await peerLease.TryAcquire(TimeSpan.FromSeconds(30), token)));
+            Assert.False(completion.IsCompleted);
+            Assert.Empty(
+                await database.GetCollection<BsonDocument>("_migrations").Find(new BsonDocument()).ToListAsync(token)
+            );
+            await control.DeleteOneAsync(new BsonDocument("_id", "hold-critical-1"), token);
+            var peerCompletion = new MongoMigrationCompletion();
+            await CreateRunner(database, peerCompletion, settings).Run(token);
+            Assert.True(peerCompletion.IsCompleted);
+            await peerLease.Release(token);
+            await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), token);
+            Assert.True(completion.IsCompleted);
+            Assert.Equal(
+                3,
+                await database
+                    .GetCollection<BsonDocument>("_migrations")
+                    .CountDocumentsAsync(new BsonDocument(), cancellationToken: token)
+            );
+        }
+        finally
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await control.DeleteManyAsync(new BsonDocument(), cleanup.Token);
+            await service.StopAsync(cleanup.Token);
+            await peerLease.Release(cleanup.Token);
             await client.DropDatabaseAsync(databaseName, cleanup.Token);
         }
     }
