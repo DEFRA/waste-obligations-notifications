@@ -93,8 +93,8 @@ original recipient-lane position.
 - Claim a post-cutover command atomically using the unique notification-key
   index, matching immutable digest, fresh attempt owner, and Mongo's expiry
   clock. Active claims cannot send again; expired claims permit one new owner.
-  Acceptance updates require the same owner and an unexpired lease using Mongo's
-  clock. Accepted evidence includes the opaque versioned HMAC Notify reference,
+  Acceptance updates require the same owner and a pending outcome, even after
+  lease expiry. Accepted evidence includes the opaque versioned HMAC Notify reference,
   template ID/version, Notify notification ID, correlation digests, and timestamps.
 - Make one Notify request per claim with no HTTP retry or redirect. Normalize the
   recipient for the request. Require `201 Created` and consistent minimal
@@ -108,7 +108,7 @@ original recipient-lane position.
   shared typed `HttpClient`. JSON personalisation values retain their original
   semantics; only minimal acceptance evidence is projected from the SDK model.
 - Validate the complete bounded attempt budget at startup. Initially visibility
-  and command leases are 120 seconds; receive, claim, send, acceptance and deletion
+  is 120 seconds and command leases are 90 seconds, leaving retry headroom; receive, claim, send, acceptance and deletion
   bounds are 30, 5, 60, 10 and 5 seconds, plus 10 seconds headroom. Measure elapsed
   time monotonically from receive/claim request starts and reject late confirmations
   before sending. Request visibility explicitly on receive without changing shared
@@ -117,7 +117,10 @@ original recipient-lane position.
 - A Notify timeout, lost response, crash, or failed acceptance write does not prove
   rejection. Queue retry after expiry may send a duplicate email. An already
   in-flight request can outlive ownership during a process stall; Mongo rejects
-  stale acceptance. No Notify-reference reconciliation is implemented. Queue
+  acceptance from a replaced owner or terminal claim. A complete, valid Notify
+  acceptance is persisted with a fresh bounded token even after send timeout,
+  ownership-budget expiry or shutdown; it is never discarded just for lateness.
+  No Notify-reference reconciliation is implemented. Queue
   deletion failure after durable acceptance retries as a terminal duplicate.
 - Compare the immutable UTC business-action timestamp with the deployment-owned
   cutover value. Both configured cutover and serialized action timestamps must
@@ -138,6 +141,14 @@ durations, and terminal duplicates are observed at the hosted-consumer boundary.
 Notify acceptance is counted before persistence; failure means an attempt lacked
 confirmed acceptance and includes indeterminate cancellation and timeout. These
 metrics do not claim recipient delivery or rejection.
+
+Failure logs retain a fixed reason category and the original exception type
+name alongside permitted correlation. Categories distinguish invalid commands,
+conflicts, active claims, Notify 4xx rejection, indeterminate sends, store/queue
+errors, lost ownership, exhausted processing budgets and unexpected errors.
+They contain no dependency exception text, inner exception or response body.
+DLQ operators can correlate a selected message ID with these logs; historical
+errors are not reconstructed or added to persisted delivery evidence.
 
 Instruments follow Waste Obligations' DI-owned meter and singleton instrumentation
 conventions. Shared names and tag keys use PascalCase; counters use CloudWatch

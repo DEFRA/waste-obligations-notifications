@@ -129,15 +129,19 @@ CDP can override them through the `NotificationCommandDelivery` section;
 local Compose values do not configure deployed environments.
 
 Each receive requests `VisibilityTimeoutSeconds` explicitly (120 seconds initially).
-The delivery claim is separate from migration leases and defaults to 120 seconds.
+The delivery claim is separate from migration leases and defaults to 90 seconds, leaving
+30 seconds before visibility expiry so prompt redelivery can acquire a new claim.
 `ClaimTimeoutSeconds`, `NotifyTimeoutSeconds`, `AcceptanceTimeoutSeconds`, and
 `DeleteTimeoutSeconds` initially bound operations to 5, 60, 10, and 5 seconds.
 `SafetyHeadroomSeconds` adds 10 seconds. Startup requires the command lease to
-cover claim plus send, persistence, deletion and headroom, and visibility to cover
+cover claim plus send, persistence, deletion and headroom (90 seconds), and visibility to cover
 that budget plus the conservative 30-second receive bound: 120 seconds in total.
 The receive and claim clocks start before their dependency requests; late
 confirmations cannot start a send. Mongo uses its own clock for claim expiry and
-owner checks when acceptance is recorded. Failed or indeterminate sends retain
+owner and pending-outcome checks when acceptance is recorded. Confirmed acceptance
+is always persisted with its own bounded token, even if the send timeout, lease
+or shutdown cancellation has elapsed; a replaced owner cannot overwrite evidence.
+Failed or indeterminate sends retain
 the claim until expiry; the service does not release it early.
 
 These values are initial estimates. Measure dependency latency and validate the
@@ -155,6 +159,13 @@ labels, each 1–64 lowercase ASCII letters, digits or hyphens. The default list
 empty. Unknown values use `other` in metrics and operational logs; this changes
 no command data, validation or immutable identity. Local settings show the two
 declaration categories as diagnostic examples.
+
+Failures include fixed `FailureReason` labels and the original `ExceptionType`
+name: `invalid-command`, `conflict`, `active-claim`, `notify-rejected-4xx`,
+`notify-indeterminate`, `store-error`, `queue-error`, `ownership-lost`,
+`processing-timeout` or `unexpected-error`. No exception text, inner exception
+or response content is logged. Operators can search these logs using the DLQ
+message ID; historical failure details are not stored or reconstructed.
 
 The `Defra.WasteObligationsNotifications` meter follows Waste Obligations'
 DI-managed `IMeterFactory` convention. Singleton command instrumentation uses

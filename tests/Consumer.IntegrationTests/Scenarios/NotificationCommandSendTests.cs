@@ -102,6 +102,7 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
         await WaitForAsync(async () =>
             Assert.Equal("delivery-accepted", (await fixture.Record(blocked))["outcome"].AsString)
         );
+        Assert.Equal(3, (await fixture.NotifyRequests(failed)).Length);
         var failedRecord = await fixture.Record(failed);
         Assert.Equal("delivery-pending", failedRecord["outcome"].AsString);
         Assert.False(failedRecord.Contains("acceptedAtUtc"));
@@ -195,7 +196,7 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                                 ["FifoQueue"] = "true",
                                 ["VisibilityTimeout"] = shortBudget ? "7" : "120",
                                 ["RedrivePolicy"] = JsonSerializer.Serialize(
-                                    new { deadLetterTargetArn = dlqArn, maxReceiveCount = 2 }
+                                    new { deadLetterTargetArn = dlqArn, maxReceiveCount = 3 }
                                 ),
                             },
                         },
@@ -232,7 +233,7 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                         values[$"NotificationCommandDelivery:{field}"] = "1";
                     values["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = "2";
                     values["NotificationCommandDelivery:VisibilityTimeoutSeconds"] = "7";
-                    values["NotificationCommandDelivery:CommandLeaseSeconds"] = "7";
+                    values["NotificationCommandDelivery:CommandLeaseSeconds"] = "5";
                 }
                 fixture._host = new HostBuilder()
                     .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(values))

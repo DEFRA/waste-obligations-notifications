@@ -34,15 +34,21 @@ This decision covers source-independent command delivery. Producer-specific
 recipient/template policy and administrator DLQ operations are separate scopes.
 
 Each claim has a fresh attempt owner. MongoDB's current time determines expiry,
-and recording acceptance requires that exact owner and an unexpired claim. A
+and recording acceptance requires that exact owner and a pending claim. Expiry
+alone does not reject confirmed acceptance; replacing the owner or recording a
+terminal outcome does. A
 bounded attempt uses conservative monotonic deadlines from receive and claim
 request starts; startup validates that dependency timeouts and headroom fit the
 command lease and SQS visibility. Late confirmations do not authorise a send.
-Failed or indeterminate requests retain the claim until expiry rather than
+The default command lease is 90 seconds against 120-second SQS visibility,
+leaving headroom for prompt retry after expiry. Failed or indeterminate requests
+retain the claim until expiry rather than
 releasing it early. Delivery claims are separate from migration leases.
 
-A `201 Created` response means accepted by Notify. Recording valid acceptance
-precedes queue deletion; matching accepted, suppressed or abandoned records
+A `201 Created` response means accepted by Notify. Once a complete valid response
+arrives, attempt persistence with a fresh bounded token, including after send
+timeout, lease expiry or shutdown. Timing checks guard new sends, not known
+acceptance. Recording valid acceptance precedes queue deletion; matching accepted, suppressed or abandoned records
 prevent another send. A crash, lost response, timeout or failed acceptance write
 can leave an indeterminate send. Retry after expiry may send the email again;
 Notify-reference reconciliation is excluded. Mongo fences acceptance writes,

@@ -45,6 +45,11 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         await logger.WaitForMessage("Notification command consumption failed", TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("invalid-command (JsonException)", StringComparison.Ordinal)
+        );
+
         await recordStore
             .DidNotReceive()
             .RecordSuppression(
@@ -328,7 +333,11 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(logger.Messages);
-        Assert.IsType<TimeoutException>(Assert.Single(logger.Exceptions));
+        Assert.Empty(logger.Exceptions);
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("queue-error (TimeoutException)", StringComparison.Ordinal)
+        );
     }
 
     private static async Task<ReceiveMessageResponse> WaitForReceiveCancellation(CancellationToken cancellationToken)

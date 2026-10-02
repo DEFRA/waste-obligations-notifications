@@ -196,7 +196,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WhenAbandonmentRacesAcceptance_ShouldPreserveOnlyTheServerTimeEligibleTransition(bool expired)
+    public async Task WhenAbandonmentRacesAcceptance_ShouldPermitOnlyOneTerminalTransition(bool expired)
     {
         await using var context = new AbandonmentContext();
         await context.Initialise();
@@ -229,15 +229,42 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         var accepted = await accepting;
         var abandonmentResult = await abandoning;
 
-        Assert.Equal(!expired, accepted);
-        Assert.Equal(expired ? AbandonmentResult.Recorded : AbandonmentResult.Conflict, abandonmentResult);
+        Assert.NotEqual(accepted, abandonmentResult == AbandonmentResult.Recorded);
+        if (!expired)
+            Assert.True(accepted);
         var record = await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token);
-        Assert.Equal(expired ? "delivery-abandoned" : "delivery-accepted", record["outcome"].AsString);
+        Assert.Equal(accepted ? "delivery-accepted" : "delivery-abandoned", record["outcome"].AsString);
         Assert.Equal(
             AbandonmentResult.Conflict,
             await context.Store.RecordAbandonment(command with { TemplateId = "conflicting-private-template" }, token)
         );
         Assert.Equal(record, await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
+    }
+
+    [Fact]
+    public async Task WhenExpiredOwnerRecordsAcceptanceBeforeDiscard_ShouldPreserveAcceptedHistory()
+    {
+        await using var context = new AbandonmentContext();
+        await context.Initialise();
+        var token = TestContext.Current.CancellationToken;
+        var command = Command();
+        Assert.Equal(DeliveryClaimResult.Claimed, await context.Store.Claim(command, "accepting-attempt", 60, token));
+        await context.Records.UpdateOneAsync(
+            FilterDefinition<BsonDocument>.Empty,
+            new BsonDocument("$set", new BsonDocument("leaseExpiresAtUtc", DateTime.UnixEpoch)),
+            cancellationToken: token
+        );
+
+        Assert.True(
+            await context.Store.RecordAcceptance(command, "accepting-attempt", Acceptance(context, command), token)
+        );
+        var accepted = await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token);
+        Assert.Equal(AbandonmentResult.Conflict, await context.Store.RecordAbandonment(command, token));
+        Assert.Equal(accepted, await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
+        Assert.Equal(
+            DeliveryClaimResult.TerminalDuplicate,
+            await context.Store.Claim(command, "next-attempt", 60, token)
+        );
     }
 
     private static NotificationCommand Command() =>

@@ -263,8 +263,10 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
         }
     }
 
-    [Fact]
-    public async Task WhenThreeHostsCompete_ShouldExcludeActiveOwnersRecoverExpiryAndRejectStaleAcceptance()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenThreeHostsCompete_ShouldFenceAcceptanceByCurrentOwnerAfterExpiry(bool reclaim)
     {
         using var client = CreateMongoClient();
         var databaseName = $"notifications_claim_test_{Guid.NewGuid():N}";
@@ -340,10 +342,14 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 command.TemplateId,
                 2
             );
-            Assert.False(await hosts[0].RecordAcceptance(command, oldOwner, acceptance, token));
-            Assert.Equal(DeliveryClaimResult.Claimed, await hosts[1].Claim(command, "new-attempt", 120, token));
-            Assert.False(await hosts[0].RecordAcceptance(command, oldOwner, acceptance, token));
-            Assert.True(await hosts[1].RecordAcceptance(command, "new-attempt", acceptance, token));
+            if (reclaim)
+            {
+                Assert.Equal(DeliveryClaimResult.Claimed, await hosts[1].Claim(command, "new-attempt", 120, token));
+                Assert.False(await hosts[0].RecordAcceptance(command, oldOwner, acceptance, token));
+                Assert.True(await hosts[1].RecordAcceptance(command, "new-attempt", acceptance, token));
+            }
+            else
+                Assert.True(await hosts[0].RecordAcceptance(command, oldOwner, acceptance, token));
             Assert.Equal(
                 DeliveryClaimResult.TerminalDuplicate,
                 await hosts[2].Claim(command, "duplicate-attempt", 120, token)

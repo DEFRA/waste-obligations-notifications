@@ -10,6 +10,7 @@ using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MongoDB.Driver;
 using NSubstitute;
 
 namespace Defra.WasteObligations.Consumer.Tests.Delivery;
@@ -44,7 +45,7 @@ public sealed class NotificationCommandSendTests : IDisposable
 
         Received.InOrder(() =>
         {
-            store.Claim(Arg.Any<NotificationCommand>(), Arg.Any<string>(), 120, Arg.Any<CancellationToken>());
+            store.Claim(Arg.Any<NotificationCommand>(), Arg.Any<string>(), 90, Arg.Any<CancellationToken>());
             notify.Send(
                 Arg.Is<NotificationCommand>(command => command.EmailAddress == "recipient@example.com"),
                 Reference,
@@ -75,6 +76,100 @@ public sealed class NotificationCommandSendTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task WhenNotifyConfirmsAfterTimeoutLeaseBudgetOrShutdown_ShouldPreserveAcceptance(
+        bool expireLease,
+        bool shutdown
+    )
+    {
+        var sqs = Sqs();
+        var store = Store();
+        var notify = Notify();
+        var sending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recorded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        notify
+            .Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                sending.TrySetResult();
+                if (shutdown)
+                    await release.Task;
+                else
+                    await Task.Delay(expireLease ? 6100 : 1200, TestContext.Current.CancellationToken);
+                Assert.True(call.Arg<CancellationToken>().IsCancellationRequested);
+
+                return Acceptance();
+            });
+        store
+            .RecordAcceptance(
+                Arg.Any<NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<NotifyAcceptance>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(call =>
+            {
+                Assert.False(call.Arg<CancellationToken>().IsCancellationRequested);
+                recorded.TrySetResult();
+
+                return true;
+            });
+        sqs.DeleteMessageAsync(QueueUrl, "receipt", Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                Assert.True(recorded.Task.IsCompletedSuccessfully);
+                deleted.TrySetResult();
+
+                return new DeleteMessageResponse();
+            });
+        using var consumer = Consumer(
+            sqs,
+            store,
+            notify,
+            new RecordingLogger(),
+            new()
+            {
+                QueueUrl = QueueUrl,
+                ProcessingEnabled = true,
+                EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
+                EvidenceDigestSecret = "test-secret",
+                RecipientLaneSecret = "test-lane",
+                WaitTimeSeconds = 0,
+                ReceiveTimeoutSeconds = 1,
+                CommandLeaseSeconds = 5,
+                VisibilityTimeoutSeconds = 6,
+                ClaimTimeoutSeconds = 1,
+                NotifyTimeoutSeconds = 1,
+                AcceptanceTimeoutSeconds = 1,
+                DeleteTimeoutSeconds = 1,
+                SafetyHeadroomSeconds = 1,
+            }
+        );
+
+        await consumer.StartAsync(TestContext.Current.CancellationToken);
+        await sending.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        if (shutdown)
+        {
+            var stopping = consumer.StopAsync(TestContext.Current.CancellationToken);
+            release.TrySetResult();
+            await stopping;
+            Assert.True(recorded.Task.IsCompletedSuccessfully);
+        }
+        else
+        {
+            await deleted.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            await consumer.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        await notify.Received(1).Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await sqs.Received(shutdown ? 0 : 1).DeleteMessageAsync(QueueUrl, "receipt", Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
     [InlineData(DeliveryClaimResult.ActiveClaim)]
     [InlineData(DeliveryClaimResult.Conflict)]
     [InlineData(DeliveryClaimResult.Unavailable)]
@@ -90,6 +185,15 @@ public sealed class NotificationCommandSendTests : IDisposable
         using var consumer = Consumer(sqs, store, notify, logger);
 
         await RunUntilFailure(consumer, logger);
+
+        var reason = claim switch
+        {
+            DeliveryClaimResult.Conflict => "conflict",
+            DeliveryClaimResult.ActiveClaim => "active-claim",
+            _ => "store-error",
+        };
+        Assert.Contains(logger.Messages, message => message.Contains(reason, StringComparison.Ordinal));
+        Assert.Empty(logger.Exceptions);
 
         await notify
             .DidNotReceive()
@@ -134,6 +238,20 @@ public sealed class NotificationCommandSendTests : IDisposable
 
         await RunUntilFailure(consumer, logger);
 
+        var reason = failure switch
+        {
+            "send" => "notify-indeterminate",
+            "persistence" => "store-error",
+            _ => "ownership-lost",
+        };
+        Assert.Contains(logger.Messages, message => message.Contains(reason, StringComparison.Ordinal));
+        if (failure != "ownership")
+            Assert.Contains(
+                logger.Messages,
+                message => message.Contains(nameof(InvalidOperationException), StringComparison.Ordinal)
+            );
+        Assert.Empty(logger.Exceptions);
+
         await sqs.DidNotReceive()
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
         Assert.DoesNotContain(PrivateValues, string.Join('\n', logger.Messages), StringComparison.Ordinal);
@@ -141,6 +259,48 @@ public sealed class NotificationCommandSendTests : IDisposable
             logger.Exceptions,
             exception => exception.ToString().Contains(PrivateValues, StringComparison.Ordinal)
         );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenStoreOrUnexpectedCodeFails_ShouldLogFixedReasonAndOriginalTypeWithoutPrivateDetails(
+        bool storeError
+    )
+    {
+        var sqs = Sqs();
+        var store = Store();
+        var notify = Notify();
+        var metrics = Substitute.For<INotificationCommandMetrics>();
+        if (storeError)
+            store
+                .Claim(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+                .Returns(Task.FromException<DeliveryClaimResult>(new MongoException(PrivateValues)));
+        else
+            metrics
+                .When(instrumentation => instrumentation.RecordReceived(Arg.Any<string>()))
+                .Do(_ => throw new NullReferenceException(PrivateValues));
+        var logger = new RecordingLogger();
+        using var consumer = Consumer(sqs, store, notify, logger, metrics: metrics);
+
+        await RunUntilFailure(consumer, logger);
+
+        Assert.Contains(
+            logger.Messages,
+            message =>
+                message.Contains(
+                    storeError ? "store-error (MongoException)" : "unexpected-error (NullReferenceException)",
+                    StringComparison.Ordinal
+                )
+        );
+        Assert.Empty(logger.Exceptions);
+        foreach (var value in PrivateValues.Split(' '))
+            Assert.DoesNotContain(value, string.Join(' ', logger.Messages), StringComparison.Ordinal);
+        await notify
+            .DidNotReceive()
+            .Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await sqs.DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -443,9 +603,11 @@ public sealed class NotificationCommandSendTests : IDisposable
             );
         await sqs.DidNotReceive()
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-        var exception = Assert.IsType<TimeoutException>(Assert.Single(logger.Exceptions));
-        Assert.Equal("Notification command dependency exceeded its configured timeout.", exception.Message);
-        Assert.Null(exception.InnerException);
+        Assert.Empty(logger.Exceptions);
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("processing-timeout (TimeoutException)", StringComparison.Ordinal)
+        );
         Assert.Contains(
             logger.Messages,
             message =>
@@ -457,7 +619,6 @@ public sealed class NotificationCommandSendTests : IDisposable
         foreach (var value in PrivateValues.Split(' '))
         {
             Assert.DoesNotContain(value, string.Join('\n', logger.Messages), StringComparison.Ordinal);
-            Assert.DoesNotContain(value, exception.ToString(), StringComparison.Ordinal);
         }
     }
 

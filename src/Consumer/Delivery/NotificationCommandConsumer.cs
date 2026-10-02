@@ -48,7 +48,7 @@ public sealed class NotificationCommandConsumer(
                 foreach (var message in response.Messages ?? [])
                 {
                     messageId = message.MessageId;
-                    var command = NotificationCommandMessageReader.Read(message).NormaliseRecipient();
+                    var command = ReadCommand(message);
                     notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
                     reference = digest.CreateNotifyReference(command.IdempotencyKey);
                     await Process(message, command, reference, cutover, receiveStartedAt, stoppingToken);
@@ -65,17 +65,32 @@ public sealed class NotificationCommandConsumer(
 
     private void LogFailure(Exception exception, string? messageId, string? notificationType, string? reference)
     {
-        var safeException =
-            exception is TimeoutException
-                ? new TimeoutException("Notification command dependency exceeded its configured timeout.")
-                : null;
+        if (!logger.IsEnabled(LogLevel.Error))
+            return;
+        var failure = exception as NotificationCommandProcessingException;
         logger.LogError(
-            safeException,
-            "Notification command consumption failed for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}",
+            "Notification command consumption failed for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}: {FailureReason} ({ExceptionType})",
             notificationType,
             messageId,
-            reference
+            reference,
+            failure?.DiagnosticReason ?? "unexpected-error",
+            failure?.ExceptionType ?? exception.GetBaseException().GetType().Name
         );
+    }
+
+    private static NotificationCommand ReadCommand(Message message)
+    {
+        try
+        {
+            return NotificationCommandMessageReader.Read(message).NormaliseRecipient();
+        }
+        catch (Exception exception)
+        {
+            throw new NotificationCommandProcessingException(
+                NotificationCommandFailureReason.InvalidCommand,
+                exception
+            );
+        }
     }
 
     private async Task Process(
@@ -96,10 +111,15 @@ public sealed class NotificationCommandConsumer(
             var result = await RunBounded(
                 token => store.RecordSuppression(command, token),
                 options.Value.ClaimTimeoutSeconds,
-                stoppingToken
+                stoppingToken,
+                failureReason: NotificationCommandFailureReason.StoreError
             );
             if (result is SuppressionClaimResult.Conflict or SuppressionClaimResult.ActiveClaim)
-                throw new InvalidOperationException("Notification command suppression is not terminal.");
+                throw new NotificationCommandProcessingException(
+                    result == SuppressionClaimResult.Conflict
+                        ? NotificationCommandFailureReason.Conflict
+                        : NotificationCommandFailureReason.ActiveClaim
+                );
             if (result == SuppressionClaimResult.TerminalDuplicate)
             {
                 metrics.RecordDuplicate(notificationType);
@@ -125,10 +145,12 @@ public sealed class NotificationCommandConsumer(
                 message.MessageId,
                 reference
             );
+        stoppingToken.ThrowIfCancellationRequested();
         await RunBounded(
             token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
             options.Value.DeleteTimeoutSeconds,
-            stoppingToken
+            stoppingToken,
+            failureReason: NotificationCommandFailureReason.QueueError
         );
     }
 
@@ -154,7 +176,8 @@ public sealed class NotificationCommandConsumer(
             claim = await RunBounded(
                 token => store.Claim(command, attemptOwner, options.Value.CommandLeaseSeconds, token),
                 options.Value.ClaimTimeoutSeconds,
-                stoppingToken
+                stoppingToken,
+                failureReason: NotificationCommandFailureReason.StoreError
             );
         }
         catch
@@ -171,7 +194,14 @@ public sealed class NotificationCommandConsumer(
         }
 
         if (claim != DeliveryClaimResult.Claimed)
-            throw new InvalidOperationException("Notification command cannot acquire a delivery claim.");
+            throw new NotificationCommandProcessingException(
+                claim switch
+                {
+                    DeliveryClaimResult.Conflict => NotificationCommandFailureReason.Conflict,
+                    DeliveryClaimResult.ActiveClaim => NotificationCommandFailureReason.ActiveClaim,
+                    _ => NotificationCommandFailureReason.StoreError,
+                }
+            );
         EnsureRemaining(
             receiveStartedAt,
             options.Value.VisibilityTimeoutSeconds,
@@ -185,7 +215,9 @@ public sealed class NotificationCommandConsumer(
             acceptance = await RunBounded(
                 token => notifyClient.Send(command, reference, token),
                 options.Value.NotifyTimeoutSeconds,
-                stoppingToken
+                stoppingToken,
+                preserveCompletedResult: true,
+                failureReason: NotificationCommandFailureReason.NotifyIndeterminate
             );
             metrics.RecordSendAccepted(notificationType);
         }
@@ -198,29 +230,16 @@ public sealed class NotificationCommandConsumer(
         {
             metrics.RecordSendDuration(notificationType, Stopwatch.GetElapsedTime(sendStartedAt).TotalMilliseconds);
         }
-        EnsureRemaining(
-            claimStartedAt,
-            options.Value.CommandLeaseSeconds,
-            options.Value.AcceptanceTimeoutSeconds
-                + options.Value.DeleteTimeoutSeconds
-                + options.Value.SafetyHeadroomSeconds
-        );
-        EnsureRemaining(
-            receiveStartedAt,
-            options.Value.VisibilityTimeoutSeconds,
-            options.Value.AcceptanceTimeoutSeconds
-                + options.Value.DeleteTimeoutSeconds
-                + options.Value.SafetyHeadroomSeconds
-        );
+        // A confirmed send still needs durable evidence after timeout, lease expiry or shutdown.
+        // Mongo's owner and pending-outcome checks fence a replaced or terminal claim.
         var recorded = await RunBounded(
             token => store.RecordAcceptance(command, attemptOwner, acceptance, token),
             options.Value.AcceptanceTimeoutSeconds,
-            stoppingToken
+            CancellationToken.None,
+            failureReason: NotificationCommandFailureReason.StoreError
         );
         if (!recorded)
-            throw new InvalidOperationException(
-                "Notification command acceptance was not recorded by its current owner."
-            );
+            throw new NotificationCommandProcessingException(NotificationCommandFailureReason.OwnershipLost);
 
         return NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue();
     }
@@ -240,13 +259,16 @@ public sealed class NotificationCommandConsumer(
                     token
                 ),
             options.Value.ReceiveTimeoutSeconds,
-            stoppingToken
+            stoppingToken,
+            failureReason: NotificationCommandFailureReason.QueueError
         );
 
     private static async Task<T> RunBounded<T>(
         Func<CancellationToken, Task<T>> operation,
         int timeoutSeconds,
-        CancellationToken stoppingToken
+        CancellationToken stoppingToken,
+        bool preserveCompletedResult = false,
+        NotificationCommandFailureReason failureReason = NotificationCommandFailureReason.UnexpectedError
     )
     {
         using var source = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -255,15 +277,24 @@ public sealed class NotificationCommandConsumer(
         try
         {
             var result = await operation(source.Token);
-            stoppingToken.ThrowIfCancellationRequested();
-            if (Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(timeoutSeconds))
-                throw new TimeoutException("Notification command dependency exceeded its configured timeout.");
+            if (!preserveCompletedResult)
+            {
+                stoppingToken.ThrowIfCancellationRequested();
+                if (Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(timeoutSeconds))
+                    throw new TimeoutException("Notification command dependency exceeded its configured timeout.");
+            }
 
             return result;
         }
-        catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
+        catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
         {
-            throw new TimeoutException("Notification command dependency exceeded its configured timeout.");
+            if (exception is NotificationCommandProcessingException)
+                throw;
+            var cause =
+                exception is OperationCanceledException
+                    ? new TimeoutException("Notification command dependency exceeded its configured timeout.")
+                    : exception;
+            throw new NotificationCommandProcessingException(failureReason, cause);
         }
     }
 
@@ -273,8 +304,9 @@ public sealed class NotificationCommandConsumer(
             Stopwatch.GetElapsedTime(startedAt) + TimeSpan.FromSeconds(remainingBudgetSeconds)
             >= TimeSpan.FromSeconds(durationSeconds)
         )
-            throw new TimeoutException(
-                "Notification command has insufficient ownership or visibility budget remaining."
+            throw new NotificationCommandProcessingException(
+                NotificationCommandFailureReason.ProcessingTimeout,
+                new TimeoutException("Notification command has insufficient ownership or visibility budget remaining.")
             );
     }
 
