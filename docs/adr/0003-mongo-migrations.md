@@ -81,3 +81,10 @@ camel-case element and string-enum conventions as Waste Obligations, registered
 before entity mapping. Lease documents therefore use `owner` and `expiresAt`;
 existing documents using `Owner` and `ExpiresAt` must be reconciled with all
 command-processing hosts stopped before rollout.
+
+Migration completion is reported by the `MongoMigrationCompletion` entry in
+`/health/all` while command processing is enabled. Until completion that endpoint
+returns 503, while `/health` and analytics remain available. If every host
+exhausts its migration attempts, repair the migration problem and restart a host
+to retry; hosts continue observing completion by a peer meanwhile. This check
+reads the startup signal and performs no schema or index queries.

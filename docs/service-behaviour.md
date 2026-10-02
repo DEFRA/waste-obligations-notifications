@@ -133,3 +133,10 @@ Use the producer dry run before choosing the identical future X in both services
 Verify both deployments complete before X; after X use Notifications recovery
 and do not clear or move the cutover backward. ADR0002 records this accepted,
 forward-only handover. Local examples do not configure deployed values.
+
+Migration completion is reported by the `MongoMigrationCompletion` entry in
+`/health/all` while command processing is enabled. Until completion that endpoint
+returns 503, while `/health` and analytics remain available. If every host
+exhausts its migration attempts, repair the migration problem and restart a host
+to retry; hosts continue observing completion by a peer meanwhile. This check
+reads the startup signal and performs no schema or index queries.
