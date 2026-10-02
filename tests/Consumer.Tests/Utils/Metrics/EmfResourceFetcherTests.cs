@@ -6,77 +6,33 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Defra.WasteObligations.Consumer.Tests.Utils.Metrics;
 
-public sealed class EmfEnvironmentFactoryTests
+public sealed class EmfResourceFetcherTests
 {
-    [Theory]
-    [InlineData("Local", typeof(LocalEnvironment))]
-    [InlineData("Lambda", typeof(LambdaEnvironment))]
-    [InlineData("Agent", typeof(DefaultEnvironment))]
-    [InlineData("ECS", typeof(ECSEnvironment))]
-    [InlineData("EC2", typeof(EC2Environment))]
-    public void WhenAnEnvironmentOverrideIsConfigured_ShouldUseTheSdkEnvironmentWithoutMetadataRequests(
-        string environment,
-        Type expectedType
-    )
-    {
-        var requests = 0;
-        using var handler = new MetadataHandler(
-            (_, _) =>
-            {
-                requests++;
-                throw new InvalidOperationException("No metadata request should be made for an explicit override");
-            }
-        );
-        using var services = CreateServices(new() { ["AWS_EMF_ENVIRONMENT"] = environment }, handler);
-
-        var resolved = services
-            .GetRequiredService<IEmfEnvironmentFactory>()
-            .Create(TestContext.Current.CancellationToken);
-
-        Assert.IsType(expectedType, resolved);
-        Assert.Equal(0, requests);
-    }
-
     [Fact]
-    public void WhenTwoFactoriesHaveDifferentHostConfiguration_ShouldPreserveIndependentSdkServiceAndRoutingConfiguration()
+    public void WhenLocalExportIsConfigured_ShouldResolveTheSdkEnvironmentThroughProductionRegistration()
     {
-        using var first = CreateServices(
-            new()
-            {
-                ["AWS_EMF_ENVIRONMENT"] = "Agent",
-                ["AWS_EMF_SERVICE_NAME"] = "first-service",
-                ["AWS_EMF_SERVICE_TYPE"] = "first-type",
-                ["AWS_EMF_LOG_GROUP_NAME"] = "first-group",
-                ["AWS_EMF_LOG_STREAM_NAME"] = "first-stream",
-            }
-        );
-        using var second = CreateServices(
-            new()
-            {
-                ["AWS_EMF_ENVIRONMENT"] = "Agent",
-                ["AWS_EMF_SERVICE_NAME"] = "second-service",
-                ["AWS_EMF_SERVICE_TYPE"] = "second-type",
-                ["AWS_EMF_LOG_GROUP_NAME"] = "second-group",
-                ["AWS_EMF_LOG_STREAM_NAME"] = "second-stream",
-            }
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["AWS_EMF_NAMESPACE"] = "notifications-test",
+                    ["AWS_EMF_ENVIRONMENT"] = "Local",
+                    ["AWS_EMF_SERVICE_NAME"] = "waste-obligations-notifications",
+                }
+            )
+            .Build();
+        using var services = new ServiceCollection()
+            .AddLogging()
+            .AddNotificationCommandMetrics()
+            .AddNotificationCommandEmfExport(configuration)
+            .BuildServiceProvider();
+
+        var environment = services.GetRequiredService<Func<CancellationToken, IEnvironment>>()(
+            TestContext.Current.CancellationToken
         );
 
-        var firstEnvironment = Assert.IsType<DefaultEnvironment>(
-            first.GetRequiredService<IEmfEnvironmentFactory>().Create(TestContext.Current.CancellationToken)
-        );
-        var secondEnvironment = Assert.IsType<DefaultEnvironment>(
-            second.GetRequiredService<IEmfEnvironmentFactory>().Create(TestContext.Current.CancellationToken)
-        );
-
-        Assert.NotSame(firstEnvironment, secondEnvironment);
-        Assert.Equal("first-service", firstEnvironment.Name);
-        Assert.Equal("first-type", firstEnvironment.Type);
-        Assert.Equal("first-group", firstEnvironment.LogGroupName);
-        Assert.Equal("first-stream", firstEnvironment.LogStreamName);
-        Assert.Equal("second-service", secondEnvironment.Name);
-        Assert.Equal("second-type", secondEnvironment.Type);
-        Assert.Equal("second-group", secondEnvironment.LogGroupName);
-        Assert.Equal("second-stream", secondEnvironment.LogStreamName);
+        Assert.IsType<LocalEnvironment>(environment);
+        Assert.Equal("waste-obligations-notifications", environment.Name);
     }
 
     [Fact]
@@ -149,24 +105,6 @@ public sealed class EmfEnvironmentFactoryTests
 
         Assert.True(sawCancellation);
         Assert.Equal(returnLateSuccess, returnedLateSuccess);
-    }
-
-    private static ServiceProvider CreateServices(
-        Dictionary<string, string?> values,
-        HttpMessageHandler? handler = null
-    )
-    {
-        values["AWS_EMF_NAMESPACE"] = "notifications-test";
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
-        var services = new ServiceCollection().AddLogging();
-        services.AddNotificationCommandMetrics();
-        services.AddNotificationCommandEmfExport(configuration);
-        if (handler is not null)
-            services
-                .AddHttpClient(EmfEnvironmentFactory.MetadataClientName)
-                .ConfigurePrimaryHttpMessageHandler(() => handler);
-
-        return services.BuildServiceProvider();
     }
 
     private sealed class MetadataHandler(Func<HttpRequestMessage, CancellationToken, HttpResponseMessage> response)

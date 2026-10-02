@@ -34,9 +34,9 @@ public sealed class MetricsExporterTests
     {
         var sink = new RecordingSink { ExportFailure = failure == "export" };
         var environment = new ControlledEnvironment(sink);
-        var provider = Substitute.For<IEmfEnvironmentFactory>();
+        var provider = Substitute.For<Func<CancellationToken, IEnvironment>>();
         provider
-            .Create(Arg.Any<CancellationToken>())
+            .Invoke(Arg.Any<CancellationToken>())
             .Returns(_ => failure == "startup" ? throw new InvalidOperationException(PrivateValues) : environment);
         var logs = new RecordingLogs();
         var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -179,8 +179,8 @@ public sealed class MetricsExporterTests
     public async Task WhenExportIsDisabled_ShouldNeitherResolveTheSdkEnvironmentNorExportOrShutdownASink()
     {
         var sink = new RecordingSink();
-        var factory = Substitute.For<IEmfEnvironmentFactory>();
-        factory.Create(Arg.Any<CancellationToken>()).Returns(_ => throw new InvalidOperationException(PrivateValues));
+        var factory = Substitute.For<Func<CancellationToken, IEnvironment>>();
+        factory.Invoke(Arg.Any<CancellationToken>()).Returns(_ => throw new InvalidOperationException(PrivateValues));
         using var host = CreateMetricsHost(
             sink,
             new() { ["AWS_EMF_ENABLED"] = "false", ["AWS_EMF_NAMESPACE"] = "private invalid namespace@example.com" },
@@ -191,7 +191,7 @@ public sealed class MetricsExporterTests
         host.Services.GetRequiredService<INotificationCommandMetrics>().RecordReceived("submitted");
         await host.StopAsync(TestContext.Current.CancellationToken);
 
-        factory.DidNotReceive().Create(Arg.Any<CancellationToken>());
+        factory.DidNotReceive().Invoke(Arg.Any<CancellationToken>());
         Assert.Empty(sink.Documents);
         Assert.Equal(0, sink.ShutdownCalls);
     }
@@ -204,7 +204,7 @@ public sealed class MetricsExporterTests
         string? value
     )
     {
-        var factory = Substitute.For<IEmfEnvironmentFactory>();
+        var factory = Substitute.For<Func<CancellationToken, IEnvironment>>();
         using var host = CreateMetricsHost(
             new(),
             new() { ["AWS_EMF_ENABLED"] = null, ["AWS_EMF_NAMESPACE"] = value },
@@ -215,7 +215,7 @@ public sealed class MetricsExporterTests
             host.StartAsync(TestContext.Current.CancellationToken)
         );
 
-        factory.DidNotReceive().Create(Arg.Any<CancellationToken>());
+        factory.DidNotReceive().Invoke(Arg.Any<CancellationToken>());
         if (value is not null)
             Assert.DoesNotContain(value, exception.ToString(), StringComparison.Ordinal);
     }
@@ -330,75 +330,10 @@ public sealed class MetricsExporterTests
             Assert.DoesNotContain(value, string.Join(' ', logs.Messages), StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task WhenTheRealAgentSinkIsBlockedOrDropsMeasurements_ShouldKeepDeliveryCallsNonblockingAndSanitizeSdkWarnings()
-    {
-        var socket = new ControlledSocket();
-        var sockets = Substitute.For<ISocketClientFactory>();
-        sockets.GetClient(Arg.Any<Endpoint>()).Returns(socket);
-        var environment = new ControlledEnvironment(new RecordingSink());
-        var factory = Substitute.For<IEmfEnvironmentFactory>();
-        factory.Create(Arg.Any<CancellationToken>()).Returns(environment);
-        var logs = new RecordingLogs();
-        using var host = CreateMetricsHost(new(), new() { ["AWS_EMF_SHUTDOWN_TIMEOUT_SECONDS"] = "1" }, factory, logs);
-        var sdkConfiguration = new Amazon.CloudWatch.EMF.Config.Configuration { AgentBufferSize = 1 };
-        environment.Sink = new AgentSink(
-            "test-group",
-            "test-stream",
-            Endpoint.DEFAULT_TCP_ENDPOINT,
-            sockets,
-            sdkConfiguration,
-            host.Services.GetRequiredService<EmfDiagnosticLoggerFactory>()
-        );
-        await host.StartAsync(TestContext.Current.CancellationToken);
-        var metrics = host.Services.GetRequiredService<INotificationCommandMetrics>();
-
-        try
-        {
-            metrics.RecordReceived("submitted");
-            await socket.Sending.Task.WaitAsync(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
-            var publishing = Task.Run(
-                () =>
-                {
-                    metrics.RecordSendAccepted("submitted");
-                    metrics.RecordSendFailure("submitted");
-                },
-                TestContext.Current.CancellationToken
-            );
-            await publishing.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
-            await host.StopAsync(TestContext.Current.CancellationToken)
-                .WaitAsync(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken);
-            metrics.RecordReceived("submitted");
-            Assert.Contains(logs.Messages, message => message.Contains("EMF SDK", StringComparison.Ordinal));
-            Assert.Contains(
-                logs.Messages,
-                message => message.Contains("EMF failure during shutdown", StringComparison.Ordinal)
-            );
-        }
-        finally
-        {
-            socket.Release.TrySetResult();
-            await socket.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        }
-
-        Assert.Equal(2, socket.Documents.Count);
-        Assert.All(
-            socket.Documents,
-            document =>
-            {
-                using var json = JsonDocument.Parse(document);
-                Assert.Equal("test-group", json.RootElement.GetProperty("LogGroupName").GetString());
-                Assert.Equal("test-stream", json.RootElement.GetProperty("LogStreamName").GetString());
-            }
-        );
-        foreach (var value in PrivateValues.Split(' '))
-            Assert.DoesNotContain(value, string.Join(' ', logs.Messages), StringComparison.Ordinal);
-    }
-
     private static IHost CreateMetricsHost(
         RecordingSink sink,
         Dictionary<string, string?>? overrides = null,
-        IEmfEnvironmentFactory? factory = null,
+        Func<CancellationToken, IEnvironment>? factory = null,
         RecordingLogs? logs = null
     )
     {
@@ -412,8 +347,8 @@ public sealed class MetricsExporterTests
         }
         if (factory is null)
         {
-            factory = Substitute.For<IEmfEnvironmentFactory>();
-            factory.Create(Arg.Any<CancellationToken>()).Returns(new ControlledEnvironment(sink));
+            factory = Substitute.For<Func<CancellationToken, IEnvironment>>();
+            factory.Invoke(Arg.Any<CancellationToken>()).Returns(new ControlledEnvironment(sink));
         }
 
         return new HostBuilder()
@@ -499,26 +434,6 @@ public sealed class MetricsExporterTests
 
             return OnShutdown?.Invoke() ?? Task.CompletedTask;
         }
-    }
-
-    private sealed class ControlledSocket : ISocketClient
-    {
-        private int _sends;
-        public ConcurrentQueue<string> Documents { get; } = new();
-        public TaskCompletionSource Sending { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public async Task SendMessageAsync(string message)
-        {
-            if (Interlocked.Increment(ref _sends) == 1)
-                throw new InvalidOperationException(PrivateValues);
-            Sending.TrySetResult();
-            await Release.Task;
-            Documents.Enqueue(message);
-        }
-
-        public void Dispose() => Disposed.TrySetResult();
     }
 
     private sealed class RecordingLogs : ILoggerProvider, ILogger

@@ -3,6 +3,7 @@ using Amazon.CloudWatch.EMF.Environment;
 using Amazon.CloudWatch.EMF.Logger;
 using Amazon.CloudWatch.EMF.Model;
 using Amazon.CloudWatch.EMF.Sink;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Utils.Metrics;
@@ -10,8 +11,7 @@ namespace Defra.WasteObligations.Consumer.Utils.Metrics;
 public sealed class MetricsExporter(
     IMeterFactory meterFactory,
     IOptions<EmfOptions> options,
-    IEmfEnvironmentFactory environmentFactory,
-    EmfDiagnosticLoggerFactory sdkLoggerFactory,
+    Func<CancellationToken, IEnvironment> environmentFactory,
     ILogger<MetricsExporter> logger
 ) : IHostedService, IDisposable
 {
@@ -29,7 +29,7 @@ public sealed class MetricsExporter(
 
         try
         {
-            _environment = environmentFactory.Create(cancellationToken);
+            _environment = environmentFactory(cancellationToken);
             _sink = _environment.Sink;
             var meter = meterFactory.Create(Metrics.MeterName);
             _listener.InstrumentPublished = (instrument, listener) =>
@@ -74,7 +74,7 @@ public sealed class MetricsExporter(
                 {
                     DefaultDimensions = new DimensionSet(MetricTags.Service, Metrics.ServiceName),
                 };
-                using var metricsLogger = new MetricsLogger(_environment, context, sdkLoggerFactory);
+                using var metricsLogger = new MetricsLogger(_environment, context, NullLoggerFactory.Instance);
                 metricsLogger.SetNamespace(options.Value.EffectiveNamespace);
                 var dimensions = new DimensionSet(MetricTags.Service, Metrics.ServiceName);
                 foreach (var tag in tags)

@@ -154,8 +154,8 @@ conventions. Shared names and tag keys use PascalCase; counters use CloudWatch
 The only dimensions are the fixed Notifications `Service`, bounded
 `NotificationType` and fixed `Outcome`. A DI-owned CloudWatch EMF exporter starts
 before the command consumer and observes only its host's meter. It uses the Waste
-Obligations SDK/configuration mechanism without shared SDK configuration or
-platform-property decoration. One measurement emits one EMF document; optional
+Obligations SDK/configuration mechanism and SDK-owned process-wide environment
+cache, without platform-property decoration. One measurement emits one EMF document; optional
 agent log-group/stream routing is preserved outside metric dimensions.
 
 Export defaults to enabled and requires a configured namespace, except that
@@ -163,8 +163,9 @@ Export defaults to enabled and requires a configured namespace, except that
 namespace. Disabled export does not resolve an SDK environment. Local development
 and isolated tests disable it. Unknown-environment discovery uses bounded,
 cancellable startup metadata requests; delivery never fetches metadata. Export
-failures and full-buffer drops yield fixed sanitized diagnostics and do not affect
-command processing. Observation stops before sink shutdown; the host bounds its
+startup, serialization and shutdown failures yield fixed diagnostics and do not
+affect command processing. SDK internal diagnostics are disabled; full-buffer
+drops remain best effort. Observation stops before sink shutdown; the host bounds its
 wait, but the SDK's background worker has no cancellation API and may outlive that
 wait. Metrics are best effort. See the README for configuration and CDP routing.
 
