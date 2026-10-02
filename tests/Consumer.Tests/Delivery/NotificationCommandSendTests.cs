@@ -75,6 +75,100 @@ public sealed class NotificationCommandSendTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task WhenNotifyConfirmsAfterTimeoutLeaseBudgetOrShutdown_ShouldPreserveAcceptance(
+        bool expireLease,
+        bool shutdown
+    )
+    {
+        var sqs = Sqs();
+        var store = Store();
+        var notify = Notify();
+        var sending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recorded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        notify
+            .Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                sending.TrySetResult();
+                if (shutdown)
+                    await release.Task;
+                else
+                    await Task.Delay(expireLease ? 6100 : 1200, TestContext.Current.CancellationToken);
+                Assert.True(call.Arg<CancellationToken>().IsCancellationRequested);
+
+                return Acceptance();
+            });
+        store
+            .RecordAcceptance(
+                Arg.Any<NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<NotifyAcceptance>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(call =>
+            {
+                Assert.False(call.Arg<CancellationToken>().IsCancellationRequested);
+                recorded.TrySetResult();
+
+                return true;
+            });
+        sqs.DeleteMessageAsync(QueueUrl, "receipt", Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                Assert.True(recorded.Task.IsCompletedSuccessfully);
+                deleted.TrySetResult();
+
+                return new DeleteMessageResponse();
+            });
+        using var consumer = Consumer(
+            sqs,
+            store,
+            notify,
+            new RecordingLogger(),
+            new()
+            {
+                QueueUrl = QueueUrl,
+                ProcessingEnabled = true,
+                EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
+                EvidenceDigestSecret = "test-secret",
+                RecipientLaneSecret = "test-lane",
+                WaitTimeSeconds = 0,
+                ReceiveTimeoutSeconds = 1,
+                CommandLeaseSeconds = 5,
+                VisibilityTimeoutSeconds = 6,
+                ClaimTimeoutSeconds = 1,
+                NotifyTimeoutSeconds = 1,
+                AcceptanceTimeoutSeconds = 1,
+                DeleteTimeoutSeconds = 1,
+                SafetyHeadroomSeconds = 1,
+            }
+        );
+
+        await consumer.StartAsync(TestContext.Current.CancellationToken);
+        await sending.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        if (shutdown)
+        {
+            var stopping = consumer.StopAsync(TestContext.Current.CancellationToken);
+            release.TrySetResult();
+            await stopping;
+            Assert.True(recorded.Task.IsCompletedSuccessfully);
+        }
+        else
+        {
+            await deleted.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+            await consumer.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        await notify.Received(1).Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+        await sqs.Received(shutdown ? 0 : 1).DeleteMessageAsync(QueueUrl, "receipt", Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
     [InlineData(DeliveryClaimResult.ActiveClaim)]
     [InlineData(DeliveryClaimResult.Conflict)]
     [InlineData(DeliveryClaimResult.Unavailable)]

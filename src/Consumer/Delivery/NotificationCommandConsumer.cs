@@ -125,6 +125,7 @@ public sealed class NotificationCommandConsumer(
                 message.MessageId,
                 reference
             );
+        stoppingToken.ThrowIfCancellationRequested();
         await RunBounded(
             token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
             options.Value.DeleteTimeoutSeconds,
@@ -185,7 +186,8 @@ public sealed class NotificationCommandConsumer(
             acceptance = await RunBounded(
                 token => notifyClient.Send(command, reference, token),
                 options.Value.NotifyTimeoutSeconds,
-                stoppingToken
+                stoppingToken,
+                preserveCompletedResult: true
             );
             metrics.RecordSendAccepted(notificationType);
         }
@@ -198,24 +200,12 @@ public sealed class NotificationCommandConsumer(
         {
             metrics.RecordSendDuration(notificationType, Stopwatch.GetElapsedTime(sendStartedAt).TotalMilliseconds);
         }
-        EnsureRemaining(
-            claimStartedAt,
-            options.Value.CommandLeaseSeconds,
-            options.Value.AcceptanceTimeoutSeconds
-                + options.Value.DeleteTimeoutSeconds
-                + options.Value.SafetyHeadroomSeconds
-        );
-        EnsureRemaining(
-            receiveStartedAt,
-            options.Value.VisibilityTimeoutSeconds,
-            options.Value.AcceptanceTimeoutSeconds
-                + options.Value.DeleteTimeoutSeconds
-                + options.Value.SafetyHeadroomSeconds
-        );
+        // A confirmed send still needs durable evidence after timeout, lease expiry or shutdown.
+        // Mongo's owner and pending-outcome checks fence a replaced or terminal claim.
         var recorded = await RunBounded(
             token => store.RecordAcceptance(command, attemptOwner, acceptance, token),
             options.Value.AcceptanceTimeoutSeconds,
-            stoppingToken
+            CancellationToken.None
         );
         if (!recorded)
             throw new InvalidOperationException(
@@ -246,7 +236,8 @@ public sealed class NotificationCommandConsumer(
     private static async Task<T> RunBounded<T>(
         Func<CancellationToken, Task<T>> operation,
         int timeoutSeconds,
-        CancellationToken stoppingToken
+        CancellationToken stoppingToken,
+        bool preserveCompletedResult = false
     )
     {
         using var source = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -255,9 +246,12 @@ public sealed class NotificationCommandConsumer(
         try
         {
             var result = await operation(source.Token);
-            stoppingToken.ThrowIfCancellationRequested();
-            if (Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(timeoutSeconds))
-                throw new TimeoutException("Notification command dependency exceeded its configured timeout.");
+            if (!preserveCompletedResult)
+            {
+                stoppingToken.ThrowIfCancellationRequested();
+                if (Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(timeoutSeconds))
+                    throw new TimeoutException("Notification command dependency exceeded its configured timeout.");
+            }
 
             return result;
         }

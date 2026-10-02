@@ -126,7 +126,9 @@ cover claim plus send, persistence, deletion and headroom, and visibility to cov
 that budget plus the conservative 30-second receive bound: 120 seconds in total.
 The receive and claim clocks start before their dependency requests; late
 confirmations cannot start a send. Mongo uses its own clock for claim expiry and
-owner checks when acceptance is recorded. Failed or indeterminate sends retain
+owner and pending-outcome checks when acceptance is recorded. Confirmed acceptance
+is always persisted with its own bounded token, even if the send timeout, lease
+or shutdown cancellation has elapsed; a replaced owner cannot overwrite evidence. Failed or indeterminate sends retain
 the claim until expiry; the service does not release it early.
 
 These values are initial estimates. Measure dependency latency and validate the

@@ -720,7 +720,7 @@ public sealed class NotifyEmailClientTests
     }
 
     [Fact]
-    public async Task WhenCancelledRequestReturnsLate201_ShouldRejectAndDisposeInsteadOfAccepting()
+    public async Task WhenCancelledRequestReturnsCompleteLate201_ShouldRetainAcceptanceAndDispose()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -752,10 +752,9 @@ public sealed class NotifyEmailClientTests
             release.TrySetResult();
         }
 
-        var failure = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sending);
+        var acceptance = await sending;
 
-        Assert.Equal(source.Token, failure.CancellationToken);
-        Assert.Null(failure.InnerException);
+        Assert.True(acceptance.Matches(Command(), Reference));
         Assert.True(content.WasDisposed);
     }
 

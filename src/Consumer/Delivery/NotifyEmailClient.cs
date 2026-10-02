@@ -58,7 +58,6 @@ public sealed class NotifyEmailClient(
                     ),
                 cancellationToken
             );
-            cancellationToken.ThrowIfCancellationRequested();
             var acceptance = new NotifyAcceptance(
                 response?.id ?? "",
                 response?.reference ?? "",

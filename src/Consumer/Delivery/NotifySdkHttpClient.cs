@@ -49,7 +49,6 @@ public sealed class NotifySdkHttpClient : IHttpClient
             request.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
         // Buffer with the operation token before the SDK's non-cancellable response read.
         _response = await _client.SendAsync(request, HttpCompletionOption.ResponseContentRead, _cancellationToken);
-        _cancellationToken.ThrowIfCancellationRequested();
         if (_response.StatusCode != _expectedStatus)
             throw new InvalidOperationException("Notify operation did not confirm its expected result.");
 

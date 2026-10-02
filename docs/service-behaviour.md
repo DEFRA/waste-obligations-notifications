@@ -91,8 +91,8 @@ original recipient-lane position.
 - Claim a post-cutover command atomically using the unique notification-key
   index, matching immutable digest, fresh attempt owner, and Mongo's expiry
   clock. Active claims cannot send again; expired claims permit one new owner.
-  Acceptance updates require the same owner and an unexpired lease using Mongo's
-  clock. Accepted evidence includes the opaque versioned HMAC Notify reference,
+  Acceptance updates require the same owner and a pending outcome, even after
+  lease expiry. Accepted evidence includes the opaque versioned HMAC Notify reference,
   template ID/version, Notify notification ID, correlation digests, and timestamps.
 - Make one Notify request per claim with no HTTP retry or redirect. Normalize the
   recipient for the request. Require `201 Created` and consistent minimal
@@ -115,7 +115,10 @@ original recipient-lane position.
 - A Notify timeout, lost response, crash, or failed acceptance write does not prove
   rejection. Queue retry after expiry may send a duplicate email. An already
   in-flight request can outlive ownership during a process stall; Mongo rejects
-  stale acceptance. No Notify-reference reconciliation is implemented. Queue
+  acceptance from a replaced owner or terminal claim. A complete, valid Notify
+  acceptance is persisted with a fresh bounded token even after send timeout,
+  ownership-budget expiry or shutdown; it is never discarded just for lateness.
+  No Notify-reference reconciliation is implemented. Queue
   deletion failure after durable acceptance retries as a terminal duplicate.
 - Compare the immutable UTC business-action timestamp with the deployment-owned
   cutover value. Both configured cutover and serialized action timestamps must

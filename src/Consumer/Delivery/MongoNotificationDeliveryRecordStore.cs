@@ -183,7 +183,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { "immutableFields", _digest.CreateImmutableFieldsDigest(command) },
             { "attemptOwner", attemptOwner },
             { OutcomeField, "delivery-pending" },
-            { "$expr", new BsonDocument("$gt", new BsonArray { "$leaseExpiresAtUtc", ServerNow }) },
         };
         var fields = new BsonDocument
         {
