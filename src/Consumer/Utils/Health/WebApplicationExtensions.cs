@@ -15,6 +15,21 @@ public static class WebApplicationExtensions
     public const string Ready = "ready";
     public const string Extended = "extended";
 
+    private static async Task WriteStartupResponse(HttpContext context, HealthReport report)
+    {
+        await context.Response.WriteAsync(report.Status.ToString(), context.RequestAborted);
+        if (report.Status == HealthStatus.Healthy)
+        {
+            context.Response.OnCompleted(() =>
+            {
+                if (!context.RequestAborted.IsCancellationRequested)
+                    context.RequestServices.GetRequiredService<ApplicationStartup>().MarkStarted();
+
+                return Task.CompletedTask;
+            });
+        }
+    }
+
     public static void MapHealth(this WebApplication app)
     {
         app.MapHealthChecks(
@@ -22,20 +37,7 @@ public static class WebApplicationExtensions
                 new HealthCheckOptions
                 {
                     Predicate = healthCheck => healthCheck.Tags.Contains(Ready),
-                    ResponseWriter = async (context, report) =>
-                    {
-                        await context.Response.WriteAsync(report.Status.ToString(), context.RequestAborted);
-                        if (report.Status == HealthStatus.Healthy)
-                        {
-                            context.Response.OnCompleted(() =>
-                            {
-                                if (!context.RequestAborted.IsCancellationRequested)
-                                    context.RequestServices.GetRequiredService<ApplicationStartup>().MarkStarted();
-
-                                return Task.CompletedTask;
-                            });
-                        }
-                    },
+                    ResponseWriter = WriteStartupResponse,
                 }
             )
             .AllowAnonymous();

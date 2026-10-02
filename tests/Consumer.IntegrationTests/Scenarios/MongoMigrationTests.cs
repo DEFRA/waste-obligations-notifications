@@ -64,8 +64,8 @@ public sealed class MongoMigrationTests : IntegrationTestBase
                 .GetCollection<BsonDocument>("_migrations")
                 .Find(FilterDefinition<BsonDocument>.Empty)
                 .ToListAsync(token);
-            Assert.Single(history);
-            Assert.Equal("1.0.0", history[0]["v"].AsString);
+            var appliedMigration = Assert.Single(history);
+            Assert.Equal("1.0.0", appliedMigration["v"].AsString);
             Assert.False(new OptionalStartupFixtureMigration().Critical);
         }
         finally
