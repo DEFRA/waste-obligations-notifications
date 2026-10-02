@@ -33,6 +33,10 @@ public sealed class BasicAuthenticationTests
     [InlineData("missing-colon", 401)]
     [InlineData("unknown-client", 401)]
     [InlineData("wrong-secret", 401)]
+    [InlineData("same-length-secret", 401)]
+    [InlineData("short-secret", 401)]
+    [InlineData("long-secret", 401)]
+    [InlineData("normalized-secret", 401)]
     [InlineData("multiple", 401)]
     [InlineData("bearer", 401)]
     [InlineData("oauth", 401)]
@@ -57,6 +61,10 @@ public sealed class BasicAuthenticationTests
             "missing-colon" => [Basic("admin")],
             "unknown-client" => [Basic($"unknown:{Secret}")],
             "wrong-secret" => [Basic("admin:wrong-private-secret")],
+            "same-length-secret" => [Basic("admin:private-päss:secreu")],
+            "short-secret" => [Basic($"admin:{Secret[..^1]}")],
+            "long-secret" => [Basic($"admin:{Secret}x")],
+            "normalized-secret" => [Basic("admin:private-pa\u0308ss:secret")],
             "multiple" => [Basic($"admin:{Secret}"), Basic($"admin:{Secret}")],
             "bearer" => [$"Bearer {Convert.ToBase64String(Encoding.UTF8.GetBytes($"admin:{Secret}"))}"],
             _ => [Basic($"{condition}:{Secret}")],
@@ -116,6 +124,30 @@ public sealed class BasicAuthenticationTests
         Assert.All(fixture.Logs.Messages, message => Assert.DoesNotContain(Secret, message, StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task WhenConfiguredSecretIsInvalidUtf8_ShouldDenyWithoutReplacingInvalidText()
+    {
+        await using var fixture = await AuthenticationFixture.Create("\ud800-private-secret");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/admin/authentication-probe");
+        request.Headers.TryAddWithoutValidation("Authorization", Basic("admin:\ufffd-private-secret"));
+
+        using var response = await fixture.Client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(0, fixture.EndpointCalls);
+        Assert.Empty(fixture.Sqs.ReceivedCalls());
+        Assert.Empty(fixture.Store.ReceivedCalls());
+        Assert.DoesNotContain(
+            "private-secret",
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken),
+            StringComparison.Ordinal
+        );
+        Assert.All(
+            fixture.Logs.Messages,
+            message => Assert.DoesNotContain("private-secret", message, StringComparison.Ordinal)
+        );
+    }
+
     private static string Basic(string credentials) =>
         $"Basic {Convert.ToBase64String(Encoding.UTF8.GetBytes(credentials))}";
 
@@ -135,7 +167,7 @@ public sealed class BasicAuthenticationTests
         public RecordingLogs Logs { get; } = logs;
         public int EndpointCalls { get; private set; }
 
-        public static async Task<AuthenticationFixture> Create()
+        public static async Task<AuthenticationFixture> Create(string adminSecret = Secret)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
             builder.WebHost.UseTestServer();
@@ -144,7 +176,7 @@ public sealed class BasicAuthenticationTests
                 {
                     ["CommandDlqAdministration:Enabled"] = "true",
                     ["Acl:Clients:admin:Type"] = "ApiKey",
-                    ["Acl:Clients:admin:Secret"] = Secret,
+                    ["Acl:Clients:admin:Secret"] = adminSecret,
                     ["Acl:Clients:admin:Scopes:0"] = "admin",
                     ["Acl:Clients:admin:Scopes:1"] = "read",
                     ["Acl:Clients:read:Type"] = "ApiKey",

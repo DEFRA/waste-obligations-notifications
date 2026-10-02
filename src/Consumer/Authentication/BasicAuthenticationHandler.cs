@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
@@ -48,7 +49,7 @@ public sealed class BasicAuthenticationHandler(
         if (
             !aclOptions.Value.Clients.TryGetValue(clientId, out var client)
             || client is not { Type: ClientType.ApiKey }
-            || client.Secret != secret
+            || !SecretMatches(client.Secret, secret)
         )
             return Fail();
         var claims = new List<Claim> { new(ClaimTypes.Name, clientId), new(Claims.ClientId, clientId) };
@@ -57,6 +58,24 @@ public sealed class BasicAuthenticationHandler(
         var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name);
 
         return Task.FromResult(AuthenticateResult.Success(ticket));
+    }
+
+    private static bool SecretMatches(string? expected, string supplied)
+    {
+        if (expected is null)
+            return false;
+        try
+        {
+            // Fixed-size digests keep differing secret lengths on the same comparison path.
+            return CryptographicOperations.FixedTimeEquals(
+                SHA256.HashData(s_utf8.GetBytes(expected)),
+                SHA256.HashData(s_utf8.GetBytes(supplied))
+            );
+        }
+        catch (EncoderFallbackException)
+        {
+            return false;
+        }
     }
 
     private static Task<AuthenticateResult> NoResult() => Task.FromResult(AuthenticateResult.NoResult());
