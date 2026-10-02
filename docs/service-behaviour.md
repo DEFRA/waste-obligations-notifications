@@ -60,7 +60,10 @@ restore a command's original recipient-lane position.
   the key to fit the queue constraints.
 - Run versioned Mongo migrations under a renewable exclusive lease when command
   processing is enabled. Critical migrations gate `/health`; migration 001 is
-  critical because its unique notification-key index enforces idempotency.
+  critical because its full unique notification-key index enforces idempotency.
+  Require the build to complete before recording history or readiness; catalog
+  presence alone is insufficient. Reject incompatible existing definitions without
+  dropping them. Matching completed hidden indexes satisfy the prerequisite.
   Confirm applied critical history and the latest critical schema once at
   startup. Both consumers await the first successful anonymous health response
   through a shared hosting boundary. Stores have no completion dependency.

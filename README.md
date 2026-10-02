@@ -105,6 +105,10 @@ local Compose values do not configure deployed environments.
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
+A critical index must have completed building, not merely appear in the catalog.
+Incompatible existing definitions are rejected without dropping them. A retry
+confirms an unfinished matching build before saving migration history; completed
+hidden indexes remain valid.
 Each host confirms critical history and the latest critical migration's schema
 before `/health` can succeed. Both consumers start only after the first successful
 health response. Record stores do not wait on migrations. A peer can establish

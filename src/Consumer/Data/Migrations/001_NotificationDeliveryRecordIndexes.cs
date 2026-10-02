@@ -24,7 +24,8 @@ public sealed class NotificationDeliveryRecordIndexes : MongoMigration
             MongoNotificationDeliveryRecordStore.CollectionName,
             NotificationKeyIndexName,
             Builders<NotificationDeliveryRecord>.IndexKeys.Ascending(record => record.NotificationKey),
-            unique: true
+            unique: true,
+            replaceExisting: false
         );
 
     public override Task DownAsync(MigrationContext context) =>
@@ -49,6 +50,11 @@ public sealed class NotificationDeliveryRecordIndexes : MongoMigration
         )
             return false;
 
-        return true;
+        return await HasCompletedIndex(
+            database,
+            MongoNotificationDeliveryRecordStore.CollectionName,
+            NotificationKeyIndexName,
+            cancellationToken
+        );
     }
 }

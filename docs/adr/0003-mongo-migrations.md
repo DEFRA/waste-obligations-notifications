@@ -17,7 +17,11 @@ Use the same AdaskoTheBeAsT.MongoDbMigrations engine, renewable Mongo lease,
 retry policy and attempt timeouts as Waste Obligations. Run migrations in a
 background service when command processing is enabled. Migration 001 creates
 `notificationKey_unique` on `NotificationDeliveryRecord` and retains an
-existing matching index. Migration 001 is explicitly critical. Migration flags
+existing matching index.
+A critical index must have completed building, not merely appear in the catalog.
+Incompatible existing definitions are rejected without dropping them. A retry
+confirms an unfinished matching build before saving migration history; completed
+hidden indexes remain valid. Migration 001 is explicitly critical. Migration flags
 are non-critical by default: optional performance changes do not determine
 whether a host can enter service. The runner establishes critical prerequisites
 before continuing later optional work under the same lease. Each critical

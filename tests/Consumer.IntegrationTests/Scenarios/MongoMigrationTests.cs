@@ -177,8 +177,11 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         }
     }
 
-    [Fact]
-    public async Task WhenRequiredIndexIsPartial_ShouldRejectMigrationAndPreserveExistingIndex()
+    [Theory]
+    [InlineData("partial")]
+    [InlineData("wrong-key")]
+    [InlineData("non-unique")]
+    public async Task WhenRequiredIndexIsIncompatible_ShouldRejectMigrationAndPreserveExistingIndex(string invalidIndex)
     {
         using var client = CreateMongoClient();
         var databaseName = $"notifications_partial_index_{Guid.NewGuid():N}";
@@ -192,15 +195,24 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         {
             await records.Indexes.CreateOneAsync(
                 new CreateIndexModel<BsonDocument>(
-                    Builders<BsonDocument>.IndexKeys.Ascending("notificationKey"),
+                    Builders<BsonDocument>.IndexKeys.Ascending(
+                        invalidIndex == "wrong-key" ? "wrongField" : "notificationKey"
+                    ),
                     new CreateIndexOptions<BsonDocument>
                     {
                         Name = "notificationKey_unique",
-                        Unique = true,
-                        PartialFilterExpression = new BsonDocument("outcome", "delivery-accepted"),
+                        Unique = invalidIndex != "non-unique",
+                        PartialFilterExpression =
+                            invalidIndex == "partial" ? new BsonDocument("outcome", "delivery-accepted") : null,
                     }
                 ),
                 cancellationToken: token
+            );
+
+            using var beforeCursor = await records.Indexes.ListAsync(token);
+            var before = Assert.Single(
+                await beforeCursor.ToListAsync(token),
+                index => index["name"] == "notificationKey_unique"
             );
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => runner.Run(token));
@@ -212,7 +224,7 @@ public sealed class MongoMigrationTests : IntegrationTestBase
                 await cursor.ToListAsync(token),
                 index => index["name"] == "notificationKey_unique"
             );
-            Assert.Equal(new BsonDocument("outcome", "delivery-accepted"), index["partialFilterExpression"]);
+            Assert.Equal(before, index);
             Assert.Equal(
                 0,
                 await database
@@ -299,12 +311,12 @@ public sealed class MongoMigrationTests : IntegrationTestBase
                 ),
                 cancellationToken: cancellationToken
             );
-            await migration.UpAsync(context);
-            using var repairedCursor = await records.Indexes.ListAsync(cancellationToken);
-            var repairedIndexes = await repairedCursor.ToListAsync(cancellationToken);
-            var repairedIndex = Assert.Single(repairedIndexes, item => item["name"] == "notificationKey_unique");
-            Assert.True(repairedIndex["unique"].AsBoolean);
-            Assert.Equal(new BsonDocument("notificationKey", 1), repairedIndex["key"].AsBsonDocument);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => migration.UpAsync(context));
+            using var preservedCursor = await records.Indexes.ListAsync(cancellationToken);
+            var preservedIndexes = await preservedCursor.ToListAsync(cancellationToken);
+            var preservedIndex = Assert.Single(preservedIndexes, item => item["name"] == "notificationKey_unique");
+            Assert.False(preservedIndex.GetValue("unique", false).AsBoolean);
+            Assert.Equal(new BsonDocument("wrongField", 1), preservedIndex["key"].AsBsonDocument);
         }
         finally
         {

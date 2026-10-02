@@ -23,15 +23,17 @@ public abstract class MongoMigration : IMigration
         MigrationContext context,
         string name,
         IndexKeysDefinition<T> keys,
-        bool unique = false
-    ) => await CreateIndex(context, typeof(T).Name, name, keys, unique);
+        bool unique = false,
+        bool replaceExisting = true
+    ) => await CreateIndex(context, typeof(T).Name, name, keys, unique, replaceExisting);
 
     protected static async Task CreateIndex<T>(
         MigrationContext context,
         string collectionName,
         string name,
         IndexKeysDefinition<T> keys,
-        bool unique = false
+        bool unique = false,
+        bool replaceExisting = true
     )
     {
         var collection = context.Database.GetCollection<T>(collectionName);
@@ -61,8 +63,32 @@ public abstract class MongoMigration : IMigration
 
                 if (existingKeys.Equals(requestedKeys) && existingUnique == unique)
                 {
+                    if (!await HasCompletedIndex(context.Database, collectionName, name, context.CancellationToken))
+                    {
+                        // Client cancellation does not stop a server build. Reissue its exact spec and await completion.
+                        var existingSpec = existingByName.DeepClone().AsBsonDocument;
+                        existingSpec.Remove("ns");
+                        existingSpec.Remove("v");
+                        await context.Database.RunCommandAsync<BsonDocument>(
+                            new BsonDocument
+                            {
+                                { "createIndexes", collectionName },
+                                {
+                                    "indexes",
+                                    new BsonArray { existingSpec }
+                                },
+                            },
+                            cancellationToken: context.CancellationToken
+                        );
+                    }
+
                     return;
                 }
+
+                if (!replaceExisting)
+                    throw new InvalidOperationException(
+                        "An existing index conflicts with the required critical index."
+                    );
 
                 await DropIndex(context, name, collection);
             }
@@ -79,6 +105,23 @@ public abstract class MongoMigration : IMigration
         );
 
         await collection.Indexes.CreateOneAsync(indexModel, cancellationToken: context.CancellationToken);
+    }
+
+    protected static async Task<bool> HasCompletedIndex(
+        IMongoDatabase database,
+        string collectionName,
+        string name,
+        CancellationToken cancellationToken
+    )
+    {
+        var stats = await database.RunCommandAsync<BsonDocument>(
+            new BsonDocument("collStats", collectionName),
+            cancellationToken: cancellationToken
+        );
+
+        return stats.TryGetValue("indexBuilds", out var builds)
+            && builds.IsBsonArray
+            && !builds.AsBsonArray.Contains(name);
     }
 
     protected static async Task DropIndex<T>(MigrationContext context, string name)
