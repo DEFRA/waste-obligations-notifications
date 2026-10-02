@@ -3,6 +3,7 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -83,6 +84,7 @@ public sealed class NotificationCommandStartupTests
         );
 
         await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ApplicationStartup>().MarkStarted();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await host.StopAsync(TestContext.Current.CancellationToken);
 
@@ -105,6 +107,7 @@ public sealed class NotificationCommandStartupTests
         using var host = CreateHost(sqs, Substitute.For<ILogger>(), true, jsonNullCutover: true);
 
         await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ApplicationStartup>().MarkStarted();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.Null(
             host.Services.GetRequiredService<
@@ -169,7 +172,7 @@ public sealed class NotificationCommandStartupTests
         var readiness = new MongoMigrationCompletion();
         readiness.MarkCompleted();
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(true);
 
         return new HostBuilder()
             .ConfigureAppConfiguration(configuration =>

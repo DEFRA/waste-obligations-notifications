@@ -11,7 +11,7 @@ public sealed class MongoMigrationCompletionHealthCheck(MongoMigrationCompletion
     ) =>
         Task.FromResult(
             completion.IsCompleted
-                ? HealthCheckResult.Healthy("Mongo migrations completed.")
-                : HealthCheckResult.Unhealthy("Mongo migrations have not completed.")
+                ? HealthCheckResult.Healthy("Critical Mongo migrations completed.")
+                : HealthCheckResult.Unhealthy("Critical Mongo migrations have not completed.")
         );
 }

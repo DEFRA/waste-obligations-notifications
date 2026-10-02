@@ -17,19 +17,21 @@ Use the same AdaskoTheBeAsT.MongoDbMigrations engine, renewable Mongo lease,
 retry policy and attempt timeouts as Waste Obligations. Run migrations in a
 background service when command processing is enabled. Migration 001 creates
 `notificationKey_unique` on `NotificationDeliveryRecord` and retains an
-existing matching index. Each host checks the latest applied migration version
-and asks that migration to validate the current schema before receiving commands
-from SQS. Migration 001 validates its unique notification-key index. Every new
-migration explicitly defines the complete schema checks its application version
-needs; the generic runner does not retain obsolete index requirements.
+existing matching index. Migration 001 is explicitly critical. Migration flags
+are non-critical by default: optional performance changes do not determine
+whether a host can enter service. The runner establishes critical prerequisites
+before continuing later optional work under the same lease. Each critical
+version must have applied history; the latest critical migration validates the
+current schema so future critical changes can replace earlier index requirements.
 
-`MongoMigrationCompletion` is a one-time application startup signal. The command
-consumer waits once before its first receive. Delivery stores have no dependency
-on migration completion and perform no repeated startup waits. This is not an
-ongoing schema watchdog: manual index removal after completion is outside this
-protection. A host can observe another host's
-successful migration without acquiring the lease itself. Analytics consumption
-and `/health` do not depend on migrations.
+`MongoMigrationCompletion` records critical startup readiness once. `/health`
+returns 503 until it is established. After its first successful response completes,
+the shared application-startup boundary releases analytics and command consumers.
+HTTP starts before this boundary so CDP can probe it. Migration work, logging and
+metrics start before readiness; stores and business operations have no migration
+checks. Extended or authorised health requests do not release consumers. A peer
+can establish the prerequisite without this host acquiring the lease. This
+replaces the former independent-analytics/liveness startup contract.
 
 ## Consequences
 
@@ -82,9 +84,21 @@ before entity mapping. Lease documents therefore use `owner` and `expiresAt`;
 existing documents using `Owner` and `ExpiresAt` must be reconciled with all
 command-processing hosts stopped before rollout.
 
-Migration completion is reported by the `MongoMigrationCompletion` entry in
-`/health/all` while command processing is enabled. Until completion that endpoint
-returns 503, while `/health` and analytics remain available. If every host
-exhausts its migration attempts, repair the migration problem and restart a host
-to retry; hosts continue observing completion by a peer meanwhile. This check
-reads the startup signal and performs no schema or index queries.
+Critical migration completion is reported by the `MongoMigrationCompletion`
+entry in `/health/all` and gates `/health` while command processing is enabled.
+Migration 001 is flagged `Critical = true`; migrations default to non-critical.
+An absent or invalid critical prerequisite returns 503, including when another
+host owns the lease or every host exhausts its attempts. Already-applied critical
+migrations satisfy readiness without being rerun. Non-critical failures do not
+block readiness. The latest critical migration owns the current schema validation;
+older critical history remains required without retaining obsolete schema checks.
+
+HTTP and migration work start first. Both consumers wait through a shared hosting
+boundary until this host completes its first successful anonymous `/health`
+response. `/health/all` and `/health/authorized` do not release that boundary.
+Stores and business operations have no migration checks. Health reads a latched
+startup result and performs no Mongo queries; later dependency outages are
+reported by extended health. CDP controls replacement of hosts that remain
+unhealthy. Long critical migrations must fit the actual platform startup budget
+or be applied before rollout; the documented 95 seconds is not an overall
+deployment deadline. Metrics and startup logging remain available for diagnosis.

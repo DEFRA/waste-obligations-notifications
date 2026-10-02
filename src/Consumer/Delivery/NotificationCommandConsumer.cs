@@ -1,7 +1,7 @@
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
-using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
@@ -10,12 +10,12 @@ public sealed class NotificationCommandConsumer(
     IAmazonSQS sqsClient,
     IOptions<NotificationCommandDeliveryOptions> options,
     INotificationDeliveryRecordStoreFactory recordStoreFactory,
-    MongoMigrationCompletion migrationCompletion,
+    ApplicationStartup startup,
     NotificationCommandMetrics metrics,
     ILogger<NotificationCommandConsumer> logger
-) : BackgroundService
+) : StartupBackgroundService(startup)
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAfterStartup(CancellationToken stoppingToken)
     {
         if (!options.Value.ProcessingEnabled)
         {
@@ -26,7 +26,6 @@ public sealed class NotificationCommandConsumer(
         }
 
         var cutover = ReadCutover();
-        await migrationCompletion.Wait(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {

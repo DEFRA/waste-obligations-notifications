@@ -7,6 +7,8 @@ namespace Defra.WasteObligations.Consumer.Data.Migrations;
 
 public abstract class MongoMigration : IMigration
 {
+    public virtual bool Critical => false;
+
     public abstract MigrationVersion Version { get; }
 
     public abstract string Name { get; }

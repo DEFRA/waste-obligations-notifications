@@ -1,6 +1,9 @@
 using AdaskoTheBeAsT.MongoDbMigrations.Abstractions;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Data.Migrations;
+using Defra.WasteObligations.Consumer.IntegrationTests.Fixtures;
+using Defra.WasteObligations.Consumer.Utils.Health;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -9,6 +12,80 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
 public sealed class MongoMigrationTests : IntegrationTestBase
 {
+    [Fact]
+    public async Task WhenOptionalMigrationFails_ShouldRetainCriticalReadinessOnThisAndAnotherHost()
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_optional_test_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var token = TestContext.Current.CancellationToken;
+        var completion = new MongoMigrationCompletion();
+        var runner = new MongoMigrationRunner(
+            database,
+            NullLogger<MongoMigrationRunner>.Instance,
+            completion,
+            typeof(CriticalStartupFixtureMigration).Assembly
+        );
+        Task? attempt = null;
+        var control = database.GetCollection<BsonDocument>("startup_fixture");
+        try
+        {
+            Assert.False(await runner.CheckCompletion(token));
+            Assert.False(completion.IsCompleted);
+            await control.InsertOneAsync(new BsonDocument("_id", "hold-optional"), cancellationToken: token);
+            attempt = runner.Run(token);
+            await WaitForAsync(() =>
+            {
+                Assert.True(completion.IsCompleted);
+                Assert.False(attempt.IsCompleted);
+
+                return Task.CompletedTask;
+            });
+            Assert.False(await runner.CheckCompletion(token));
+            var healthCheck = new MongoMigrationCompletionHealthCheck(completion);
+            var health = await healthCheck.CheckHealthAsync(new HealthCheckContext(), token);
+            Assert.Equal(HealthStatus.Healthy, health.Status);
+            var peerCompletion = new MongoMigrationCompletion();
+            var peer = new MongoMigrationRunner(
+                database,
+                NullLogger<MongoMigrationRunner>.Instance,
+                peerCompletion,
+                typeof(CriticalStartupFixtureMigration).Assembly
+            );
+            Assert.False(await peer.CheckCompletion(token));
+            Assert.True(peerCompletion.IsCompleted);
+            await control.DeleteOneAsync(new BsonDocument("_id", "hold-optional"), token);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => attempt);
+            Assert.Equal(
+                HealthStatus.Healthy,
+                (await healthCheck.CheckHealthAsync(new HealthCheckContext(), token)).Status
+            );
+            var history = await database
+                .GetCollection<BsonDocument>("_migrations")
+                .Find(FilterDefinition<BsonDocument>.Empty)
+                .ToListAsync(token);
+            Assert.Single(history);
+            Assert.Equal("1.0.0", history[0]["v"].AsString);
+            Assert.False(new OptionalStartupFixtureMigration().Critical);
+        }
+        finally
+        {
+            await control.DeleteManyAsync(FilterDefinition<BsonDocument>.Empty, CancellationToken.None);
+            if (attempt is not null)
+            {
+                try
+                {
+                    await attempt;
+                }
+                catch (InvalidOperationException)
+                {
+                    // The fixture deliberately rejects optional work.
+                }
+            }
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
     [Fact]
     public async Task WhenAnotherHostAppliesMigration_ShouldCompleteReadinessWithoutRunningMigration()
     {
@@ -22,7 +99,6 @@ public sealed class MongoMigrationTests : IntegrationTestBase
             NullLogger<MongoMigrationRunner>.Instance,
             waitingReadiness
         );
-        var waiting = waitingReadiness.Wait(cancellationToken);
         var migratingRunner = new MongoMigrationRunner(
             database,
             NullLogger<MongoMigrationRunner>.Instance,
@@ -31,16 +107,16 @@ public sealed class MongoMigrationTests : IntegrationTestBase
 
         try
         {
-            Assert.False(await waitingRunner.CheckReadiness(cancellationToken));
+            Assert.False(await waitingRunner.CheckCompletion(cancellationToken));
             var migration = new NotificationDeliveryRecordIndexes();
             await migration.UpAsync(new MigrationContext(database, null!, cancellationToken));
-            Assert.False(await waitingRunner.CheckReadiness(cancellationToken));
-            Assert.False(waiting.IsCompleted);
+            Assert.False(await waitingRunner.CheckCompletion(cancellationToken));
+            Assert.False(waitingReadiness.IsCompleted);
 
             await migratingRunner.Run(cancellationToken);
 
-            Assert.True(await waitingRunner.CheckReadiness(cancellationToken));
-            await waiting;
+            Assert.True(await waitingRunner.CheckCompletion(cancellationToken));
+            Assert.True(waitingReadiness.IsCompleted);
         }
         finally
         {
@@ -88,8 +164,8 @@ public sealed class MongoMigrationTests : IntegrationTestBase
             var readiness = new MongoMigrationCompletion();
             var runner = new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, readiness);
 
-            Assert.False(await runner.CheckReadiness(cancellationToken));
-            Assert.False(readiness.Wait(cancellationToken).IsCompleted);
+            Assert.False(await runner.CheckCompletion(cancellationToken));
+            Assert.False(readiness.IsCompleted);
             await Assert.ThrowsAsync<InvalidOperationException>(() => runner.Run(cancellationToken));
         }
         finally
@@ -139,7 +215,7 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         try
         {
             await runner.Run(cancellationToken);
-            await readiness.Wait(cancellationToken);
+            Assert.True(readiness.IsCompleted);
             await runner.Run(cancellationToken);
             var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
             using var cursor = await records.Indexes.ListAsync(cancellationToken);

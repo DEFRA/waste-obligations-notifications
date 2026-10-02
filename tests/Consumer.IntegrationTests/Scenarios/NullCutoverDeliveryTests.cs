@@ -1,6 +1,7 @@
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -32,6 +33,8 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
         try
         {
             await new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, readiness).Run(token);
+            var startup = new ApplicationStartup();
+            startup.MarkStarted();
             var settings = new NotificationCommandDeliveryOptions
             {
                 ProcessingEnabled = true,
@@ -58,7 +61,7 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
                     sqs,
                     Options.Create(settings with { EmailDeliveryCutoverUtc = cutover }),
                     new NotificationDeliveryRecordStoreFactory(services),
-                    readiness,
+                    startup,
                     new NotificationCommandMetrics(),
                     NullLogger<NotificationCommandConsumer>.Instance
                 );

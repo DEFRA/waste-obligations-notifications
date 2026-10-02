@@ -6,6 +6,7 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -314,9 +315,9 @@ public class NotificationCommandConsumerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Start_WhenMigrationsAreIncomplete_ShouldWaitBeforeReceivingCommands(bool completeMigrations)
+    public async Task Start_WhenApplicationHasNotStarted_ShouldWaitBeforeReceivingCommands(bool startApplication)
     {
-        var readiness = new MongoMigrationCompletion();
+        var readiness = new ApplicationStartup();
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
@@ -338,14 +339,14 @@ public class NotificationCommandConsumerTests
         await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
         Assert.False(received.Task.IsCompleted);
 
-        if (completeMigrations)
+        if (startApplication)
         {
-            readiness.MarkCompleted();
+            readiness.MarkStarted();
             await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         }
 
         await subject.StopAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(completeMigrations, received.Task.IsCompleted);
+        Assert.Equal(startApplication, received.Task.IsCompleted);
     }
 
     [Fact]
@@ -539,7 +540,7 @@ public class NotificationCommandConsumerTests
         IAmazonSQS sqsClient,
         INotificationDeliveryRecordStore recordStore,
         ILogger<NotificationCommandConsumer>? logger = null,
-        MongoMigrationCompletion? readiness = null,
+        ApplicationStartup? readiness = null,
         int pollIntervalSeconds = 1,
         int receiveTimeoutSeconds = 30,
         string? cutover = "2026-09-29T00:00:00Z"
@@ -565,10 +566,10 @@ public class NotificationCommandConsumerTests
             logger ?? new RecordingLogger<NotificationCommandConsumer>()
         );
 
-    private static MongoMigrationCompletion CompletedReadiness()
+    private static ApplicationStartup CompletedReadiness()
     {
-        var readiness = new MongoMigrationCompletion();
-        readiness.MarkCompleted();
+        var readiness = new ApplicationStartup();
+        readiness.MarkStarted();
 
         return readiness;
     }

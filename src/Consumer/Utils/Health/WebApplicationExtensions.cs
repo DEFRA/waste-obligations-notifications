@@ -1,7 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Defra.WasteObligations.Consumer.Utils.Health;
 
@@ -17,7 +19,24 @@ public static class WebApplicationExtensions
     {
         app.MapHealthChecks(
                 "/health",
-                new HealthCheckOptions { Predicate = healthCheck => healthCheck.Tags.Contains(Ready) }
+                new HealthCheckOptions
+                {
+                    Predicate = healthCheck => healthCheck.Tags.Contains(Ready),
+                    ResponseWriter = async (context, report) =>
+                    {
+                        await context.Response.WriteAsync(report.Status.ToString(), context.RequestAborted);
+                        if (report.Status == HealthStatus.Healthy)
+                        {
+                            context.Response.OnCompleted(() =>
+                            {
+                                if (!context.RequestAborted.IsCancellationRequested)
+                                    context.RequestServices.GetRequiredService<ApplicationStartup>().MarkStarted();
+
+                                return Task.CompletedTask;
+                            });
+                        }
+                    },
+                }
             )
             .AllowAnonymous();
 

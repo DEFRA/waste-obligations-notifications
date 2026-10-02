@@ -99,13 +99,10 @@ local Compose values do not configure deployed environments.
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
-Each host checks migration history and the latest migration's current-schema
-validation before command consumption starts. Migration 001 verifies its unique
-notification-key index. The consumer waits once at startup; record stores do not
-wait on migration completion. Future migrations explicitly define the current
-schema checks rather than inheriting obsolete index requirements. A host can become ready after another host applies migrations
-without acquiring the lease itself. Commands stay on SQS while migrations are
-incomplete; analytics consumption and `/health` continue independently.
+Each host confirms critical history and the latest critical migration's schema
+before `/health` can succeed. Both consumers start only after the first successful
+health response. Record stores do not wait on migrations. A peer can establish
+the prerequisite; non-critical failures do not block deployment readiness.
 Failures are retried up to `MongoMigrations__MaximumAttempts` across all lease
 acquisitions on the host. A renewal error cancels the attempt; once the engine
 stops, the host releases the lease and can reacquire it using the remaining
@@ -178,9 +175,21 @@ X once ticket02 is present; Waste Obligations sends only actions before X. The
 handover is forward-only after X; do not clear the cutover to restore direct sends.
 See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
 
-Migration completion is reported by the `MongoMigrationCompletion` entry in
-`/health/all` while command processing is enabled. Until completion that endpoint
-returns 503, while `/health` and analytics remain available. If every host
-exhausts its migration attempts, repair the migration problem and restart a host
-to retry; hosts continue observing completion by a peer meanwhile. This check
-reads the startup signal and performs no schema or index queries.
+Critical migration completion is reported by the `MongoMigrationCompletion`
+entry in `/health/all` and gates `/health` while command processing is enabled.
+Migration 001 is flagged `Critical = true`; migrations default to non-critical.
+An absent or invalid critical prerequisite returns 503, including when another
+host owns the lease or every host exhausts its attempts. Already-applied critical
+migrations satisfy readiness without being rerun. Non-critical failures do not
+block readiness. The latest critical migration owns the current schema validation;
+older critical history remains required without retaining obsolete schema checks.
+
+HTTP and migration work start first. Both consumers wait through a shared hosting
+boundary until this host completes its first successful anonymous `/health`
+response. `/health/all` and `/health/authorized` do not release that boundary.
+Stores and business operations have no migration checks. Health reads a latched
+startup result and performs no Mongo queries; later dependency outages are
+reported by extended health. CDP controls replacement of hosts that remain
+unhealthy. Long critical migrations must fit the actual platform startup budget
+or be applied before rollout; the documented 95 seconds is not an overall
+deployment deadline. Metrics and startup logging remain available for diagnosis.

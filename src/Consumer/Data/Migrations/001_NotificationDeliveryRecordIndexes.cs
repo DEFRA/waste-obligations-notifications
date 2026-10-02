@@ -12,6 +12,8 @@ public sealed class NotificationDeliveryRecordIndexes : MongoMigration
 {
     internal const string NotificationKeyIndexName = "notificationKey_unique";
 
+    public override bool Critical => true;
+
     public override MigrationVersion Version => new(1, 0, 0);
 
     public override string Name => "001 - NotificationDeliveryRecord indexes";

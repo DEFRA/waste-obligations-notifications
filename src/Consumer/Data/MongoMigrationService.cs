@@ -32,7 +32,7 @@ public sealed class MongoMigrationService(
 
                 try
                 {
-                    if (await migrationRunner.CheckReadiness(stoppingToken))
+                    if (await migrationRunner.CheckCompletion(stoppingToken))
                         return;
 
                     leaseRequestStartedAt = timeProvider.GetTimestamp();
@@ -100,7 +100,7 @@ public sealed class MongoMigrationService(
             return false;
 
         logger.LogError(
-            "Mongo migrations have not completed after {ReadinessWaitDuration}. Command consumption remains paused while the host remains healthy.",
+            "Mongo migrations have not completed after {ReadinessWaitDuration}. Pending Mongo migrations are being retried; critical completion determines deployment readiness.",
             readinessWaitDuration
         );
 

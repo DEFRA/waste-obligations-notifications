@@ -7,7 +7,7 @@
     },
     "MongoMigrationCompletion": {
       "status": "Healthy",
-      "description": "Mongo migrations completed."
+      "description": "Critical Mongo migrations completed."
     },
     "NotificationCommandQueue": {
       "status": "Healthy",
