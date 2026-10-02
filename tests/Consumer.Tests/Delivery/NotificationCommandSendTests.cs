@@ -44,7 +44,7 @@ public sealed class NotificationCommandSendTests : IDisposable
 
         Received.InOrder(() =>
         {
-            store.Claim(Arg.Any<NotificationCommand>(), Arg.Any<string>(), 120, Arg.Any<CancellationToken>());
+            store.Claim(Arg.Any<NotificationCommand>(), Arg.Any<string>(), 90, Arg.Any<CancellationToken>());
             notify.Send(
                 Arg.Is<NotificationCommand>(command => command.EmailAddress == "recipient@example.com"),
                 Reference,

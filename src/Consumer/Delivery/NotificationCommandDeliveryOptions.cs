@@ -37,7 +37,7 @@ public sealed record NotificationCommandDeliveryOptions
     public int VisibilityTimeoutSeconds { get; init; } = 120;
 
     [Range(1, 43200)]
-    public int CommandLeaseSeconds { get; init; } = 120;
+    public int CommandLeaseSeconds { get; init; } = 90;
 
     [Range(1, 300)]
     public int ClaimTimeoutSeconds { get; init; } = 5;

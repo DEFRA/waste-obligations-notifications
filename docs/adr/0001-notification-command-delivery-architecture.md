@@ -40,7 +40,9 @@ terminal outcome does. A
 bounded attempt uses conservative monotonic deadlines from receive and claim
 request starts; startup validates that dependency timeouts and headroom fit the
 command lease and SQS visibility. Late confirmations do not authorise a send.
-Failed or indeterminate requests retain the claim until expiry rather than
+The default command lease is 90 seconds against 120-second SQS visibility,
+leaving headroom for prompt retry after expiry. Failed or indeterminate requests
+retain the claim until expiry rather than
 releasing it early. Delivery claims are separate from migration leases.
 
 A `201 Created` response means accepted by Notify. Once a complete valid response

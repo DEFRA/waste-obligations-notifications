@@ -118,17 +118,19 @@ CDP can override them through the `NotificationCommandDelivery` section;
 local Compose values do not configure deployed environments.
 
 Each receive requests `VisibilityTimeoutSeconds` explicitly (120 seconds initially).
-The delivery claim is separate from migration leases and defaults to 120 seconds.
+The delivery claim is separate from migration leases and defaults to 90 seconds, leaving
+30 seconds before visibility expiry so prompt redelivery can acquire a new claim.
 `ClaimTimeoutSeconds`, `NotifyTimeoutSeconds`, `AcceptanceTimeoutSeconds`, and
 `DeleteTimeoutSeconds` initially bound operations to 5, 60, 10, and 5 seconds.
 `SafetyHeadroomSeconds` adds 10 seconds. Startup requires the command lease to
-cover claim plus send, persistence, deletion and headroom, and visibility to cover
+cover claim plus send, persistence, deletion and headroom (90 seconds), and visibility to cover
 that budget plus the conservative 30-second receive bound: 120 seconds in total.
 The receive and claim clocks start before their dependency requests; late
 confirmations cannot start a send. Mongo uses its own clock for claim expiry and
 owner and pending-outcome checks when acceptance is recorded. Confirmed acceptance
 is always persisted with its own bounded token, even if the send timeout, lease
-or shutdown cancellation has elapsed; a replaced owner cannot overwrite evidence. Failed or indeterminate sends retain
+or shutdown cancellation has elapsed; a replaced owner cannot overwrite evidence.
+Failed or indeterminate sends retain
 the claim until expiry; the service does not release it early.
 
 These values are initial estimates. Measure dependency latency and validate the

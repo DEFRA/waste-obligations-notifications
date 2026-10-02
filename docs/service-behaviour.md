@@ -106,7 +106,7 @@ original recipient-lane position.
   shared typed `HttpClient`. JSON personalisation values retain their original
   semantics; only minimal acceptance evidence is projected from the SDK model.
 - Validate the complete bounded attempt budget at startup. Initially visibility
-  and command leases are 120 seconds; receive, claim, send, acceptance and deletion
+  is 120 seconds and command leases are 90 seconds, leaving retry headroom; receive, claim, send, acceptance and deletion
   bounds are 30, 5, 60, 10 and 5 seconds, plus 10 seconds headroom. Measure elapsed
   time monotonically from receive/claim request starts and reject late confirmations
   before sending. Request visibility explicitly on receive without changing shared
