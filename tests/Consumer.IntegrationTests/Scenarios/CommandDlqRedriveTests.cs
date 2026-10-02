@@ -353,6 +353,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         )
     {
         private readonly Dictionary<string, ReceiveMessageResponse> _selections = new();
+        private readonly Dictionary<string, int?> _visibilityTimeouts = new();
         public string? DestinationUrl { get; set; }
         public bool FailNextDelete { get; set; }
         public bool FailNextSendAfterPublication { get; set; }
@@ -370,6 +371,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 && _selections.TryGetValue(request.ReceiveRequestAttemptId, out var selected)
             )
             {
+                Assert.Equal(_visibilityTimeouts[request.ReceiveRequestAttemptId], request.VisibilityTimeout);
                 ReplayedAttemptId = request.ReceiveRequestAttemptId;
                 // This real visibility update supplies the visibility reset of the emulated atomic replay API.
                 await base.ChangeMessageVisibilityAsync(
@@ -385,6 +387,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             if (request.ReceiveRequestAttemptId is not null && response.Messages is { Count: 1 })
             {
                 _selections.Add(request.ReceiveRequestAttemptId, response);
+                _visibilityTimeouts.Add(request.ReceiveRequestAttemptId, request.VisibilityTimeout);
                 SelectedReceipt = response.Messages[0].ReceiptHandle;
             }
 
@@ -435,7 +438,10 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                     .Select(entry => entry.Key)
                     .ToArray()
             )
+            {
                 _selections.Remove(key);
+                _visibilityTimeouts.Remove(key);
+            }
 
             return response;
         }

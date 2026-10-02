@@ -34,6 +34,8 @@ public sealed class CommandDlqSelectionTokensTests
         Assert.Equal(messageId, selection.MessageId);
         Assert.Equal(expires, selection.ExpiresAtUtc);
         Assert.Equal(Evidence, selection.ImmutableFieldsDigest);
+        Assert.Equal(120, selection.VisibilityTimeoutSeconds);
+        Assert.StartsWith("v2.", token);
         Assert.StartsWith("v1:", selection.QueueBinding);
         var encoded = token.Split('.')[1].Replace('-', '+').Replace('_', '/');
         var payload = Encoding.UTF8.GetString(
@@ -41,7 +43,14 @@ public sealed class CommandDlqSelectionTokensTests
         );
         using var body = JsonDocument.Parse(payload);
         Assert.Equal(
-            ["expiresAtUtc", "immutableFieldsDigest", "messageId", "queueBinding", "receiveRequestAttemptId"],
+            [
+                "expiresAtUtc",
+                "immutableFieldsDigest",
+                "messageId",
+                "queueBinding",
+                "receiveRequestAttemptId",
+                "visibilityTimeoutSeconds",
+            ],
             body.RootElement.EnumerateObject().Select(property => property.Name).Order()
         );
         Assert.DoesNotContain(Secret, payload, StringComparison.Ordinal);
@@ -55,6 +64,7 @@ public sealed class CommandDlqSelectionTokensTests
     [InlineData("expired")]
     [InlineData("tampered")]
     [InlineData("malformed")]
+    [InlineData("legacy-version")]
     public void WhenSelectionTrustOrValidityChanges_ShouldRejectIt(string condition)
     {
         var clock = new ControlledTimeProvider();
@@ -81,6 +91,9 @@ public sealed class CommandDlqSelectionTokensTests
         }
         if (condition == "malformed")
             token = "v1.private-invalid-payload.invalid-signature";
+
+        if (condition == "legacy-version")
+            token = "v1" + token[2..];
 
         Assert.Null(receiver.Validate(token));
     }

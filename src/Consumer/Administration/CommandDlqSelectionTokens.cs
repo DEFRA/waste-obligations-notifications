@@ -37,7 +37,8 @@ public sealed class CommandDlqSelectionTokens(
             messageId,
             QueueBinding(),
             expiresAtUtc,
-            immutableFieldsDigest
+            immutableFieldsDigest,
+            administration.Value.SelectionLifetimeSeconds
         );
         var now = timeProvider.GetUtcNow();
         if (
@@ -48,7 +49,7 @@ public sealed class CommandDlqSelectionTokens(
             throw new InvalidOperationException("Command DLQ selection is invalid or expired.");
         var payload = Encode(JsonSerializer.SerializeToUtf8Bytes(selection, s_jsonOptions));
 
-        return $"v1.{payload}.{Encode(Sign("selection", payload))}";
+        return $"v2.{payload}.{Encode(Sign("selection-v2", payload))}";
     }
 
     public CommandDlqSelection? Validate(string? token)
@@ -60,8 +61,8 @@ public sealed class CommandDlqSelectionTokens(
             var parts = token.Split('.');
             if (
                 parts.Length != 3
-                || parts[0] != "v1"
-                || !CryptographicOperations.FixedTimeEquals(Sign("selection", parts[1]), Decode(parts[2]))
+                || parts[0] != "v2"
+                || !CryptographicOperations.FixedTimeEquals(Sign("selection-v2", parts[1]), Decode(parts[2]))
             )
                 return null;
             var selection = JsonSerializer.Deserialize<CommandDlqSelection>(Decode(parts[1]), s_jsonOptions);
@@ -79,6 +80,7 @@ public sealed class CommandDlqSelectionTokens(
         var now = timeProvider.GetUtcNow();
 
         return Guid.TryParse(selection.ReceiveRequestAttemptId, out _)
+            && selection.VisibilityTimeoutSeconds is > 0 and < 300
             && selection.MessageId is { Length: > 0 and <= 100 }
             && selection.QueueBinding == QueueBinding()
             && selection.ExpiresAtUtc.Offset == TimeSpan.Zero

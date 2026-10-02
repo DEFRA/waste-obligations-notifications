@@ -5,5 +5,6 @@ public sealed record CommandDlqSelection(
     string MessageId,
     string QueueBinding,
     DateTimeOffset ExpiresAtUtc,
-    string ImmutableFieldsDigest
+    string ImmutableFieldsDigest,
+    int VisibilityTimeoutSeconds
 );

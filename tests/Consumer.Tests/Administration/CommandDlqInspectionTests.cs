@@ -161,7 +161,14 @@ public sealed class CommandDlqInspectionTests
         var token = body.RootElement.GetProperty("selectionToken").GetString()!;
         using var payload = JsonDocument.Parse(DecodePayload(token));
         Assert.Equal(
-            ["expiresAtUtc", "immutableFieldsDigest", "messageId", "queueBinding", "receiveRequestAttemptId"],
+            [
+                "expiresAtUtc",
+                "immutableFieldsDigest",
+                "messageId",
+                "queueBinding",
+                "receiveRequestAttemptId",
+                "visibilityTimeoutSeconds",
+            ],
             payload.RootElement.EnumerateObject().Select(property => property.Name).Order()
         );
         Assert.Equal("opaque-message-id", payload.RootElement.GetProperty("messageId").GetString());

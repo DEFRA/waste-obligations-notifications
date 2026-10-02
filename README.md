@@ -321,7 +321,11 @@ parses the forwarded JWT and applies framework lifetime checks with the default
 five-minute clock skew. It does not verify signatures, issuer or audience.
 Gateway Cognito authentication must cover every administrator route. Direct
 backend callers can assert an ACL client identity, so backend network access is
-a deployment-owned trust boundary. Private DNS alone does not prove gateway
+a deployment-owned trust boundary. This includes another CDP service forging
+an unexpired token for a known OAuth admin client ID: client IDs are not secrets,
+and that caller could permanently abandon delivery. The user explicitly chose
+this service's gateway-only validation contract; enabling administration requires
+deployment owners to accept and control this direct-access risk. Private DNS alone does not prove gateway
 traversal. Configure gateway authentication, OAuth client IDs/ACL scopes and
 network restrictions separately; this PR does not provision CDP resources.
 
@@ -334,12 +338,18 @@ commands disclose no partial command identity and receive no usable selection.
 Logs use the diagnostic category allowlist and never expose raw identities.
 
 Selections contain only receive-attempt ID, SQS message ID, an HMAC queue binding,
-absolute expiry and immutable-field digest. Hosts sharing the evidence secret
+absolute expiry, immutable-field digest and the original receive visibility timeout. Hosts sharing the evidence secret
 and DLQ configuration can validate them; no message body or receipt handle is
 returned or stored. Expiry starts before the receive request, and late dependency
 confirmations fail safely. `/health/all` checks the DLQ when administration is
 enabled, while Notify health remains conditional on sending. `/health` stays
 independent of migration readiness and these dependencies.
+
+Selection format `v2` binds the original visibility timeout, so another host
+replays the same receive parameters even with different local selection settings.
+Old `v1` tokens require fresh inspection. Replay resets SQS visibility to the
+original timeout; this can keep the message hidden after the selection expires.
+The signed expiry still limits every operation and is never extended.
 
 Redrive accepts `{ "selectionToken": "..." }` only in the authenticated POST body.
 It replays the selected FIFO receive attempt and verifies message identity and
@@ -378,6 +388,10 @@ Floci does not implement native receive-attempt replay. FIFO publication,
 deduplication, deletion, selected-message isolation and Mongo readiness/evidence
 remain real. Native AWS replay must be checked during deployment validation;
 local tests do not modify shared resources.
+
+Before enabling administration on the service's queues, complete the
+[native SQS verification runbook](docs/command-dlq-native-sqs-verification.md).
+Native replay remains unverified; passing local checks does not satisfy this gate.
 
 ## Code quality and delivery
 

@@ -439,6 +439,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
         )
     {
         private readonly Dictionary<string, ReceiveMessageResponse> _selections = new();
+        private readonly Dictionary<string, int?> _visibilityTimeouts = new();
         public bool FailNextDelete { get; set; }
         public string? ExpectedNotificationKey { get; set; }
         public string? SelectedReceipt { get; private set; }
@@ -456,6 +457,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 && _selections.TryGetValue(request.ReceiveRequestAttemptId, out var selected)
             )
             {
+                Assert.Equal(_visibilityTimeouts[request.ReceiveRequestAttemptId], request.VisibilityTimeout);
                 await base.ChangeMessageVisibilityAsync(
                     request.QueueUrl,
                     Assert.Single(selected.Messages).ReceiptHandle,
@@ -469,6 +471,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
             if (request.ReceiveRequestAttemptId is not null && response.Messages is { Count: 1 })
             {
                 _selections.Add(request.ReceiveRequestAttemptId, response);
+                _visibilityTimeouts.Add(request.ReceiveRequestAttemptId, request.VisibilityTimeout);
                 SelectedReceipt = response.Messages[0].ReceiptHandle;
             }
 
@@ -516,7 +519,10 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                     .Select(entry => entry.Key)
                     .ToArray()
             )
+            {
                 _selections.Remove(key);
+                _visibilityTimeouts.Remove(key);
+            }
 
             return response;
         }

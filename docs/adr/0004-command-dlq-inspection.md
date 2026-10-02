@@ -23,7 +23,10 @@ approved Waste Obligations' gateway-only validation. The private CDP gateway
 owns JWT signature, issuer and audience validation; this service parses tokens
 and retains framework lifetime checks with the default five-minute clock skew.
 Direct backend callers can assert an ACL identity, so backend access is a
-trusted deployment boundary requiring separate network controls. Gateway
+trusted deployment boundary requiring separate network controls. Another CDP
+service could forge an unexpired token for a known OAuth admin client ID and
+permanently abandon delivery; client IDs are public identifiers. This is the
+consequence of this service's explicitly approved gateway-only contract. Gateway
 Cognito authentication must cover every administrator route. This decision
 does not provision deployed access or claim in-service signature validation.
 
@@ -39,8 +42,12 @@ message fields. Invalid commands expose neither partial identity nor a usable
 selection. Historical dependency errors remain unavailable.
 
 Sign a content-free selection with the existing evidence secret and a distinct
-HMAC domain. Its five fields are receive-attempt ID, opaque SQS message ID, HMAC
-queue binding, absolute UTC expiry and immutable-field digest. Anchor expiry
+HMAC domain. Format `v2` contains receive-attempt ID, opaque SQS message ID, HMAC
+queue binding, absolute UTC expiry, immutable-field digest and original receive
+visibility timeout. Replay uses the signed original timeout across hosts rather
+than deriving a different value from remaining lifetime. Reject old `v1` tokens
+and require fresh inspection. Replay can reset visibility beyond token expiry,
+but the signed expiry still prevents further effects. Anchor expiry
 before receive and keep it below AWS's five-minute receive-attempt window.
 Correctly configured hosts validate the same selection without host-local keys
 or storing payloads.
@@ -87,7 +94,9 @@ earlier indeterminate request failed.
 
 Floci does not implement receive-attempt replay. A labelled test-only API adapter
 supplies that boundary while FIFO effects and Mongo remain real; deployment
-validation must verify native AWS replay.
+validation must verify native AWS replay before enabling administration on the
+service's queues, following the native SQS runbook. Local results do not satisfy
+this gate, including replay with changed visibility parameters.
 
 ## References
 

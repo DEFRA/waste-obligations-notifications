@@ -42,11 +42,7 @@ public sealed class CommandDlqDiscarder(
                     ReceiveRequestAttemptId = selection.ReceiveRequestAttemptId,
                     MaxNumberOfMessages = 1,
                     WaitTimeSeconds = 0,
-                    VisibilityTimeout = Math.Clamp(
-                        (int)Math.Ceiling(selections.RemainingLifetime(selection).TotalSeconds),
-                        1,
-                        43200
-                    ),
+                    VisibilityTimeout = selection.VisibilityTimeoutSeconds,
                     MessageAttributeNames = ["All"],
                     MessageSystemAttributeNames = ["ApproximateReceiveCount", "SentTimestamp"],
                 },

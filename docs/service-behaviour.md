@@ -208,6 +208,10 @@ Gateway authentication must protect every administrator route. Direct backend
 callers can assert an ACL client identity; deployment-owned network controls
 must establish that trust boundary. Private routing alone does not establish
 gateway validation. Disabled administration stays absent without a live gateway.
+Another CDP service reaching the backend could forge an unexpired token for a
+known OAuth administrator client ID and permanently abandon delivery. Client IDs
+are not secrets. This consequence belongs to the explicitly approved gateway-only
+contract and requires deployment-owned access controls before enablement.
 
 Administration can run while sending is paused. It starts the same Mongo
 migrations and waits for verified readiness before receiving one next-visible
@@ -228,8 +232,12 @@ or unsupported commands expose no partially extracted command fields and no
 usable selection. Logs retain the safe diagnostic-label rules above.
 
 The shared-secret, versioned HMAC selection contains only FIFO receive-attempt
-ID, opaque SQS message ID, HMAC queue binding, absolute UTC expiry and immutable
-evidence digest. It contains neither raw command identity nor body/receipt
+ID, opaque SQS message ID, HMAC queue binding, absolute UTC expiry, immutable
+evidence digest and original receive visibility timeout. Format `v2` replays
+the original timeout across hosts with different local settings. Old `v1`
+selections require fresh inspection. Replay resets visibility and may leave the
+message hidden after token expiry; it never extends authorization to act.
+It contains neither raw command identity nor body/receipt
 content, works across correctly configured hosts and is not persisted. Expiry
 is anchored before receive, is strictly within AWS's five-minute attempt window,
 and is not extended by a delayed response. Pass bounded cancellation to queue

@@ -499,7 +499,7 @@ public sealed class CommandDlqDiscardTests
         Assert.Equal("11111111-1111-1111-1111-111111111111", replay.ReceiveRequestAttemptId);
         Assert.Equal(1, replay.MaxNumberOfMessages);
         Assert.Equal(0, replay.WaitTimeSeconds);
-        Assert.InRange(replay.VisibilityTimeout!.Value, 90, 100);
+        Assert.Equal(120, replay.VisibilityTimeout);
         Assert.Single(second.Store.ReceivedCalls());
         await AssertPrivacy(first, failed, token);
         await AssertPrivacy(second, succeeded, token);
