@@ -86,6 +86,12 @@ conversion. Both timestamps are truncated to whole milliseconds before compariso
 matching MongoDB storage precision. Command serialisation and immutable evidence
 use the same precision so a Mongo roundtrip does not change command identity.
 
+Logs and command metric tags use `NotificationCommandDelivery__DiagnosticNotificationTypes`
+(an optional list of at most 32 lowercase ASCII category labels, each at most 64
+characters). Unconfigured types use `other`. Failure logs contain a fixed cause
+and exception type, without retaining dependency exception text or payloads.
+Delivery evidence retains the command type and identity digests, outside diagnostic output.
+
 Command consumption starts the next receive immediately after success or an
 empty response. `NotificationCommandDelivery__PollIntervalSeconds` is the
 error backoff only (15 seconds initially). Each host processes one command

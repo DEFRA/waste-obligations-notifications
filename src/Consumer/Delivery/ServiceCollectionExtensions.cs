@@ -20,6 +20,12 @@ public static class ServiceCollectionExtensions
             .Bind(configuration.GetRequiredSection(NotificationCommandDeliveryOptions.SectionName))
             .ValidateDataAnnotations()
             .Validate(
+                options =>
+                    options.DiagnosticNotificationTypes is not null
+                    && options.DiagnosticNotificationTypes.All(NotificationCommandDeliveryOptions.IsDiagnosticLabel),
+                "DiagnosticNotificationTypes must contain only bounded lowercase ASCII category labels"
+            )
+            .Validate(
                 options => options.ReceiveTimeoutSeconds > options.WaitTimeSeconds,
                 "Notification command receive timeout must exceed the long-poll wait"
             )

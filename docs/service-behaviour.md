@@ -80,6 +80,9 @@ restore a command's original recipient-lane position.
   Migration failures and
   prolonged readiness waits produce error logs. Unapplied critical migrations
   keep `/health` unhealthy and consumers paused.
+- Use configured bounded diagnostic type labels in logs and command metrics;
+  unconfigured notification types use `other`. Log fixed failure reasons and
+  exception type names without exception objects, messages or response contents.
 - Persist only the minimal, versioned HMAC evidence needed for command
   idempotency and outcomes. Do not persist recipient addresses,
   personalisation, template content, rendered content, or full GOV.UK Notify

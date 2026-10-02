@@ -29,52 +29,74 @@ public sealed class NotificationCommandConsumer(
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            var failureReason = "queue-error";
             try
             {
                 var response = await ReceiveCommands(stoppingToken);
 
                 foreach (var message in response.Messages ?? [])
                 {
+                    failureReason = "invalid-command";
                     var command = NotificationCommandMessageReader.Read(message);
-                    metrics.RecordReceived(command.NotificationType);
+                    var notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
+                    metrics.RecordReceived(notificationType);
 
                     // Ticket 02 adds Notify delivery. These failures retry and can reach the DLQ under queue redrive policy.
                     if (IsAtOrAfterCutover(command.ActionOccurredAtUtc, cutover))
                     {
+                        failureReason = "delivery-unavailable";
                         throw new InvalidOperationException(
                             "Notification command delivery after cutover is not yet enabled."
                         );
                     }
 
+                    failureReason = "store-error";
                     var result = await recordStoreFactory.GetRecordStore().RecordSuppression(command, stoppingToken);
 
                     if (result == SuppressionClaimResult.Conflict)
                     {
+                        failureReason = "conflict";
                         throw new InvalidDataException(
                             "Notification command idempotency key conflicts with an existing command."
                         );
                     }
 
                     var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
-                    metrics.RecordOutcome(command.NotificationType, outcome);
+                    metrics.RecordOutcome(notificationType, outcome);
                     if (logger.IsEnabled(LogLevel.Information))
                     {
                         logger.LogInformation(
                             "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId}",
                             outcome,
-                            command.NotificationType,
+                            notificationType,
                             message.MessageId
                         );
                     }
+                    failureReason = "queue-error";
                     await sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, stoppingToken);
                 }
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception) when (stoppingToken.IsCancellationRequested)
             {
-                logger.LogError(exception, "Notification command consumption failed");
+                // A dependency can fail after cancellation; do not expose its exception through host logging.
+                return;
+            }
+            catch (Exception exception)
+            {
+                LogFailure(failureReason, exception);
                 await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
             }
         }
+    }
+
+    private void LogFailure(string failureReason, Exception exception)
+    {
+        if (logger.IsEnabled(LogLevel.Error))
+            logger.LogError(
+                "Notification command consumption failed: {FailureReason} ({ExceptionType})",
+                exception is TimeoutException ? "processing-timeout" : failureReason,
+                exception.GetType().Name
+            );
     }
 
     private async Task<ReceiveMessageResponse> ReceiveCommands(CancellationToken stoppingToken)
