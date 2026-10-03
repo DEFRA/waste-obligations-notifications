@@ -20,21 +20,18 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private const string PendingOutcome = "delivery-pending";
     private const string AbandonedOutcome = "delivery-abandoned";
     private readonly INotificationCommandDigest _digest;
-    private readonly MongoMigrationReadiness _migrationReadiness;
     private readonly IMongoCollection<NotificationDeliveryRecord> _records;
 
     public MongoNotificationDeliveryRecordStore(
         IMongoClient mongoClient,
         IOptions<MongoDbOptions> options,
-        INotificationCommandDigest digest,
-        MongoMigrationReadiness migrationReadiness
+        INotificationCommandDigest digest
     )
     {
         _digest = digest;
         _records = mongoClient
             .GetDatabase(options.Value.DatabaseName)
             .GetCollection<NotificationDeliveryRecord>(CollectionName);
-        _migrationReadiness = migrationReadiness;
     }
 
     public async Task<NotificationDeliveryState> Inspect(
@@ -42,7 +39,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
-        await _migrationReadiness.Wait(cancellationToken);
         var fields = new BsonDocument
         {
             { "_id", 0 },
@@ -102,7 +98,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
-        await _migrationReadiness.Wait(cancellationToken);
         var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
         var filter = new BsonDocument
@@ -198,7 +193,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
-        await _migrationReadiness.Wait(cancellationToken);
         var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
         var record = new NotificationDeliveryRecord
@@ -245,7 +239,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
-        await _migrationReadiness.Wait(cancellationToken);
         var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
         var filter = new BsonDocument
@@ -337,7 +330,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
-        await _migrationReadiness.Wait(cancellationToken);
         if (!acceptance.Matches(command, _digest.CreateNotifyReference(command.IdempotencyKey)))
             throw new InvalidDataException("Notify acceptance evidence is incomplete or inconsistent.");
         var filter = new BsonDocument

@@ -6,8 +6,10 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -66,13 +68,16 @@ public sealed class NotificationCommandConsumerTests : IDisposable
     }
 
     [Theory]
+    [InlineData("2026-09-28T10:00:00Z", null, true)]
+    [InlineData("2026-09-29T00:00:00Z", null, true)]
+    [InlineData("2101-01-01T00:00:00Z", null, true)]
     [InlineData("2026-09-28T10:00:00.1229999Z", "2026-09-28T10:00:00.1234567Z", true)]
     [InlineData("2026-09-28T10:00:00.1234567+00:00", "2026-09-28T10:00:00.1234567Z", false)]
     [InlineData("2026-09-28T10:00:00.12345676Z", "2026-09-28T10:00:00.12345676Z", false)]
     [InlineData("2026-09-28T10:00:00.123Z", "2026-09-28T10:00:00.12399996Z", false)]
     public async Task Start_WhenActionIsBeforeOrAtCutoverAtMongoPrecision_ShouldPreserveBoundary(
         string timestamp,
-        string cutover,
+        string? cutover,
         bool suppressed
     )
     {
@@ -350,9 +355,9 @@ public sealed class NotificationCommandConsumerTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Start_WhenMigrationsAreIncomplete_ShouldWaitBeforeReceivingCommands(bool completeMigrations)
+    public async Task Start_WhenApplicationHasNotStarted_ShouldWaitBeforeReceivingCommands(bool startApplication)
     {
-        var readiness = new MongoMigrationReadiness();
+        var readiness = new ApplicationStartup();
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
@@ -374,14 +379,14 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
         Assert.False(received.Task.IsCompleted);
 
-        if (completeMigrations)
+        if (startApplication)
         {
-            readiness.MarkCompleted();
+            readiness.MarkStarted();
             await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         }
 
         await subject.StopAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(completeMigrations, received.Task.IsCompleted);
+        Assert.Equal(startApplication, received.Task.IsCompleted);
     }
 
     [Fact]
@@ -571,14 +576,65 @@ public sealed class NotificationCommandConsumerTests : IDisposable
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Stop_WhenDependencyThrowsPrivateFailureAfterCancellation_ShouldNotExposeItThroughHostLogging()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(MessageThenWait(CreateMessage(CommandBody("2026-09-28T10:00:00Z"))));
+        var store = Substitute.For<INotificationDeliveryRecordStore>();
+        store
+            .RecordSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(FailAfterCancellation);
+
+        async Task<SuppressionClaimResult> FailAfterCancellation(CallInfo call)
+        {
+            using var registration = call.Arg<CancellationToken>().Register(() => cancelled.TrySetResult());
+            entered.TrySetResult();
+            await cancelled.Task;
+            throw new InvalidOperationException(EmailAddress + Personalisation);
+        }
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        var subject = CreateSubject(sqsClient, store, logger);
+        var builder = Host.CreateApplicationBuilder();
+        builder.Logging.ClearProviders().AddProvider(new RecordingLoggerProvider(logger));
+        builder.Services.AddHostedService(_ => subject);
+        using var host = builder.Build();
+
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+
+        await subject
+            .ExecuteTask!.ContinueWith(_ => { }, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.False(subject.ExecuteTask.IsFaulted);
+        Assert.Empty(logger.Exceptions);
+        Assert.DoesNotContain(
+            logger.Messages,
+            message =>
+                message.Contains(EmailAddress, StringComparison.Ordinal)
+                || message.Contains(Personalisation, StringComparison.Ordinal)
+        );
+        await sqsClient
+            .DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
     private NotificationCommandConsumer CreateSubject(
         IAmazonSQS sqsClient,
         INotificationDeliveryRecordStore recordStore,
         ILogger<NotificationCommandConsumer>? logger = null,
-        MongoMigrationReadiness? readiness = null,
+        ApplicationStartup? readiness = null,
         int pollIntervalSeconds = 1,
         int receiveTimeoutSeconds = 30,
-        string cutover = "2026-09-29T00:00:00Z",
+        string? cutover = "2026-09-29T00:00:00Z",
         INotifyEmailClient? notify = null
     ) =>
         new(
@@ -614,10 +670,10 @@ public sealed class NotificationCommandConsumerTests : IDisposable
             )
         );
 
-    private static MongoMigrationReadiness CompletedReadiness()
+    private static ApplicationStartup CompletedReadiness()
     {
-        var readiness = new MongoMigrationReadiness();
-        readiness.MarkCompleted();
+        var readiness = new ApplicationStartup();
+        readiness.MarkStarted();
 
         return readiness;
     }
@@ -696,6 +752,13 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         }
 
         return Convert.ToBase64String(output.ToArray());
+    }
+
+    private sealed class RecordingLoggerProvider(ILogger logger) : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => logger;
+
+        public void Dispose() { }
     }
 
     private sealed class RecordingLogger<T> : ILogger<T>

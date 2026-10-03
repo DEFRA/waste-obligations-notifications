@@ -295,7 +295,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
     {
         private readonly IMongoClient _client = CreateMongoClient();
         private readonly ILoggerFactory _logs = LoggerFactory.Create(_ => { });
-        private readonly MongoMigrationReadiness _readiness = new();
+        private readonly MongoMigrationCompletion _completion = new();
         private readonly string _databaseName = $"notifications_abandonment_{Guid.NewGuid():N}";
         public NotificationCommandDigest Digest { get; } =
             new NotificationCommandDigest(
@@ -315,7 +315,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         public MongoNotificationDeliveryRecordStore Store => CreateStore();
 
         public Task Initialise() =>
-            new MongoMigrationRunner(Database, _logs.CreateLogger<MongoMigrationRunner>(), _readiness).Run(
+            new MongoMigrationRunner(Database, _logs.CreateLogger<MongoMigrationRunner>(), _completion).Run(
                 TestContext.Current.CancellationToken
             );
 
@@ -325,8 +325,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
                 Options.Create(
                     new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = _databaseName }
                 ),
-                Digest,
-                _readiness
+                Digest
             );
 
         public async ValueTask DisposeAsync()

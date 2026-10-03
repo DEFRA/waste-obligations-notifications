@@ -7,6 +7,7 @@ using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -583,9 +584,12 @@ public sealed class CommandDlqInspectionTests
                     services.RemoveAll<INotifyEmailClient>();
                     services.AddSingleton(Notify);
                 }
-                var readiness = new MongoMigrationReadiness();
-                readiness.MarkCompleted();
-                services.AddSingleton(readiness);
+                var completion = new MongoMigrationCompletion();
+                completion.MarkCompleted();
+                services.AddSingleton(completion);
+                var startup = new ApplicationStartup();
+                startup.MarkStarted();
+                services.AddSingleton(startup);
             });
         }
 

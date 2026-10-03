@@ -31,7 +31,9 @@ Cognito authentication must cover every administrator route. This decision
 does not provision deployed access or claim in-service signature validation.
 
 Enable inspection separately from sending and start/check Mongo migrations for
-either capability. Inspection waits for readiness and receives one visible FIFO
+either capability. Critical migrations gate `/health`. The admin HTTP boundary
+returns 503 until its first successful anonymous response completes. Inspection
+then receives one visible FIFO
 DLQ message. It does not publish, delete or modify delivery evidence. A bounded
 dependency timeout rejects cancelled or late results.
 

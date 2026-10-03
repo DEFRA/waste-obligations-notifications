@@ -4,7 +4,6 @@ using System.Net;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
-using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Microsoft.Extensions.Options;
 
@@ -13,7 +12,6 @@ namespace Defra.WasteObligations.Consumer.Administration;
 public sealed class CommandDlqInspector(
     IAmazonSQS sqs,
     INotificationDeliveryRecordStoreFactory storeFactory,
-    MongoMigrationReadiness readiness,
     INotificationCommandDigest digest,
     CommandDlqSelectionTokens selections,
     IOptions<CommandDlqAdministrationOptions> administration,
@@ -27,7 +25,6 @@ public sealed class CommandDlqInspector(
         source.CancelAfter(TimeSpan.FromSeconds(administration.Value.DependencyTimeoutSeconds));
         try
         {
-            await readiness.Wait(source.Token);
             EnsureTimely(started, source.Token);
             // Both the replay window and selection expiry begin before SQS can make this message invisible.
             var selectionStarted = Stopwatch.GetTimestamp();

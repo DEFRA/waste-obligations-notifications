@@ -2,14 +2,16 @@
 
 This document describes message contracts and processing requirements. Use
 [CONTEXT.md](../CONTEXT.md) for terminology and the linked ADRs for decision
-rationale. The command architecture is accepted; the cutover ADR remains proposed. Current
+rationale. The command architecture is accepted; the cutover ADR is accepted. Current
 implementation scope is described below.
 
 ## Current scope
 
 The analytics consumer logs event and entity IDs and deletes successfully
 processed messages. It does not deliver notifications or persist event data.
-The command consumer records pre-cutover commands as `delivery-suppressed` and
+With the default null cutover, the command consumer durably suppresses every
+valid command and deletes it without Notify. With a supplied boundary, it
+records pre-cutover commands as `delivery-suppressed` and
 sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
@@ -46,7 +48,7 @@ original recipient-lane position.
   payloads, or persist event data.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
-- Validate the UTC cutover and configured evidence and recipient-lane secrets
+- Allow a null cutover; validate any supplied UTC cutover and configured evidence and recipient-lane secrets
   at startup when command processing is enabled. Digest secrets are also required
   for enabled command-DLQ administration; cutover and sending budgets are required
   only for sending. Invalid configuration must not consume commands; disabled
@@ -60,12 +62,23 @@ original recipient-lane position.
   Reject invalid keys without changing them; never trim, truncate or replace
   the key to fit the queue constraints.
 - Run versioned Mongo migrations under a renewable exclusive lease when command
-  processing or command-DLQ administration is enabled. Each host must verify the required migration version
-  and unique notification-key index before receiving commands from SQS or
-  persisting them. Completion by another host can satisfy this check, including
+  processing or command-DLQ administration is enabled. Critical migrations gate `/health`; migration 001 is
+  critical because its full unique notification-key index enforces idempotency.
+  Require the build to complete before recording history or readiness; catalog
+  presence alone is insufficient. Reject incompatible existing definitions without
+  dropping them. Matching completed hidden indexes satisfy the prerequisite.
+  Confirm applied critical history and the latest critical schema once at
+  startup. Both consumers await the first successful anonymous health response
+  through a shared hosting boundary. Admin HTTP requests return 503 until the shared startup boundary is released.
+  Stores and administration services have no completion dependency.
+  This does not detect later manual schema changes. Completion by another host can satisfy this check, including
   after the local host exhausts its migration attempts. A lease-renewal failure
   cancels the engine; only after it stops can the host release and reacquire
-  the lease. Attempts share a bounded host-wide budget across acquisitions.
+  the lease. While critical readiness is incomplete, an attempt failure also
+  relinquishes the lease after stopped work, followed by a five-second backoff.
+  Once readiness is established, standard failures retry under the lease with
+  the existing 30-second delay. Use a 30-second lease renewed every ten seconds.
+  Attempts share one bounded host-wide budget across acquisitions and phases.
   Host shutdown cancels the migration engine but continues renewing its lease
   while renewal succeeds until execution stops.
   Bound acquisition and renewal confirmation by a deadline measured from the
@@ -75,9 +88,15 @@ original recipient-lane position.
   renewal work before local release or reacquisition. Cancellation-resistant
   engine operations can still outlive ownership loss; the lease provides no
   fencing after expiry.
+  Bound each critical operation by 20 seconds and each standard operation by
+  300 seconds. Preserve ordered prerequisites; a standard migration between
+  two critical versions does not inherit the earlier critical deadline.
   Migration failures and
-  prolonged readiness waits produce error logs; `/health` and analytics
-  consumption remain independent of migration readiness.
+  prolonged readiness waits produce error logs. Unapplied critical migrations
+  keep `/health` unhealthy and consumers paused.
+- Use configured bounded diagnostic type labels in logs and command metrics;
+  unconfigured notification types use `other`. Log fixed failure reasons and
+  exception type names without exception objects, messages or response contents.
 - Persist only the minimal, versioned HMAC evidence needed for command
   idempotency and outcomes. Do not persist recipient addresses,
   personalisation, template content, rendered content, or full GOV.UK Notify
@@ -123,7 +142,7 @@ original recipient-lane position.
   No Notify-reference reconciliation is implemented. Queue
   deletion failure after durable acceptance retries as a terminal duplicate.
 - Compare the immutable UTC business-action timestamp with the deployment-owned
-  cutover value. Both configured cutover and serialized action timestamps must
+  cutover value. Any supplied cutover and serialized action timestamps must
   explicitly include `Z` or a zero offset (`+00:00` or `-00:00`). Reject absent
   or nonzero offsets instead of interpreting them in the host timezone or
   converting them. Truncate both timestamps to whole milliseconds before
@@ -153,22 +172,22 @@ errors are not reconstructed or added to persisted delivery evidence.
 Instruments follow Waste Obligations' DI-owned meter and singleton instrumentation
 conventions. Shared names and tag keys use PascalCase; counters use CloudWatch
 `COUNT` and claim/send durations use `MILLISECONDS`, matching email-send timing.
-The only dimensions are the fixed Notifications `Service`, bounded
-`NotificationType` and fixed `Outcome`. A DI-owned CloudWatch EMF exporter starts
-before the command consumer and observes only its host's meter. It uses the Waste
-Obligations SDK/configuration mechanism without shared SDK configuration or
-platform-property decoration. One measurement emits one EMF document; optional
-agent log-group/stream routing is preserved outside metric dimensions.
+Command dimensions are the fixed Notifications `Service`, bounded
+`NotificationType` and fixed `Outcome`. The process-wide exporter follows Waste
+Obligations' static meter listener and EMF `MetricsLogger` mechanism, initialised
+before the host starts. It observes the known command instruments by meter name.
+One measurement emits one SDK document; logger disposal performs the flush.
+The SDK owns its process-wide environment cache, platform metadata decoration,
+agent transport and lifecycle.
 
 Export defaults to enabled and requires a configured namespace, except that
 `AWS_EMF_ENVIRONMENT=Local` allows a blank namespace and uses the Notifications
 namespace. Disabled export does not resolve an SDK environment. Local development
-and isolated tests disable it. Unknown-environment discovery uses bounded,
-cancellable startup metadata requests; delivery never fetches metadata. Export
-failures and full-buffer drops yield fixed sanitized diagnostics and do not affect
-command processing. Observation stops before sink shutdown; the host bounds its
-wait, but the SDK's background worker has no cancellation API and may outlive that
-wait. Metrics are best effort. See the README for configuration and CDP routing.
+and isolated tests disable it. SDK environment selection and routing read actual
+process environment variables. No custom metadata transport, environment factory
+or shutdown lifecycle is present. SDK internal diagnostics are disabled; export
+failures expose a fixed message and exception type without private contents.
+Metrics remain best effort. See the README for configuration and CDP routing.
 
 With command processing enabled, `/health/all` includes a light read-only Notify
 connectivity check. It makes one authenticated `GET /v2/templates?type=email`,
@@ -214,7 +233,8 @@ are not secrets. This consequence belongs to the explicitly approved gateway-onl
 contract and requires deployment-owned access controls before enablement.
 
 Administration can run while sending is paused. It starts the same Mongo
-migrations and waits for verified readiness before receiving one next-visible
+migrations. Its HTTP boundary returns 503 until the first successful anonymous
+`/health` response completes, before receiving one next-visible
 FIFO DLQ message. Receive uses a fresh attempt ID, zero wait and visibility
 covering the bounded selection lifetime. Inspection changes that message's
 visibility and receive count but never deletes, publishes, abandons or overwrites
@@ -249,7 +269,7 @@ JSON body and requires the same Basic/Bearer Admin policy. Invalid or expired to
 return a fixed bad-request result before receiving. Replay uses the signed FIFO
 receive-attempt ID, one message and zero wait. Missing, changed or malformed
 selected commands return a fixed conflict without publishing or deleting. The
-whole operation waits for migration readiness and shares one bounded dependency
+whole operation shares one bounded dependency
 deadline capped by the selection's remaining lifetime; late confirmations cannot
 start the next effect.
 
@@ -307,8 +327,8 @@ validation requirement.
 
 Command queue/Mongo extended health runs when sending or administration is
 enabled, with DLQ health added for administration. Notify health remains enabled
-only for sending. `/health` and analytics remain independent of administration
-readiness.
+only for sending. Critical migrations gate `/health`; analytics and administration
+start after its first successful anonymous response completes.
 
 ## Deployment ownership
 
@@ -331,3 +351,41 @@ Compose-backed integration tests cover health and SNS-to-SQS-to-consumer wiring.
 Test that stored command evidence and logs do not disclose protected identifiers,
 addresses, templates, or personalisation. Analytics event and entity IDs are
 logged as required by the analytics contract above.
+
+## Initial deployment and cutover
+
+The default cutover is null. Enabled processing suppresses all valid commands
+without a Notify send while Waste Obligations retains direct delivery. Suppression
+must be durable before deletion; malformed commands, conflicts and persistence
+failures retain the message. Existing suppressed evidence is terminal when a
+future cutover is configured. A non-null cutover requires explicit UTC and the
+same millisecond precision as command identity. Other configuration requirements
+remain in force.
+
+Use the producer dry run before choosing the identical future X in both services.
+Verify both deployments complete before X; after X use Notifications recovery
+and do not clear or move the cutover backward. ADR0002 records this accepted,
+forward-only handover. Local examples do not configure deployed values.
+
+Critical migration completion is reported by the `MongoMigrationCompletion`
+entry in `/health/all` and gates `/health` while command processing or administration is enabled.
+Migration 001 is flagged `Critical = true`; migrations default to non-critical.
+An absent or invalid critical prerequisite returns 503, including when another
+host owns the lease or every host exhausts its attempts. Already-applied critical
+migrations satisfy readiness without being rerun. Non-critical failures do not
+block readiness. The latest critical migration owns the current schema validation;
+older critical history remains required without retaining obsolete schema checks.
+
+HTTP and migration work start first. Both consumers wait through a shared hosting
+boundary until this host completes its first successful anonymous `/health`
+response. `/health/all` and `/health/authorized` do not release that boundary.
+Stores and business operations have no migration checks. Health reads a latched
+startup result and performs no Mongo queries; later dependency outages are
+reported by extended health. CDP controls replacement of hosts that remain
+unhealthy. Long critical migrations must fit the actual platform startup budget
+or be applied before rollout; the documented 95 seconds is not an overall
+deployment deadline. Metrics and startup logging remain available for diagnosis.
+
+Suppression recorded with an unset cutover remains terminal after configuration,
+including an action at or after the new boundary. Delete matching replays without
+changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.

@@ -11,6 +11,8 @@ using Defra.WasteObligations.Consumer.Administration;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Utils.Health;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -85,10 +87,11 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 oauth: oauth
             );
             using var firstClient = first.CreateClient();
-            await first
-                .Services.GetRequiredService<MongoMigrationReadiness>()
-                .Wait(token)
-                .WaitAsync(TimeSpan.FromSeconds(10), token);
+            await WaitForAsync(async () =>
+            {
+                using var health = await firstClient.GetAsync("/health", token);
+                Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+            });
             var command = Command("private-original-key@example.com", "private-recipient@example.com");
             var digest = first.Services.GetRequiredService<INotificationCommandDigest>();
             var store = first.Services.GetRequiredService<INotificationDeliveryRecordStore>();
@@ -169,6 +172,11 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 oauth: oauth
             );
             using var secondClient = second.CreateClient();
+            await WaitForAsync(async () =>
+            {
+                using var health = await secondClient.GetAsync("/health", token);
+                Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+            });
             using var discardRequest = Request("discard", selectionToken, oauth: oauth);
             using var discarded = await secondClient.SendAsync(discardRequest, token);
             var eligible = state is "new" or "expired" or "delete-failure" or "late-write";
@@ -310,17 +318,15 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
             ["Notify:ApiKey"] = await fixture.GetStringAsync("/test/api-key", token),
             ["Notify:BaseAddress"] = "http://localhost:8086",
         };
-        using var host = new HostBuilder()
-            .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(values))
-            .ConfigureServices(
-                (context, services) =>
-                {
-                    services.AddNotificationCommandDelivery(context.Configuration);
-                    services.AddSingleton<IAmazonSQS>(sqs);
-                    services.AddSingleton(mongo);
-                }
-            )
-            .Build();
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        builder.Configuration.AddInMemoryCollection(values);
+        builder.Services.AddNotificationCommandDelivery(builder.Configuration);
+        builder.Services.AddHealth(builder.Configuration);
+        builder.Services.AddSingleton<IAmazonSQS>(sqs);
+        builder.Services.AddSingleton(mongo);
+        await using var host = builder.Build();
+        host.MapHealth();
         sqs.ObserveMutation = false;
         try
         {
@@ -334,6 +340,12 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 token
             );
             await host.StartAsync(token);
+            using var startupClient = host.GetTestClient();
+            await WaitForAsync(async () =>
+            {
+                using var health = await startupClient.GetAsync("/health", token);
+                Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+            });
             await WaitForAsync(async () => Assert.Equal(0, await Count(sqs, queue, token)));
             var requests = await fixture.GetFromJsonAsync<JsonElement[]>("/test/requests", token);
             Assert.DoesNotContain(
@@ -585,8 +597,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                         new MongoNotificationDeliveryRecordStore(
                             mongo,
                             provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<MongoDbOptions>>(),
-                            provider.GetRequiredService<INotificationCommandDigest>(),
-                            provider.GetRequiredService<MongoMigrationReadiness>()
+                            provider.GetRequiredService<INotificationCommandDigest>()
                         )
                     ));
                 }

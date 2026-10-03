@@ -2,7 +2,7 @@ using System.Diagnostics;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
-using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
@@ -11,14 +11,14 @@ public sealed class NotificationCommandConsumer(
     IAmazonSQS sqsClient,
     IOptions<NotificationCommandDeliveryOptions> options,
     INotificationDeliveryRecordStoreFactory recordStoreFactory,
-    MongoMigrationReadiness migrationReadiness,
+    ApplicationStartup startup,
     INotificationCommandMetrics metrics,
     ILogger<NotificationCommandConsumer> logger,
     INotifyEmailClient notifyClient,
     INotificationCommandDigest digest
-) : BackgroundService
+) : StartupBackgroundService(startup)
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAfterStartup(CancellationToken stoppingToken)
     {
         if (!options.Value.ProcessingEnabled)
         {
@@ -33,7 +33,6 @@ public sealed class NotificationCommandConsumer(
             throw new InvalidOperationException(
                 "Notification command lease and visibility do not cover the processing budget."
             );
-        await migrationReadiness.Wait(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -54,7 +53,12 @@ public sealed class NotificationCommandConsumer(
                     await Process(message, command, reference, cutover, receiveStartedAt, stoppingToken);
                 }
             }
-            catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+            catch (Exception) when (stoppingToken.IsCancellationRequested)
+            {
+                // Dependency failures after cancellation must not reach host exception logging.
+                return;
+            }
+            catch (Exception exception)
             {
                 // Dependency exceptions may contain payload or recipient data. Log a bounded category only.
                 LogFailure(exception, messageId, notificationType, reference);
@@ -97,7 +101,7 @@ public sealed class NotificationCommandConsumer(
         Message message,
         NotificationCommand command,
         string reference,
-        DateTimeOffset cutover,
+        DateTimeOffset? cutover,
         long receiveStartedAt,
         CancellationToken stoppingToken
     )
@@ -106,7 +110,7 @@ public sealed class NotificationCommandConsumer(
         metrics.RecordReceived(notificationType);
         var store = recordStoreFactory.GetRecordStore();
         var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
-        if (command.ActionOccurredAtUtc < cutover)
+        if (cutover is null || command.ActionOccurredAtUtc < cutover)
         {
             var result = await RunBounded(
                 token => store.RecordSuppression(command, token),
@@ -310,10 +314,12 @@ public sealed class NotificationCommandConsumer(
             );
     }
 
-    private DateTimeOffset ReadCutover()
+    private DateTimeOffset? ReadCutover()
     {
         if (!options.Value.TryReadCutover(out var cutover))
-            throw new InvalidOperationException("EmailDeliveryCutoverUtc must include an explicit UTC offset.");
+            throw new InvalidOperationException(
+                "EmailDeliveryCutoverUtc must be null or include an explicit UTC offset."
+            );
 
         return cutover;
     }

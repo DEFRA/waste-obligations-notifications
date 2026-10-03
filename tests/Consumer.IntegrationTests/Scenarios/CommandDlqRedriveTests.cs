@@ -83,10 +83,11 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 oauth: oauth
             );
             using var firstClient = first.CreateClient();
-            await first
-                .Services.GetRequiredService<MongoMigrationReadiness>()
-                .Wait(token)
-                .WaitAsync(TimeSpan.FromSeconds(10), token);
+            await WaitForAsync(async () =>
+            {
+                using var health = await firstClient.GetAsync("/health", token);
+                Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+            });
             var command = Command("private-original-key@example.com", "private-recipient@example.com");
             var digest = first.Services.GetRequiredService<INotificationCommandDigest>();
             var body = JsonSerializer.Serialize(command, s_indentedJsonOptions);
@@ -165,6 +166,11 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 oauth: oauth
             );
             using var secondClient = second.CreateClient();
+            await WaitForAsync(async () =>
+            {
+                using var health = await secondClient.GetAsync("/health", token);
+                Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+            });
             sqs.DestinationUrl = destination.QueueUrl;
             sqs.FailNextDelete = failure == "delete-failure";
             sqs.FailNextSendAfterPublication = failure == "indeterminate-send";

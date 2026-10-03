@@ -9,7 +9,9 @@ The service receives every message from its service-owned SQS subscription to th
 entity ID, then deletes the successfully processed message. It deliberately does
 not send notifications, persist data, or act on the event payload.
 
-The command consumer records pre-cutover commands as `delivery-suppressed` and
+With the default null cutover, the command consumer durably suppresses every
+valid command and deletes it without Notify. With a supplied boundary, it
+records pre-cutover commands as `delivery-suppressed` and
 sends at-or-after-cutover commands through GOV.UK Notify. It acquires a Mongo
 claim, makes one send request, records acceptance, and then deletes the command.
 Matching accepted, suppressed, or abandoned commands are deleted without another
@@ -83,7 +85,7 @@ The Consumer health endpoint is available at `http://localhost:8085/health`.
 - [Contributing](CONTRIBUTING.md): formatting, required checks, and change workflow.
 - [Service behaviour](docs/service-behaviour.md): message contracts, processing rules, and deployment ownership.
 - [Context](CONTEXT.md): notification-delivery terminology.
-- ADRs: accepted [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and proposed [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
+- ADRs: accepted [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and accepted [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
 - Accepted [administrator inspection](docs/adr/0004-command-dlq-inspection.md): Basic access and content-free selection.
 - [Agent guidelines](AGENTS.md): entry points and sandbox build guidance for coding agents.
 
@@ -101,12 +103,12 @@ separate subscription from the producer queue and must have the CDP dead-letter
 queue convention configured.
 
 `NotificationCommandDelivery` is deployment-owned. Before enabling it, CDP must
-provide its FIFO queue URL, cutover timestamp,
+provide its FIFO queue URL, optional cutover timestamp,
 and distinct evidence-digest and recipient-lane secrets. Set `Notify__ApiKey` to
 the service's Notify API key; `Notify__BaseAddress` defaults to the GOV.UK Notify
 API. Enabled command processing validates the SDK's API key shape before consuming. Do not put those secrets
 in source control or logs.
-Enabled command processing validates the cutover timestamp and both digest
+Enabled command processing permits null and validates any supplied cutover timestamp and both digest
 secrets at startup. Blank or deployment-placeholder secrets prevent startup
 before commands are consumed. Disabled command processing permits the shipped
 deployment placeholders so analytics-only hosts can start. Digest creation also
@@ -117,6 +119,12 @@ rejected regardless of host timezone; nonzero offsets are rejected without
 conversion. Both timestamps are truncated to whole milliseconds before comparison,
 matching MongoDB storage precision. Command serialisation and immutable evidence
 use the same precision so a Mongo roundtrip does not change command identity.
+
+Logs and command metric tags use `NotificationCommandDelivery__DiagnosticNotificationTypes`
+(an optional list of at most 32 lowercase ASCII category labels, each at most 64
+characters). Unconfigured types use `other`. Failure logs contain a fixed cause
+and exception type, without retaining dependency exception text or payloads.
+Delivery evidence retains the command type and identity digests, outside diagnostic output.
 
 Command consumption starts the next receive immediately after success or an
 empty response. `NotificationCommandDelivery__PollIntervalSeconds` is the
@@ -182,38 +190,33 @@ cancellation; it does not prove Notify rejected the email. Persistence failures
 remain errors in operational logs, and failed claims receive a fixed failure
 outcome.
 
-A host-owned exporter starts before the command consumer and observes only that
-host's command meter. It uses Waste Obligations' CloudWatch EMF 2.2.0 mechanism,
-emitting one SDK JSON document per measurement. SDK platform decoration is skipped;
-dimensions remain `Service`, `NotificationType` and, where applicable, `Outcome`.
-Configured agent log-group/stream routing is preserved.
+The process-wide exporter follows Waste Obligations' static meter listener and
+CloudWatch EMF 2.2.0 `MetricsLogger`. It is initialised before the host starts and
+observes the command instruments by meter name. Each measurement uses the SDK's
+normal environment provider and emits one document. The pinned SDK flushes on
+logger disposal, so the exporter does not explicitly flush a second time.
+Command dimensions stay bounded; the SDK owns platform metadata decoration,
+environment caching and agent transport. SDK internal diagnostic logging is
+disabled; exporter failures log a fixed message and exception type only.
 
-EMF configuration uses the same root `AWS_EMF_*` keys as Waste Obligations:
+EMF configuration uses the same root keys as Waste Obligations:
 
 | Setting | Default and behaviour |
 | --- | --- |
 | `AWS_EMF_ENABLED` | `true`; Development, Compose and isolated tests disable export. |
-| `AWS_EMF_NAMESPACE` | Required when enabled; the deployment placeholder is rejected. `Local` permits a missing, empty or whitespace value and uses `Defra.WasteObligationsNotifications`. |
-| `AWS_EMF_ENVIRONMENT` | Empty or unknown values use SDK discovery in Lambda, ECS, EC2, then Agent order. Explicit `Local`, `Lambda`, `Agent`, `ECS` or `EC2` selects that SDK environment. |
-| `AWS_EMF_AGENT_ENDPOINT` | SDK default `tcp://127.0.0.1:25888`; configure the actual CDP collector endpoint explicitly. |
-| `AWS_EMF_AGENT_BUFFER_SIZE` | `100` documents; valid range 1–10000. A full SDK buffer drops new documents and produces a sanitized warning. |
-| `AWS_EMF_SERVICE_NAME`, `AWS_EMF_SERVICE_TYPE` | Optional SDK service/routing settings; service name defaults to `waste-obligations-notifications`. The metric `Service` dimension stays fixed. |
-| `AWS_EMF_LOG_GROUP_NAME`, `AWS_EMF_LOG_STREAM_NAME` | Optional agent routing values; they do not become metric dimensions. |
-| `AWS_EMF_SHUTDOWN_TIMEOUT_SECONDS` | `5`, with a range of 1–30; bounds the host's wait for SDK sink shutdown. |
+| `AWS_EMF_NAMESPACE` | Required when enabled; the deployment placeholder is rejected. `Local` permits a blank value and uses `Defra.WasteObligationsNotifications`. |
+| `AWS_EMF_ENVIRONMENT` | SDK process environment: `Local`, `Lambda`, `Agent`, `ECS` or `EC2`; unset/unknown uses SDK discovery. |
+| `AWS_EMF_AGENT_ENDPOINT` | SDK process environment; configure the actual CDP collector endpoint. |
+| `AWS_EMF_AGENT_BUFFER_SIZE` | SDK process environment; defaults to `100` documents. |
+| `AWS_EMF_SERVICE_NAME`, `AWS_EMF_SERVICE_TYPE` | SDK process environment for platform metadata; the command `Service` dimension remains fixed. |
+| `AWS_EMF_LOG_GROUP_NAME`, `AWS_EMF_LOG_STREAM_NAME` | SDK process environment for agent routing. |
 
-Unknown-environment metadata discovery runs once during enabled startup. Each
-request is cancellable and bounded to two seconds; late results cannot pass the
-eight-second startup confirmation budget. No metadata request runs during command
-processing. Export startup, serialization, transport and buffer failures produce
-fixed support diagnostics without SDK state or exception text and do not change
-command delivery or queue deletion. Export is best effort; the SDK handles agent
-transport on its existing background worker. `Local`/`Lambda` use the SDK's
-synchronous console sink.
-
-Shutdown detaches observation before asking the sink to stop. The SDK worker has
-no cancellation API and may remain active after the bounded wait ends; late
-completion cannot restart export or affect another host. Pending metrics may be
-lost when the process exits.
+The application validates enablement and namespace. Environment discovery and
+routing use the SDK's actual process environment, rather than projecting .NET
+configuration into a custom environment factory. No custom metadata client,
+startup discovery deadline or sink shutdown lifecycle remains. As in Waste
+Obligations, the SDK owns those behaviours and its process-wide cache. Metrics
+are best effort; pending agent metrics may be lost when the process exits.
 
 Set the namespace, environment and collector routing in CDP separately; local
 settings do not configure deployments. For CDP/FluentBit, specify
@@ -225,18 +228,28 @@ discovery when the collector route is already known.
 When command processing or administration is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
-Each host checks migration history and the required unique index before command
-consumption starts. A host can become ready after another host applies migrations
-without acquiring the lease itself. Commands stay on SQS while migrations are
-incomplete; analytics consumption and `/health` continue independently.
+A critical index must have completed building, not merely appear in the catalog.
+Incompatible existing definitions are rejected without dropping them. A retry
+confirms an unfinished matching build before saving migration history; completed
+hidden indexes remain valid.
+Each host confirms critical history and the latest critical migration's schema
+before `/health` can succeed. Both consumers start only after the first successful
+health response. Record stores do not wait on migrations. A peer can establish
+the prerequisite; non-critical failures do not block deployment readiness.
 Failures are retried up to `MongoMigrations__MaximumAttempts` across all lease
-acquisitions on the host. A renewal error cancels the attempt; once the engine
+acquisitions and phase changes on the host. While critical prerequisites are
+incomplete, a failed attempt relinquishes the lease after engine and renewal
+work stop, then waits five seconds before reacquiring. Once critical readiness
+is established, standard failures retain the lease and the 30-second retry delay. A renewal error cancels the attempt; once the engine
 stops, the host releases the lease and can reacquire it using the remaining
 attempt budget. After exhaustion,
 the host releases the lease and continues checking for completion by another host.
 It needs a restart to make further migration attempts itself. Failed attempts,
 exhaustion and prolonged readiness waits produce error logs for support alerts.
-An attempt timeout or host shutdown requests cancellation and continues renewing
+Each critical migration operation has a 20-second cooperative deadline; standard
+operations retain a 300-second deadline. Each ordered operation receives its own
+budget, including standard work between two critical migrations. A deadline or
+host shutdown requests cancellation and continues renewing
 the lease while renewal succeeds until execution stops; a migration that does not
 stop needs support intervention.
 
@@ -249,10 +262,12 @@ the engine and outstanding renewal work to stop. This requests cancellation befo
 lease expiry; the migration engine has synchronous operations that can outlive
 cancellation, and the lease does not fence those operations after ownership is lost.
 
-`MongoMigrations` configures lease duration, renewal interval, attempt timeout,
+`MongoMigrations` configures lease duration, renewal interval, standard operation timeout,
 retry delay and readiness-wait alert threshold in seconds (the latter uses
 `LeaseAcquisitionAlertThresholdSeconds`). The defaults are
-60, 15, 300, 30 and 300 respectively, with three attempts. Renewal must be no
+30, 10, 300, 30 and 300 respectively, with three attempts.
+`CriticalOperationTimeoutSeconds` defaults to 20; `AttemptTimeoutSeconds` is the
+per-operation standard budget, rather than a deadline for the whole migration chain. Renewal must be no
 more than half the lease duration. CDP can override these defaults separately
 from local Compose configuration.
 
@@ -295,8 +310,8 @@ command sending. Configure its FIFO `QueueUrl`, a distinct command FIFO URL and 
 delivery digest secrets. `SelectionLifetimeSeconds` defaults to 120 and must be
 strictly below AWS's 300-second receive-attempt window;
 `DependencyTimeoutSeconds` defaults to 10 and must be positive and shorter than
-the selection lifetime. All administrator operations wait for verified Mongo migrations
-before receiving. Redrive and discard apply the dependency timeout to each whole operation,
+the selection lifetime. All administrator requests return 503 until critical migrations complete and
+the first successful anonymous `/health` response finishes. Redrive and discard apply the dependency timeout to each whole operation,
 further limited by the signed selection's remaining lifetime. Notify credentials, cutover and sending budgets are required only
 when sending is enabled. Disabled administration ignores its unvalidated ACL
 and permits deployment placeholders; its endpoints remain absent.
@@ -343,8 +358,7 @@ absolute expiry, immutable-field digest and the original receive visibility time
 and DLQ configuration can validate them; no message body or receipt handle is
 returned or stored. Expiry starts before the receive request, and late dependency
 confirmations fail safely. `/health/all` checks the DLQ when administration is
-enabled, while Notify health remains conditional on sending. `/health` stays
-independent of migration readiness and these dependencies.
+enabled, while Notify health remains conditional on sending. `/health` gates critical migrations; the remaining dependency checks are extended health.
 
 Selection format `v2` binds the original visibility timeout, so another host
 replays the same receive parameters even with different local selection settings.
@@ -411,3 +425,41 @@ an ephemeral volume and fixture bootstrap script. Integration
 tests read the same fixture credential from its test-only API. No Notify account
 credential is stored in development settings or test source. Compose teardown
 removes the generated volume.
+
+## Nullable initial cutover and handover
+
+`NotificationCommandDelivery:EmailDeliveryCutoverUtc` defaults to null. With
+otherwise valid configuration, processing can run in suppression mode while
+Waste Obligations sends every action. Suppression is durable before queue deletion;
+malformed or conflicting commands still retry. Suppressed evidence remains terminal
+and is never backfilled into a send after configuration changes. Empty strings,
+whitespace, deployment placeholders and non-UTC values are invalid supplied cutovers.
+
+After the producer dry run, configure the identical future X in both services and
+verify both deployments complete before X. Notifications sends actions at or after
+X once ticket02 is present; Waste Obligations sends only actions before X. The
+handover is forward-only after X; do not clear the cutover to restore direct sends.
+See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
+
+Critical migration completion is reported by the `MongoMigrationCompletion`
+entry in `/health/all` and gates `/health` while command processing or administration is enabled.
+Migration 001 is flagged `Critical = true`; migrations default to non-critical.
+An absent or invalid critical prerequisite returns 503, including when another
+host owns the lease or every host exhausts its attempts. Already-applied critical
+migrations satisfy readiness without being rerun. Non-critical failures do not
+block readiness. The latest critical migration owns the current schema validation;
+older critical history remains required without retaining obsolete schema checks.
+
+HTTP and migration work start first. Both consumers wait through a shared hosting
+boundary until this host completes its first successful anonymous `/health`
+response. `/health/all` and `/health/authorized` do not release that boundary.
+Stores and business operations have no migration checks. Health reads a latched
+startup result and performs no Mongo queries; later dependency outages are
+reported by extended health. CDP controls replacement of hosts that remain
+unhealthy. Long critical migrations must fit the actual platform startup budget
+or be applied before rollout; the documented 95 seconds is not an overall
+deployment deadline. Metrics and startup logging remain available for diagnosis.
+
+Suppression recorded with an unset cutover remains terminal after configuration,
+including an action at or after the new boundary. Delete matching replays without
+changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.

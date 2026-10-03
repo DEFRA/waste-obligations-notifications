@@ -1,138 +1,89 @@
 using System.Diagnostics.Metrics;
-using Amazon.CloudWatch.EMF.Environment;
 using Amazon.CloudWatch.EMF.Logger;
 using Amazon.CloudWatch.EMF.Model;
-using Amazon.CloudWatch.EMF.Sink;
-using Microsoft.Extensions.Options;
+using Defra.WasteObligations.Consumer.Delivery;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Defra.WasteObligations.Consumer.Utils.Metrics;
 
-public sealed class MetricsExporter(
-    IMeterFactory meterFactory,
-    IOptions<EmfOptions> options,
-    IEmfEnvironmentFactory environmentFactory,
-    EmfDiagnosticLoggerFactory sdkLoggerFactory,
-    ILogger<MetricsExporter> logger
-) : IHostedService, IDisposable
+public static class MetricsExporter
 {
-    private readonly MeterListener _listener = new();
-    private readonly object _gate = new();
-    private IEnvironment? _environment;
-    private ISink? _sink;
-    private bool _observing;
-    private int _shutdownStarted;
+    private static readonly MeterListener s_listener = new();
+    private static ILogger s_logger = NullLogger.Instance;
+    private static string s_namespace = string.Empty;
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public static void Init(ILoggerFactory loggerFactory, string awsNamespace)
     {
-        if (!options.Value.Enabled)
-            return Task.CompletedTask;
-
-        try
+        s_logger = loggerFactory.CreateLogger(nameof(MetricsExporter));
+        s_namespace = awsNamespace;
+        s_listener.InstrumentPublished = (instrument, listener) =>
         {
-            _environment = environmentFactory.Create(cancellationToken);
-            _sink = _environment.Sink;
-            var meter = meterFactory.Create(Metrics.MeterName);
-            _listener.InstrumentPublished = (instrument, listener) =>
-            {
-                if (ReferenceEquals(instrument.Meter, meter))
-                    listener.EnableMeasurementEvents(instrument);
-            };
-            _listener.SetMeasurementEventCallback<int>(OnMeasurementRecorded);
-            _listener.SetMeasurementEventCallback<long>(OnMeasurementRecorded);
-            _listener.SetMeasurementEventCallback<double>(OnMeasurementRecorded);
-            _observing = true;
-            _listener.Start();
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch
-        {
-            ReportFailure("startup", LogLevel.Error);
-        }
-
-        return Task.CompletedTask;
+            if (instrument.Meter.Name == Metrics.MeterName && IsCommandInstrument(instrument.Name))
+                listener.EnableMeasurementEvents(instrument);
+        };
+        s_listener.SetMeasurementEventCallback<int>(OnMeasurementRecorded);
+        s_listener.SetMeasurementEventCallback<long>(OnMeasurementRecorded);
+        s_listener.SetMeasurementEventCallback<double>(OnMeasurementRecorded);
+        s_listener.Start();
     }
 
-    private void OnMeasurementRecorded<T>(
+    private static void OnMeasurementRecorded<T>(
         Instrument instrument,
         T measurement,
         ReadOnlySpan<KeyValuePair<string, object?>> tags,
         object? state
     )
     {
-        lock (_gate)
-        {
-            if (!_observing)
-                return;
-
-            try
-            {
-                // Preseed approved defaults so the SDK does not fetch/decorate metadata during delivery.
-                var context = new MetricsContext
-                {
-                    DefaultDimensions = new DimensionSet(MetricTags.Service, Metrics.ServiceName),
-                };
-                using var metricsLogger = new MetricsLogger(_environment, context, sdkLoggerFactory);
-                metricsLogger.SetNamespace(options.Value.EffectiveNamespace);
-                var dimensions = new DimensionSet(MetricTags.Service, Metrics.ServiceName);
-                foreach (var tag in tags)
-                {
-                    if (tag.Key is not (MetricTags.NotificationType or MetricTags.Outcome))
-                        continue;
-                    var value = tag.Value?.ToString();
-                    if (!string.IsNullOrWhiteSpace(value))
-                        dimensions.AddDimension(tag.Key, value);
-                }
-                metricsLogger.SetDimensions(dimensions);
-                metricsLogger.PutMetric(
-                    instrument.Name,
-                    Convert.ToDouble(measurement),
-                    Enum.Parse<Unit>(instrument.Unit!)
-                );
-            }
-            catch
-            {
-                ReportFailure("measurement export", LogLevel.Error);
-            }
-        }
-    }
-
-    public async Task StopAsync(CancellationToken cancellationToken)
-    {
-        if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
-            return;
-
-        lock (_gate)
-            _observing = false;
-        _listener.Dispose();
-        if (_sink is null)
-            return;
-
         try
         {
-            var shutdown = _sink.Shutdown();
-            // The SDK worker has no cancellation API; observe a fault even after our bounded wait ends.
-            _ = shutdown.ContinueWith(
-                static task => _ = task.Exception,
-                CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default
-            );
-            await shutdown.WaitAsync(TimeSpan.FromSeconds(options.Value.ShutdownTimeoutSeconds), cancellationToken);
+            var unit = Enum.Parse<Unit>(instrument.Unit!);
+            using var metricsLogger = new MetricsLogger(NullLoggerFactory.Instance);
+            metricsLogger.SetNamespace(s_namespace);
+            var dimensions = new DimensionSet(MetricTags.Service, Metrics.ServiceName);
+            foreach (var tag in tags)
+            {
+                var value = tag.Value?.ToString();
+                if (IsCommandDimension(tag.Key, value))
+                    dimensions.AddDimension(tag.Key, value);
+            }
+            metricsLogger.SetDimensions(dimensions);
+            metricsLogger.PutMetric(instrument.Name, Convert.ToDouble(measurement), unit);
+            // SDK 2.2.0 flushes on Dispose; an explicit Flush would emit a second empty document.
         }
-        catch
+        catch (Exception exception)
         {
-            ReportFailure("shutdown", LogLevel.Warning);
+            ReportFailure(exception);
         }
     }
 
-    private void ReportFailure(string operation, LogLevel level)
+    private static void ReportFailure(Exception exception)
     {
-        if (logger.IsEnabled(level))
-            logger.Log(level, "Notification command EMF failure during {Operation}.", operation);
+        if (s_logger.IsEnabled(LogLevel.Error))
+            s_logger.LogError("Notification command EMF export failed ({ExceptionType}).", exception.GetType().Name);
     }
 
-    public void Dispose() => StopAsync(CancellationToken.None).GetAwaiter().GetResult();
+    private static bool IsCommandInstrument(string name) =>
+        name
+            is MetricNames.NotificationCommandReceived
+                or MetricNames.NotificationCommandOutcome
+                or MetricNames.NotificationCommandLeaseClaim
+                or MetricNames.NotificationCommandLeaseClaimDuration
+                or MetricNames.NotificationCommandNotifySendAccepted
+                or MetricNames.NotificationCommandNotifySendFailure
+                or MetricNames.NotificationCommandNotifySendDuration
+                or MetricNames.NotificationCommandDuplicateSuppressed;
+
+    private static bool IsCommandDimension(string name, string? value) =>
+        name == MetricTags.NotificationType && NotificationCommandDeliveryOptions.IsDiagnosticLabel(value)
+        || name == MetricTags.Outcome
+            && value
+                is "delivery-accepted"
+                    or "delivery-suppressed"
+                    or "delivery-abandoned"
+                    or "terminal-duplicate"
+                    or "claimed"
+                    or "conflict"
+                    or "active-claim"
+                    or "unavailable"
+                    or "failure";
 }

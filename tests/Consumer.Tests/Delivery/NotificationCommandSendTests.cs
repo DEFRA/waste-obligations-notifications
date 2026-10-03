@@ -6,6 +6,7 @@ using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -961,8 +962,8 @@ public sealed class NotificationCommandSendTests : IDisposable
         INotificationCommandMetrics? metrics = null
     )
     {
-        var readiness = new MongoMigrationReadiness();
-        readiness.MarkCompleted();
+        var readiness = new ApplicationStartup();
+        readiness.MarkStarted();
         var factory = Substitute.For<INotificationDeliveryRecordStoreFactory>();
         factory.GetRecordStore().Returns(store);
         var digest = new NotificationCommandDigest(

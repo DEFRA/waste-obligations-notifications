@@ -3,7 +3,9 @@ using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Administration;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Notify.Client;
 using Notify.Interfaces;
 
@@ -22,6 +24,8 @@ public static class ServiceCollectionExtensions
         var processingEnabled = configuration.GetValue<bool>(
             $"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled"
         );
+        services.TryAddSingleton<ApplicationStartup>();
+
         services
             .AddOptions<NotificationCommandDeliveryOptions>()
             .Bind(configuration.GetRequiredSection(NotificationCommandDeliveryOptions.SectionName))
@@ -60,7 +64,7 @@ public static class ServiceCollectionExtensions
             )
             .Validate(
                 options => !options.ProcessingEnabled || options.TryReadCutover(out _),
-                "EmailDeliveryCutoverUtc must include an explicit UTC offset when notification command processing is enabled"
+                "EmailDeliveryCutoverUtc must be null or include an explicit UTC offset when notification command processing is enabled"
             )
             .ValidateOnStart();
 

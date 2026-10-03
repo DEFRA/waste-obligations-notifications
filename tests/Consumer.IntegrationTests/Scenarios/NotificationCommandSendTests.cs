@@ -6,6 +6,9 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Utils.Health;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -235,19 +238,24 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                     values["NotificationCommandDelivery:VisibilityTimeoutSeconds"] = "7";
                     values["NotificationCommandDelivery:CommandLeaseSeconds"] = "5";
                 }
-                fixture._host = new HostBuilder()
-                    .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(values))
-                    .ConfigureServices(
-                        (context, services) =>
-                        {
-                            services.AddNotificationCommandDelivery(context.Configuration);
-                            services.AddSingleton<IAmazonSQS>(fixture.Sqs);
-                            services.AddSingleton<IMongoClient>(fixture._mongo);
-                        }
-                    )
-                    .Build();
-                await fixture._host.StartAsync(token);
+                var builder = WebApplication.CreateBuilder();
+                builder.WebHost.UseUrls("http://127.0.0.1:0");
+                builder.Configuration.AddInMemoryCollection(values);
+                builder.Services.AddNotificationCommandDelivery(builder.Configuration);
+                builder.Services.AddSingleton<IAmazonSQS>(fixture.Sqs);
+                builder.Services.AddSingleton<IMongoClient>(fixture._mongo);
+                builder.Services.AddHealth(builder.Configuration);
+                var app = builder.Build();
+                app.MapHealth();
+                fixture._host = app;
+                await app.StartAsync(token);
                 fixture._started = true;
+                using var healthClient = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+                await WaitForAsync(async () =>
+                {
+                    using var response = await healthClient.GetAsync("/health", token);
+                    response.EnsureSuccessStatusCode();
+                });
 
                 return fixture;
             }

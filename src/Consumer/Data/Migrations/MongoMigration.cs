@@ -7,6 +7,8 @@ namespace Defra.WasteObligations.Consumer.Data.Migrations;
 
 public abstract class MongoMigration : IMigration
 {
+    public virtual bool Critical => false;
+
     public abstract MigrationVersion Version { get; }
 
     public abstract string Name { get; }
@@ -15,19 +17,23 @@ public abstract class MongoMigration : IMigration
 
     public abstract Task DownAsync(MigrationContext context);
 
+    public abstract Task<bool> ValidateSchema(IMongoDatabase database, CancellationToken cancellationToken);
+
     protected static async Task CreateIndex<T>(
         MigrationContext context,
         string name,
         IndexKeysDefinition<T> keys,
-        bool unique = false
-    ) => await CreateIndex(context, typeof(T).Name, name, keys, unique);
+        bool unique = false,
+        bool replaceExisting = true
+    ) => await CreateIndex(context, typeof(T).Name, name, keys, unique, replaceExisting);
 
     protected static async Task CreateIndex<T>(
         MigrationContext context,
         string collectionName,
         string name,
         IndexKeysDefinition<T> keys,
-        bool unique = false
+        bool unique = false,
+        bool replaceExisting = true
     )
     {
         var collection = context.Database.GetCollection<T>(collectionName);
@@ -44,6 +50,11 @@ public abstract class MongoMigration : IMigration
 
             if (existingByName is not null)
             {
+                if (existingByName.Contains("partialFilterExpression"))
+                    throw new InvalidOperationException(
+                        "An existing partial index cannot satisfy the required full index."
+                    );
+
                 var existingKeys = existingByName.GetValue("key", new BsonDocument()).AsBsonDocument;
                 var existingUnique =
                     existingByName.TryGetValue("unique", out var existingUniqueValue)
@@ -52,8 +63,32 @@ public abstract class MongoMigration : IMigration
 
                 if (existingKeys.Equals(requestedKeys) && existingUnique == unique)
                 {
+                    if (!await HasCompletedIndex(context.Database, collectionName, name, context.CancellationToken))
+                    {
+                        // Client cancellation does not stop a server build. Reissue its exact spec and await completion.
+                        var existingSpec = existingByName.DeepClone().AsBsonDocument;
+                        existingSpec.Remove("ns");
+                        existingSpec.Remove("v");
+                        await context.Database.RunCommandAsync<BsonDocument>(
+                            new BsonDocument
+                            {
+                                { "createIndexes", collectionName },
+                                {
+                                    "indexes",
+                                    new BsonArray { existingSpec }
+                                },
+                            },
+                            cancellationToken: context.CancellationToken
+                        );
+                    }
+
                     return;
                 }
+
+                if (!replaceExisting)
+                    throw new InvalidOperationException(
+                        "An existing index conflicts with the required critical index."
+                    );
 
                 await DropIndex(context, name, collection);
             }
@@ -70,6 +105,23 @@ public abstract class MongoMigration : IMigration
         );
 
         await collection.Indexes.CreateOneAsync(indexModel, cancellationToken: context.CancellationToken);
+    }
+
+    protected static async Task<bool> HasCompletedIndex(
+        IMongoDatabase database,
+        string collectionName,
+        string name,
+        CancellationToken cancellationToken
+    )
+    {
+        var stats = await database.RunCommandAsync<BsonDocument>(
+            new BsonDocument("collStats", collectionName),
+            cancellationToken: cancellationToken
+        );
+
+        return stats.TryGetValue("indexBuilds", out var builds)
+            && builds.IsBsonArray
+            && !builds.AsBsonArray.Contains(name);
     }
 
     protected static async Task DropIndex<T>(MigrationContext context, string name)

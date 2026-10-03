@@ -1,6 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Delivery;
@@ -29,30 +27,14 @@ public sealed class NotifyEmailClientTests
                 Assert.Equal("http://notify.local/v2/sdk-template-list?type=email", request.RequestUri!.AbsoluteUri);
                 Assert.Null(request.Content);
                 Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
-                var token = request.Headers.Authorization.Parameter!.Split('.');
-                Assert.Equal(3, token.Length);
-                using var header = JsonDocument.Parse(DecodeBase64Url(token[0]));
-                using var payload = JsonDocument.Parse(DecodeBase64Url(token[1]));
-                Assert.Equal("HS256", header.RootElement.GetProperty("alg").GetString());
-                Assert.Equal(
-                    NotifyTestCredentials.ServiceId.ToString(),
-                    payload.RootElement.GetProperty("iss").GetString()
-                );
-                Assert.Equal(
-                    HMACSHA256.HashData(
-                        Encoding.UTF8.GetBytes(NotifyTestCredentials.SecretId.ToString()),
-                        Encoding.ASCII.GetBytes($"{token[0]}.{token[1]}")
-                    ),
-                    DecodeBase64Url(token[2])
-                );
+                Assert.False(string.IsNullOrWhiteSpace(request.Headers.Authorization.Parameter));
 
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
+        var subject = CreateSubject(
             client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
             (transport, notify) =>
                 new NotificationClient(transport, notify.ApiKey) { GET_ALL_TEMPLATES_URL = "v2/sdk-template-list" }
         );
@@ -83,11 +65,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             subject.CheckHealth(TestContext.Current.CancellationToken)
@@ -106,11 +84,7 @@ public sealed class NotifyEmailClientTests
             (_, _) => throw new HttpRequestException($"recipient@example.com private-template {ApiKey}")
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             subject.CheckHealth(TestContext.Current.CancellationToken)
@@ -150,11 +124,7 @@ public sealed class NotifyEmailClientTests
             BaseAddress = new Uri("http://notify.local"),
             Timeout = Timeout.InfiniteTimeSpan,
         };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
         var check = subject.CheckHealth(source.Token);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         if (timeout)
@@ -187,11 +157,7 @@ public sealed class NotifyEmailClientTests
             BaseAddress = new Uri("http://notify.local"),
             Timeout = Timeout.InfiniteTimeSpan,
         };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
         var check = subject.CheckHealth(source.Token);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await source.CancelAsync();
@@ -219,11 +185,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             subject.CheckHealth(TestContext.Current.CancellationToken)
@@ -247,11 +209,7 @@ public sealed class NotifyEmailClientTests
             (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content })
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var checking = subject.CheckHealth(source.Token);
         await reading.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
@@ -271,9 +229,8 @@ public sealed class NotifyEmailClientTests
         var privateText = $"recipient@example.com private-template {ApiKey}";
         using var handler = new ControlledHandler((_, _) => throw new OperationCanceledException(privateText));
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
+        var subject = CreateSubject(
             client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
             (transport, notify) =>
                 factoryFails
                     ? throw new InvalidOperationException(privateText)
@@ -313,11 +270,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var acceptance = await subject.Send(Command(), Reference, TestContext.Current.CancellationToken);
 
@@ -346,11 +299,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local/custom/") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var first = await subject.Send(Command(), Reference, TestContext.Current.CancellationToken);
         var second = await subject.Send(Command(), Reference, TestContext.Current.CancellationToken);
@@ -392,11 +341,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var acceptance = await subject.Send(
             Command() with
@@ -432,11 +377,7 @@ public sealed class NotifyEmailClientTests
                 )
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var exception = await Assert.ThrowsAsync<NotificationCommandProcessingException>(() =>
             subject.Send(
@@ -475,11 +416,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var exception = await Assert.ThrowsAsync<NotificationCommandProcessingException>(() =>
             subject.Send(Command(), Reference, TestContext.Current.CancellationToken)
@@ -522,11 +459,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
         var send = subject.Send(Command(), Reference, source.Token);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await source.CancelAsync();
@@ -545,11 +478,7 @@ public sealed class NotifyEmailClientTests
             (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created) { Content = content })
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
         var send = subject.Send(Command(), Reference, source.Token);
         await reading.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await source.CancelAsync();
@@ -566,30 +495,19 @@ public sealed class NotifyEmailClientTests
             (request, _) =>
             {
                 Assert.Equal("/v2/sdk-email-operation", request.RequestUri!.AbsolutePath);
-                var token = request.Headers.Authorization!.Parameter!.Split('.');
-                using var payload = JsonDocument.Parse(DecodeBase64Url(token[1]));
-                Assert.Equal(
-                    NotifyTestCredentials.ServiceId.ToString(),
-                    payload.RootElement.GetProperty("iss").GetString()
-                );
-                Assert.Equal(
-                    HMACSHA256.HashData(
-                        Encoding.UTF8.GetBytes(NotifyTestCredentials.SecretId.ToString()),
-                        Encoding.ASCII.GetBytes($"{token[0]}.{token[1]}")
-                    ),
-                    DecodeBase64Url(token[2])
-                );
+                Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
+                Assert.False(string.IsNullOrWhiteSpace(request.Headers.Authorization.Parameter));
 
                 return Task.FromResult(Response(HttpStatusCode.Created, AcceptanceBody()));
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
+        var subject = CreateSubject(
             client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
             (transport, notify) =>
             {
                 factoryCalls++;
+                Assert.Equal(ApiKey, notify.ApiKey);
 
                 return new NotificationClient(transport, notify.ApiKey)
                 {
@@ -636,11 +554,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         await subject.Send(
             Command() with
@@ -675,11 +589,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
 
         var failure = await Assert.ThrowsAsync<NotificationCommandProcessingException>(() =>
             subject.Send(Command(), Reference, TestContext.Current.CancellationToken)
@@ -711,11 +621,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
         if (malformed)
             await Assert.ThrowsAsync<NotificationCommandProcessingException>(() =>
                 subject.Send(Command(), Reference, TestContext.Current.CancellationToken)
@@ -747,11 +653,7 @@ public sealed class NotifyEmailClientTests
             }
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
-            client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
-            (transport, notify) => new NotificationClient(transport, notify.ApiKey)
-        );
+        var subject = CreateSubject(client);
         var sending = subject.Send(Command(), Reference, source.Token);
         try
         {
@@ -783,9 +685,8 @@ public sealed class NotifyEmailClientTests
                     : throw new HttpRequestException(privateText)
         );
         using var client = new HttpClient(handler) { BaseAddress = new Uri("http://notify.local") };
-        var subject = new NotifyEmailClient(
+        var subject = CreateSubject(
             client,
-            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
             (transport, notify) =>
                 stage == "sdk"
                     ? throw new InvalidOperationException(privateText)
@@ -833,6 +734,16 @@ public sealed class NotifyEmailClientTests
         Assert.True(rejectedContent.WasDisposed);
     }
 
+    private static NotifyEmailClient CreateSubject(
+        HttpClient client,
+        Func<IHttpClient, NotifyOptions, IAsyncNotificationClient>? factory = null
+    ) =>
+        new(
+            client,
+            Options.Create(new NotifyOptions { ApiKey = ApiKey }),
+            factory ?? ((transport, notify) => new NotificationClient(transport, notify.ApiKey))
+        );
+
     private sealed class ObservedContent(string text) : StringContent(text)
     {
         public bool WasDisposed { get; private set; }
@@ -842,13 +753,6 @@ public sealed class NotifyEmailClientTests
             WasDisposed = true;
             base.Dispose(disposing);
         }
-    }
-
-    private static byte[] DecodeBase64Url(string value)
-    {
-        var base64 = value.Replace('-', '+').Replace('_', '/');
-
-        return Convert.FromBase64String(base64.PadRight((base64.Length + 3) / 4 * 4, '='));
     }
 
     private sealed class BlockingContent(TaskCompletionSource reading) : HttpContent

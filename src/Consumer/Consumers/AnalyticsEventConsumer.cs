@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Consumers;
@@ -10,13 +11,14 @@ namespace Defra.WasteObligations.Consumer.Consumers;
 public sealed class AnalyticsEventConsumer(
     IAmazonSQS sqsClient,
     IOptions<AnalyticsEventConsumerOptions> options,
-    ILogger<AnalyticsEventConsumer> logger
-) : BackgroundService
+    ILogger<AnalyticsEventConsumer> logger,
+    ApplicationStartup startup
+) : StartupBackgroundService(startup)
 {
     private const string ContentEncodingHeader = "Content-Encoding";
     private const string GzipBase64ContentEncoding = "gzip+base64";
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAfterStartup(CancellationToken stoppingToken)
     {
         if (!options.Value.ProcessingEnabled)
         {

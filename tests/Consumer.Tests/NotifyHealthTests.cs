@@ -233,6 +233,11 @@ public sealed class NotifyHealthTests
             foreach (var service in backgroundServices)
                 services.Remove(service);
 
+            var completion = new MongoMigrationCompletion();
+            completion.MarkCompleted();
+            services.RemoveAll<MongoMigrationCompletion>();
+            services.AddSingleton(completion);
+
             var sqs = Substitute.For<IAmazonSQS>();
             sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
                 .Returns(new GetQueueAttributesResponse { HttpStatusCode = HttpStatusCode.OK });

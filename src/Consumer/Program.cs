@@ -6,6 +6,7 @@ using Defra.WasteObligations.Consumer.Endpoints;
 using Defra.WasteObligations.Consumer.Utils;
 using Defra.WasteObligations.Consumer.Utils.Health;
 using Defra.WasteObligations.Consumer.Utils.Logging;
+using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration().WriteTo.Console().CreateBootstrapLogger();
@@ -26,6 +27,7 @@ try
 
     var app = builder.Build();
 
+    app.UseNotificationCommandMetrics();
     app.UseHeaderPropagation();
     app.UseAuthentication();
     app.UseAuthorization();

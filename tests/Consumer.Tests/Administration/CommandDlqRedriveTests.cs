@@ -10,6 +10,7 @@ using Defra.WasteObligations.Consumer.Administration;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -536,7 +537,7 @@ public sealed class CommandDlqRedriveTests
     }
 
     [Fact]
-    public async Task WhenReadinessHasNotCompleted_ShouldTimeoutWithoutReplayThenSucceedAfterReadiness()
+    public async Task WhenCriticalStartupIsIncomplete_ShouldRejectWithoutReplayThenSucceedAfterHealthyResponse()
     {
         await using var factory = new RedriveApplicationFactory(
             new() { ["CommandDlqAdministration:DependencyTimeoutSeconds"] = "1" },
@@ -548,7 +549,11 @@ public sealed class CommandDlqRedriveTests
         using var blocked = await client.SendAsync(blockedRequest, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, blocked.StatusCode);
         Assert.Empty(factory.Sqs.ReceivedCalls());
-        factory.Readiness.MarkCompleted();
+        using var unavailable = await client.GetAsync("/health", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+        factory.Completion.MarkCompleted();
+        using var health = await client.GetAsync("/health", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, health.StatusCode);
         using var readyRequest = Request(token);
 
         using var succeeded = await client.SendAsync(readyRequest, TestContext.Current.CancellationToken);
@@ -743,7 +748,8 @@ public sealed class CommandDlqRedriveTests
         public INotificationDeliveryRecordStore Store { get; } = CreateStore();
         public INotifyEmailClient Notify { get; } = Substitute.For<INotifyEmailClient>();
         public RecordingLogs Logs { get; } = new();
-        public MongoMigrationReadiness Readiness { get; } = new();
+        public ApplicationStartup Startup { get; } = new();
+        public MongoMigrationCompletion Completion { get; } = new();
 
         private static IAmazonSQS CreateSqs()
         {
@@ -796,8 +802,12 @@ public sealed class CommandDlqRedriveTests
                 services.RemoveAll<INotifyEmailClient>();
                 services.AddSingleton(Notify);
                 if (ready)
-                    Readiness.MarkCompleted();
-                services.AddSingleton(Readiness);
+                {
+                    Startup.MarkStarted();
+                    Completion.MarkCompleted();
+                }
+                services.AddSingleton(Startup);
+                services.AddSingleton(Completion);
             });
         }
 

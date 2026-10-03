@@ -31,9 +31,7 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WhenSendingIsPaused_ShouldWaitForRealMigrationReadinessAndInspectOnlyOneRealFifoMessage(
-        bool oauth
-    )
+    public async Task WhenSendingIsPaused_ShouldGateCriticalStartupAndInspectOnlyOneRealFifoMessage(bool oauth)
     {
         using var sqs = CreateSqsClient();
         using var mongo = CreateMongoClient();
@@ -85,22 +83,28 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
                 : $"Basic {Convert.ToBase64String(Encoding.UTF8.GetBytes($"admin:{Secret}"))}";
             request.Headers.TryAddWithoutValidation("Authorization", authorization);
 
-            var inspecting = client.SendAsync(request, token);
-            await factory.Logs.EndpointEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), token);
+            using var unavailable = await client.SendAsync(request, token);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
             Assert.Equal(0, factory.Sqs.ReceiveCount);
-            Assert.False(inspecting.IsCompleted);
             Assert.Equal(
                 0,
                 await database
                     .GetCollection<BsonDocument>("_migrations")
                     .CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty, cancellationToken: token)
             );
-            using var ready = await client.GetAsync("/health", token);
-            Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+            using var notReady = await client.GetAsync("/health", token);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, notReady.StatusCode);
             Assert.Equal(0, factory.Sqs.ReceiveCount);
             await lease.Release(token);
 
-            using var response = await inspecting;
+            await WaitForAsync(async () =>
+            {
+                using var healthResponse = await client.GetAsync("/health", token);
+                Assert.Equal(HttpStatusCode.OK, healthResponse.StatusCode);
+            });
+            using var retry = new HttpRequestMessage(HttpMethod.Post, Route);
+            retry.Headers.TryAddWithoutValidation("Authorization", authorization);
+            using var response = await client.SendAsync(retry, token);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var selectedKey = body.RootElement.GetProperty("idempotencyKey").GetString();

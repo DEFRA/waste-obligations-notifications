@@ -90,4 +90,34 @@ public sealed class ServiceCollectionExtensionsTests
 
         return services.BuildServiceProvider();
     }
+
+    [Theory]
+    [InlineData("declaration-submitted", true)]
+    [InlineData("synthetic-type@example.com", false)]
+    [InlineData("Déclaration", false)]
+    [InlineData("", false)]
+    public void WhenDiagnosticLabelIsConfigured_ShouldRejectPrivateOrUnboundedCategories(string label, bool valid)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["NotificationCommandDelivery:QueueUrl"] = "commands.fifo",
+                    ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
+                    ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
+                    ["NotificationCommandDelivery:DiagnosticNotificationTypes:0"] = label,
+                    ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
+                }
+            )
+            .Build();
+        var services = new ServiceCollection();
+        services.AddNotificationCommandDelivery(configuration);
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>();
+
+        if (valid)
+            Assert.Equal(label, options.Value.GetDiagnosticNotificationType(label));
+        else
+            Assert.Throws<OptionsValidationException>(() => options.Value);
+    }
 }

@@ -3,7 +3,6 @@ using System.Net;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
-using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Microsoft.Extensions.Options;
 
@@ -12,7 +11,6 @@ namespace Defra.WasteObligations.Consumer.Administration;
 public sealed class CommandDlqDiscarder(
     IAmazonSQS sqs,
     INotificationDeliveryRecordStore store,
-    MongoMigrationReadiness readiness,
     INotificationCommandDigest digest,
     CommandDlqSelectionTokens selections,
     IOptions<CommandDlqAdministrationOptions> administration,
@@ -33,7 +31,6 @@ public sealed class CommandDlqDiscarder(
         {
             EnsureTimely(started, budget, selection, source.Token);
             source.CancelAfter(budget - Stopwatch.GetElapsedTime(started));
-            await readiness.Wait(source.Token);
             EnsureTimely(started, budget, selection, source.Token);
             var response = await sqs.ReceiveMessageAsync(
                 new ReceiveMessageRequest

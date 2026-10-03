@@ -1,4 +1,6 @@
 using Amazon.SQS;
+using Defra.WasteObligations.Consumer.Startup;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Defra.WasteObligations.Consumer.Consumers;
 
@@ -9,6 +11,8 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration
     )
     {
+        services.TryAddSingleton<ApplicationStartup>();
+
         services
             .AddOptions<AnalyticsEventConsumerOptions>()
             .Bind(configuration.GetRequiredSection(AnalyticsEventConsumerOptions.SectionName))
