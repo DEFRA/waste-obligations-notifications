@@ -169,23 +169,22 @@ errors are not reconstructed or added to persisted delivery evidence.
 Instruments follow Waste Obligations' DI-owned meter and singleton instrumentation
 conventions. Shared names and tag keys use PascalCase; counters use CloudWatch
 `COUNT` and claim/send durations use `MILLISECONDS`, matching email-send timing.
-The only dimensions are the fixed Notifications `Service`, bounded
-`NotificationType` and fixed `Outcome`. A DI-owned CloudWatch EMF exporter starts
-before the command consumer and observes only its host's meter. It uses the Waste
-Obligations SDK/configuration mechanism and SDK-owned process-wide environment
-cache, without platform-property decoration. One measurement emits one EMF document; optional
-agent log-group/stream routing is preserved outside metric dimensions.
+Command dimensions are the fixed Notifications `Service`, bounded
+`NotificationType` and fixed `Outcome`. The process-wide exporter follows Waste
+Obligations' static meter listener and EMF `MetricsLogger` mechanism, initialised
+before the host starts. It observes the known command instruments by meter name.
+One measurement emits one SDK document; logger disposal performs the flush.
+The SDK owns its process-wide environment cache, platform metadata decoration,
+agent transport and lifecycle.
 
 Export defaults to enabled and requires a configured namespace, except that
 `AWS_EMF_ENVIRONMENT=Local` allows a blank namespace and uses the Notifications
 namespace. Disabled export does not resolve an SDK environment. Local development
-and isolated tests disable it. Unknown-environment discovery uses bounded,
-cancellable startup metadata requests; delivery never fetches metadata. Export
-startup, serialization and shutdown failures yield fixed diagnostics and do not
-affect command processing. SDK internal diagnostics are disabled; full-buffer
-drops remain best effort. Observation stops before sink shutdown; the host bounds its
-wait, but the SDK's background worker has no cancellation API and may outlive that
-wait. Metrics are best effort. See the README for configuration and CDP routing.
+and isolated tests disable it. SDK environment selection and routing read actual
+process environment variables. No custom metadata transport, environment factory
+or shutdown lifecycle is present. SDK internal diagnostics are disabled; export
+failures expose a fixed message and exception type without private contents.
+Metrics remain best effort. See the README for configuration and CDP routing.
 
 With command processing enabled, `/health/all` includes a light read-only Notify
 connectivity check. It makes one authenticated `GET /v2/templates?type=email`,

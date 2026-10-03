@@ -179,40 +179,33 @@ cancellation; it does not prove Notify rejected the email. Persistence failures
 remain errors in operational logs, and failed claims receive a fixed failure
 outcome.
 
-A host-owned exporter starts before the command consumer and observes only that
-host's command meter. It uses Waste Obligations' CloudWatch EMF 2.2.0 mechanism,
-emitting one SDK JSON document per measurement. SDK platform decoration is skipped;
-dimensions remain `Service`, `NotificationType` and, where applicable, `Outcome`.
-Configured agent log-group/stream routing is preserved.
+The process-wide exporter follows Waste Obligations' static meter listener and
+CloudWatch EMF 2.2.0 `MetricsLogger`. It is initialised before the host starts and
+observes the command instruments by meter name. Each measurement uses the SDK's
+normal environment provider and emits one document. The pinned SDK flushes on
+logger disposal, so the exporter does not explicitly flush a second time.
+Command dimensions stay bounded; the SDK owns platform metadata decoration,
+environment caching and agent transport. SDK internal diagnostic logging is
+disabled; exporter failures log a fixed message and exception type only.
 
-EMF configuration uses the same root `AWS_EMF_*` keys as Waste Obligations:
+EMF configuration uses the same root keys as Waste Obligations:
 
 | Setting | Default and behaviour |
 | --- | --- |
 | `AWS_EMF_ENABLED` | `true`; Development, Compose and isolated tests disable export. |
-| `AWS_EMF_NAMESPACE` | Required when enabled; the deployment placeholder is rejected. `Local` permits a missing, empty or whitespace value and uses `Defra.WasteObligationsNotifications`. |
-| `AWS_EMF_ENVIRONMENT` | Empty or unknown values use SDK discovery in Lambda, ECS, EC2, then Agent order. Explicit `Local`, `Lambda`, `Agent`, `ECS` or `EC2` selects that SDK environment. |
-| `AWS_EMF_AGENT_ENDPOINT` | SDK default `tcp://127.0.0.1:25888`; configure the actual CDP collector endpoint explicitly. |
-| `AWS_EMF_AGENT_BUFFER_SIZE` | `100` documents; valid range 1–10000. A full SDK buffer drops new documents; metrics are best effort. |
-| `AWS_EMF_SERVICE_NAME`, `AWS_EMF_SERVICE_TYPE` | Optional SDK service/routing settings; service name defaults to `waste-obligations-notifications`. The metric `Service` dimension stays fixed. |
-| `AWS_EMF_LOG_GROUP_NAME`, `AWS_EMF_LOG_STREAM_NAME` | Optional agent routing values; they do not become metric dimensions. |
-| `AWS_EMF_SHUTDOWN_TIMEOUT_SECONDS` | `5`, with a range of 1–30; bounds the host's wait for SDK sink shutdown. |
+| `AWS_EMF_NAMESPACE` | Required when enabled; the deployment placeholder is rejected. `Local` permits a blank value and uses `Defra.WasteObligationsNotifications`. |
+| `AWS_EMF_ENVIRONMENT` | SDK process environment: `Local`, `Lambda`, `Agent`, `ECS` or `EC2`; unset/unknown uses SDK discovery. |
+| `AWS_EMF_AGENT_ENDPOINT` | SDK process environment; configure the actual CDP collector endpoint. |
+| `AWS_EMF_AGENT_BUFFER_SIZE` | SDK process environment; defaults to `100` documents. |
+| `AWS_EMF_SERVICE_NAME`, `AWS_EMF_SERVICE_TYPE` | SDK process environment for platform metadata; the command `Service` dimension remains fixed. |
+| `AWS_EMF_LOG_GROUP_NAME`, `AWS_EMF_LOG_STREAM_NAME` | SDK process environment for agent routing. |
 
-Unknown-environment metadata discovery runs once during enabled startup. Each
-request is cancellable and bounded to two seconds; late results cannot pass the
-eight-second startup confirmation budget. No metadata request runs during command
-processing. The AWS SDK owns environment discovery and its process-wide cache,
-following Waste Obligations. SDK internal diagnostics are disabled to prevent
-private exception or endpoint data entering logs. Exporter startup, serialization
-and shutdown failures produce fixed support diagnostics and do not change
-command delivery or queue deletion. Export is best effort; the SDK handles agent
-transport on its existing background worker. `Local`/`Lambda` use the SDK's
-synchronous console sink.
-
-Shutdown detaches observation before asking the sink to stop. The SDK worker has
-no cancellation API and may remain active after the bounded wait ends; late
-completion cannot restart export or affect another host. Pending metrics may be
-lost when the process exits.
+The application validates enablement and namespace. Environment discovery and
+routing use the SDK's actual process environment, rather than projecting .NET
+configuration into a custom environment factory. No custom metadata client,
+startup discovery deadline or sink shutdown lifecycle remains. As in Waste
+Obligations, the SDK owns those behaviours and its process-wide cache. Metrics
+are best effort; pending agent metrics may be lost when the process exits.
 
 Set the namespace, environment and collector routing in CDP separately; local
 settings do not configure deployments. For CDP/FluentBit, specify
