@@ -643,7 +643,6 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 new NotificationCommandDeliveryOptions
                 {
                     QueueUrl = QueueUrl,
-                    ProcessingEnabled = true,
                     EmailDeliveryCutoverUtc = cutover,
                     EvidenceDigestSecret = "test-evidence-secret",
                     RecipientLaneSecret = "test-recipient-lane-secret",

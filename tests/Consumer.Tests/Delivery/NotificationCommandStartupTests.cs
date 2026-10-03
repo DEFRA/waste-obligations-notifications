@@ -19,6 +19,10 @@ public sealed class NotificationCommandStartupTests
     private const string LaneSecret = "private-test-lane-secret";
 
     [Theory]
+    [InlineData("QueueUrl", "set-automatically-when-deployed")]
+    [InlineData("QueueUrl", "http://localhost:4566/not-fifo")]
+    [InlineData("QueueUrl", "ftp://localhost/commands.fifo")]
+    [InlineData("QueueUrl", "private-invalid-queue")]
     [InlineData("EvidenceDigestSecret", "set-automatically-by-deployment-evidence-secret")]
     [InlineData("RecipientLaneSecret", "set-automatically-by-deployment-lane-secret")]
     [InlineData("VisibilityTimeoutSeconds", "119")]
@@ -34,7 +38,7 @@ public sealed class NotificationCommandStartupTests
     [InlineData("EmailDeliveryCutoverUtc", "00:00Z")]
     [InlineData("EmailDeliveryCutoverUtc", "")]
     [InlineData("EmailDeliveryCutoverUtc", " ")]
-    public async Task WhenEnabledWithInvalidConfiguration_ShouldFailStartupBeforeReceivingAndNotExposeValues(
+    public async Task WhenConfigurationInvalid_ShouldFailStartupBeforeReceivingAndNotExposeValues(
         string field,
         string invalidValue
     )
@@ -44,7 +48,6 @@ public sealed class NotificationCommandStartupTests
         using var host = CreateHost(
             sqs,
             logger,
-            true,
             new Dictionary<string, string?> { [$"NotificationCommandDelivery:{field}"] = invalidValue }
         );
 
@@ -67,7 +70,7 @@ public sealed class NotificationCommandStartupTests
     [InlineData("2100-01-01T00:00:00Z")]
     [InlineData("2100-01-01T00:00:00+00:00")]
     [InlineData("2100-01-01T00:00:00-00:00")]
-    public async Task WhenEnabledWithConfiguredSecretsAndUtcCutover_ShouldStartAndReceive(string? cutover)
+    public async Task WhenSecretsAndUtcCutoverConfigured_ShouldStartAndReceive(string? cutover)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqs = Substitute.For<IAmazonSQS>();
@@ -82,7 +85,6 @@ public sealed class NotificationCommandStartupTests
         using var host = CreateHost(
             sqs,
             Substitute.For<ILogger>(),
-            true,
             new Dictionary<string, string?> { ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover }
         );
 
@@ -95,7 +97,7 @@ public sealed class NotificationCommandStartupTests
     }
 
     [Fact]
-    public async Task WhenEnabledWithJsonNullCutover_ShouldOverrideConfiguredValueAndReceive()
+    public async Task WhenJsonNullCutoverConfigured_ShouldOverrideConfiguredValueAndReceive()
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqs = Substitute.For<IAmazonSQS>();
@@ -107,7 +109,7 @@ public sealed class NotificationCommandStartupTests
 
                 return new ReceiveMessageResponse();
             });
-        using var host = CreateHost(sqs, Substitute.For<ILogger>(), true, jsonNullCutover: true);
+        using var host = CreateHost(sqs, Substitute.For<ILogger>(), jsonNullCutover: true);
 
         await host.StartAsync(TestContext.Current.CancellationToken);
         host.Services.GetRequiredService<ApplicationStartup>().MarkStarted();
@@ -122,35 +124,47 @@ public sealed class NotificationCommandStartupTests
     }
 
     [Fact]
-    public async Task WhenDisabledWithDeploymentPlaceholders_ShouldStartWithoutReceiving()
+    public async Task WhenRetiredProcessingFlagIsFalse_ShouldStillReceiveAfterStartup()
     {
-        const string placeholder = "set-automatically-when-deployed";
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sqs = Substitute.For<IAmazonSQS>();
+        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                received.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+
+                return new ReceiveMessageResponse();
+            });
+        using var host = CreateHost(
+            sqs,
+            Substitute.For<ILogger>(),
+            new Dictionary<string, string?> { ["NotificationCommandDelivery:ProcessingEnabled"] = "false" }
+        );
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ApplicationStartup>().MarkStarted();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+        await sqs.Received(1).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("2100-01-01T00:00:00Z")]
+    public async Task WhenNotifyCredentialsInvalid_ShouldFailBeforeReceivingWithoutExposingKey(string? cutover)
+    {
+        const string invalidKey = "private-invalid-api-key";
         var sqs = Substitute.For<IAmazonSQS>();
         using var host = CreateHost(
             sqs,
             Substitute.For<ILogger>(),
-            false,
-            new Dictionary<string, string?>
+            new()
             {
-                ["NotificationCommandDelivery:EvidenceDigestSecret"] = placeholder,
-                ["NotificationCommandDelivery:RecipientLaneSecret"] = placeholder,
-                ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = placeholder,
-                ["Notify:ApiKey"] = placeholder,
+                ["Notify:ApiKey"] = invalidKey,
+                ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover,
+                ["NotificationCommandDelivery:ProcessingEnabled"] = "false",
             }
         );
-
-        await host.StartAsync(TestContext.Current.CancellationToken);
-        await host.StopAsync(TestContext.Current.CancellationToken);
-
-        await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task WhenEnabledWithInvalidNotifyCredentials_ShouldFailBeforeReceivingWithoutExposingKey()
-    {
-        const string invalidKey = "private-invalid-api-key";
-        var sqs = Substitute.For<IAmazonSQS>();
-        using var host = CreateHost(sqs, Substitute.For<ILogger>(), true, new() { ["Notify:ApiKey"] = invalidKey });
 
         var exception = await Assert.ThrowsAsync<OptionsValidationException>(() =>
             host.StartAsync(TestContext.Current.CancellationToken)
@@ -161,12 +175,44 @@ public sealed class NotificationCommandStartupTests
     }
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    public async Task WhenNotifyKeyDoesNotMeetSdkShape_ShouldRejectItOnlyForEnabledSending(
-        bool processingEnabled,
+    [InlineData("Notify:BaseAddress", "private-invalid-notify-url")]
+    [InlineData("NotificationCommandDelivery:CommandLeaseSeconds", "89")]
+    [InlineData("NotificationCommandDelivery:VisibilityTimeoutSeconds", "119")]
+    public async Task WhenNullCutoverAndRetiredFlagConfigured_ShouldStillValidateUrlAndSendBudget(
+        string setting,
+        string invalidValue
+    )
+    {
+        var sqs = Substitute.For<IAmazonSQS>();
+        var logger = Substitute.For<ILogger>();
+        using var host = CreateHost(
+            sqs,
+            logger,
+            new()
+            {
+                ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = null,
+                ["NotificationCommandDelivery:ProcessingEnabled"] = "false",
+                [setting] = invalidValue,
+            }
+        );
+
+        var exception = await Assert.ThrowsAsync<OptionsValidationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken)
+        );
+
+        var logged = string.Join("\n", logger.ReceivedCalls().Select(call => string.Join(" ", call.GetArguments())));
+        Assert.DoesNotContain(invalidValue, exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(invalidValue, logged, StringComparison.Ordinal);
+        await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(null, true)]
+    [InlineData("2100-01-01T00:00:00Z", false)]
+    [InlineData("2100-01-01T00:00:00Z", true)]
+    public async Task WhenNotifyKeyDoesNotMeetSdkShape_ShouldRejectItBeforeReceiving(
+        string? cutover,
         bool containsSpace
     )
     {
@@ -175,23 +221,18 @@ public sealed class NotificationCommandStartupTests
             : NotifyTestCredentials.ApiKey[^73..];
         var sqs = Substitute.For<IAmazonSQS>();
         var logger = Substitute.For<ILogger>();
-        using var host = CreateHost(sqs, logger, processingEnabled, new() { ["Notify:ApiKey"] = invalidKey });
+        using var host = CreateHost(
+            sqs,
+            logger,
+            new() { ["Notify:ApiKey"] = invalidKey, ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover }
+        );
 
-        if (processingEnabled)
-        {
-            var exception = await Assert.ThrowsAsync<OptionsValidationException>(() =>
-                host.StartAsync(TestContext.Current.CancellationToken)
-            );
+        var exception = await Assert.ThrowsAsync<OptionsValidationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken)
+        );
 
-            Assert.Contains("Notify ApiKey", exception.Message, StringComparison.Ordinal);
-            Assert.DoesNotContain(invalidKey, exception.ToString(), StringComparison.Ordinal);
-        }
-        else
-        {
-            await host.StartAsync(TestContext.Current.CancellationToken);
-            await host.StopAsync(TestContext.Current.CancellationToken);
-        }
-
+        Assert.Contains("Notify ApiKey", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(invalidKey, exception.ToString(), StringComparison.Ordinal);
         await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
         var logged = string.Join("\n", logger.ReceivedCalls().Select(call => string.Join(" ", call.GetArguments())));
         Assert.DoesNotContain(invalidKey, logged, StringComparison.Ordinal);
@@ -207,7 +248,6 @@ public sealed class NotificationCommandStartupTests
         using var host = CreateHost(
             sqs,
             Substitute.For<ILogger>(),
-            true,
             new() { ["NotificationCommandDelivery:DiagnosticNotificationTypes:0"] = label }
         );
 
@@ -230,7 +270,7 @@ public sealed class NotificationCommandStartupTests
                 index => $"NotificationCommandDelivery:DiagnosticNotificationTypes:{index}",
                 _ => (string?)"submitted"
             );
-        using var host = CreateHost(sqs, Substitute.For<ILogger>(), true, labels);
+        using var host = CreateHost(sqs, Substitute.For<ILogger>(), labels);
 
         await Assert.ThrowsAsync<OptionsValidationException>(() =>
             host.StartAsync(TestContext.Current.CancellationToken)
@@ -242,7 +282,6 @@ public sealed class NotificationCommandStartupTests
     private static IHost CreateHost(
         IAmazonSQS sqs,
         ILogger logger,
-        bool processingEnabled,
         Dictionary<string, string?>? overrides = null,
         bool jsonNullCutover = false
     )
@@ -250,12 +289,12 @@ public sealed class NotificationCommandStartupTests
         var values = new Dictionary<string, string?>
         {
             ["AWS_EMF_ENABLED"] = "false",
-            ["NotificationCommandDelivery:ProcessingEnabled"] = processingEnabled.ToString(),
             ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
             ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",
             ["NotificationCommandDelivery:EvidenceDigestSecret"] = EvidenceSecret,
             ["NotificationCommandDelivery:RecipientLaneSecret"] = LaneSecret,
             ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
+            ["Notify:BaseAddress"] = "http://notify.local",
             ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
             ["Mongo:DatabaseName"] = "startup-test",
         };

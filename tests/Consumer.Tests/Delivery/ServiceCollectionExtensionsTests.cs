@@ -24,7 +24,7 @@ public sealed class ServiceCollectionExtensionsTests
             .AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
-                    ["NotificationCommandDelivery:QueueUrl"] = "commands.fifo",
+                    ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
@@ -66,7 +66,7 @@ public sealed class ServiceCollectionExtensionsTests
             .AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
-                    ["NotificationCommandDelivery:QueueUrl"] = "commands.fifo",
+                    ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
                     ["NotificationCommandDelivery:DiagnosticNotificationTypes:0"] = label,

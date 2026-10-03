@@ -17,13 +17,26 @@ try
     builder.ConfigureLoggingAndTracing();
     builder.Services.AddProblemDetails();
     builder.Services.AddAuthorization();
-    builder.Services.AddHealth(builder.Configuration);
+    builder.Services.AddHealth();
     builder.Services.AddAnalyticsEventConsumer(builder.Configuration);
     builder.Services.AddNotificationCommandDelivery(builder.Configuration);
 
     var app = builder.Build();
 
     app.UseNotificationCommandMetrics();
+    var delivery = app
+        .Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<NotificationCommandDeliveryOptions>>()
+        .Value;
+    var cutoverValid = delivery.TryReadCutover(out var cutover);
+    if (app.Logger.IsEnabled(LogLevel.Information))
+    {
+        app.Logger.LogInformation(
+            "Email delivery cutover {EmailDeliveryCutoverUtc}; cutover valid {CutoverValid}",
+            cutover,
+            cutoverValid
+        );
+    }
+
     app.UseHeaderPropagation();
     app.UseAuthorization();
     app.MapHealth();

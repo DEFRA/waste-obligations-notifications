@@ -24,7 +24,7 @@ public sealed class MongoMigrationHealthTests
     [InlineData(false)]
     [InlineData(true)]
     public async Task WhenCriticalMigrationsComplete_ShouldStartConsumersOnlyAfterSuccessfulHealthResponse(
-        bool commandsEnabled
+        bool analyticsEnabled
     )
     {
         var completion = new MongoMigrationCompletion();
@@ -34,26 +34,23 @@ public sealed class MongoMigrationHealthTests
         sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
             .Returns(async call =>
             {
-                if (Interlocked.Increment(ref receives) == (commandsEnabled ? 2 : 1))
+                if (Interlocked.Increment(ref receives) == (analyticsEnabled ? 2 : 1))
                     receiving.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
 
                 return new ReceiveMessageResponse();
             });
-        await using var app = CreateApplication(completion, sqs, commandsEnabled);
+        await using var app = CreateApplication(completion, sqs, analyticsEnabled);
         await app.StartAsync(TestContext.Current.CancellationToken);
         using var client = app.GetTestClient();
         var startup = app.Services.GetRequiredService<ApplicationStartup>();
         await Task.Delay(100, TestContext.Current.CancellationToken);
         Assert.Equal(0, Volatile.Read(ref receives));
         Assert.False(startup.IsStarted);
-        if (commandsEnabled)
-        {
-            using var unavailable = await client.GetAsync("/health", TestContext.Current.CancellationToken);
-            Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
-            Assert.False(startup.IsStarted);
-            Assert.Equal(0, Volatile.Read(ref receives));
-        }
+        using var unavailable = await client.GetAsync("/health", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+        Assert.False(startup.IsStarted);
+        Assert.Equal(0, Volatile.Read(ref receives));
 
         completion.MarkCompleted();
         using var extended = await client.GetAsync("/health/all", TestContext.Current.CancellationToken);
@@ -68,7 +65,7 @@ public sealed class MongoMigrationHealthTests
         Assert.True(startup.IsStarted);
         using var again = await client.GetAsync("/health", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, again.StatusCode);
-        Assert.Equal(commandsEnabled ? 2 : 1, Volatile.Read(ref receives));
+        Assert.Equal(analyticsEnabled ? 2 : 1, Volatile.Read(ref receives));
         await app.StopAsync(TestContext.Current.CancellationToken);
     }
 
@@ -90,7 +87,7 @@ public sealed class MongoMigrationHealthTests
     private static WebApplication CreateApplication(
         MongoMigrationCompletion completion,
         IAmazonSQS sqs,
-        bool commandsEnabled
+        bool analyticsEnabled
     )
     {
         var builder = WebApplication.CreateBuilder();
@@ -99,9 +96,8 @@ public sealed class MongoMigrationHealthTests
         builder.Configuration.AddInMemoryCollection(
             new Dictionary<string, string?>
             {
-                ["AnalyticsEventConsumer:ProcessingEnabled"] = "true",
+                ["AnalyticsEventConsumer:ProcessingEnabled"] = analyticsEnabled.ToString(),
                 ["AnalyticsEventConsumer:QueueUrl"] = "http://localhost:4566/analytics",
-                ["NotificationCommandDelivery:ProcessingEnabled"] = commandsEnabled.ToString(),
                 ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                 ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                 ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
@@ -124,7 +120,7 @@ public sealed class MongoMigrationHealthTests
             builder.Services.Remove(service);
         builder.Services.AddSingleton(completion);
         builder.Services.AddSingleton(sqs);
-        builder.Services.AddHealth(builder.Configuration);
+        builder.Services.AddHealth();
         builder.Services.Configure<HealthCheckServiceOptions>(options =>
         {
             // Exercise the real startup registration independently of live dependency checks.

@@ -38,20 +38,25 @@ original recipient-lane position.
   again after success or an empty response; its poll interval is backoff only
   after errors. The command receive timeout must exceed its long-poll wait and
   bounds that receive without changing the shared SQS client's configuration.
-  A disabled consumer logs once and awaits cancellation.
+  A disabled analytics consumer logs once and awaits cancellation.
 - Apply the logging restrictions in [coding standards](../CODING_STANDARDS.md).
 
 ## Notification commands and data protection
+
+Producer wire fields, timestamp precision and exact FIFO lane calculation are
+specified in the [producer contract](notification-command-producer-contract.md).
 
 - Keep notification delivery separate from the analytics-event path. Analytics
   consumption does not deliver notifications, mutate business data, transform
   payloads, or persist event data.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
-- Allow a null cutover; validate any supplied UTC cutover and configured evidence and recipient-lane secrets
-  at startup when command processing is enabled. Invalid configuration must
-  not consume commands; disabled processing permits deployment placeholders.
-  Digest creation also rejects unconfigured secrets independently of processing.
+- Consume commands unconditionally after successful startup readiness. Null
+  cutover permanently suppresses them; it does not pause consumption. Validate
+  the configured FIFO queue, digest secrets, Notify credentials/API URL, complete
+  processing budget and any supplied UTC cutover at
+  startup. Invalid values and deployment placeholders prevent startup and queue
+  effects. Digest creation independently rejects unconfigured secrets.
 - Use the idempotency key as the FIFO message-deduplication ID and a
   non-reversible per-recipient digest as the FIFO message-group ID.
   Validate the key before publishing or consuming: it must contain 1–128
@@ -59,8 +64,7 @@ original recipient-lane position.
   [SQS SendMessage](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html#API_SendMessage_RequestParameters).
   Reject invalid keys without changing them; never trim, truncate or replace
   the key to fit the queue constraints.
-- Run versioned Mongo migrations under a renewable exclusive lease when command
-  processing is enabled. Critical migrations gate `/health`; migration 001 is
+- Run versioned Mongo migrations under a renewable exclusive lease on every host. Critical migrations gate `/health`; migration 001 is
   critical because its full unique notification-key index enforces idempotency.
   Require the build to complete before recording history or readiness; catalog
   presence alone is insufficient. Reject incompatible existing definitions without
@@ -186,15 +190,14 @@ or shutdown lifecycle is present. SDK internal diagnostics are disabled; export
 failures expose a fixed message and exception type without private contents.
 Metrics remain best effort. See the README for configuration and CDP routing.
 
-With command processing enabled, `/health/all` includes a light read-only Notify
-connectivity check. It makes one authenticated `GET /v2/templates?type=email`,
+`/health/all` includes a light read-only Notify check on every host, including
+with null cutover. It makes one authenticated `GET /v2/templates?type=email`,
 requires `200 OK`, and uses the pinned SDK template-list operation. The SDK
 reads and deserializes template data; it is discarded without logging, persistence
 or exposure in the health result. The existing ten-second health timeout cancels
 the complete HTTP request and response buffering; a late response
 after cancellation cannot report healthy. Results and logs expose only fixed
-descriptions, without dependency exceptions or response data. Disabled command
-processing does not register or call Notify health. `/health` stays independent
+descriptions, without dependency exceptions or response data. `/health` stays independent
 of extended dependency checks. This check does not validate a specific template
 or confirm recipient delivery.
 
@@ -223,7 +226,7 @@ logged as required by the analytics contract above.
 
 ## Initial deployment and cutover
 
-The default cutover is null. Enabled processing suppresses all valid commands
+The default cutover is null. Consumption suppresses all valid commands
 without a Notify send while Waste Obligations retains direct delivery. Suppression
 must be durable before deletion; malformed commands, conflicts and persistence
 failures retain the message. Existing suppressed evidence is terminal when a
@@ -231,13 +234,16 @@ future cutover is configured. A non-null cutover requires explicit UTC and the
 same millisecond precision as command identity. Other configuration requirements
 remain in force.
 
-Use the producer dry run before choosing the identical future X in both services.
-Verify both deployments complete before X; after X use Notifications recovery
-and do not clear or move the cutover backward. ADR0002 records this accepted,
-forward-only handover. Local examples do not configure deployed values.
+After the producer dry run, configure Notifications with a future X first.
+Verify every active Notifications host has X and the post-cutover delivery
+implementation, and stop every old null-cutover consumer. Then configure Waste
+Obligations with the identical X and verify its rollout completes before X.
+After X, use Notifications recovery and do not clear or change the cutover.
+ADR0002 records this accepted, forward-only handover. Local examples do not
+configure deployed values.
 
 Critical migration completion is reported by the `MongoMigrationCompletion`
-entry in `/health/all` and gates `/health` while command processing is enabled.
+entry in `/health/all` and gates `/health` for every host.
 Migration 001 is flagged `Critical = true`; migrations default to non-critical.
 An absent or invalid critical prerequisite returns 503, including when another
 host owns the lease or every host exhausts its attempts. Already-applied critical

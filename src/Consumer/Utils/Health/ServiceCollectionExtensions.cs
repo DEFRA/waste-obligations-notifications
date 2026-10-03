@@ -13,12 +13,16 @@ namespace Defra.WasteObligations.Consumer.Utils.Health;
 [ExcludeFromCodeCoverage]
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddHealth(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddHealth(this IServiceCollection services)
     {
         services.TryAddSingleton<ApplicationStartup>();
 
         var healthChecks = services
             .AddHealthChecks()
+            .AddCheck<EmailDeliveryCutoverHealthCheck>(
+                "EmailDeliveryCutover",
+                tags: [WebApplicationExtensions.Extended]
+            )
             .Add(
                 new HealthCheckRegistration(
                     "AnalyticsEventQueue",
@@ -32,51 +36,46 @@ public static class ServiceCollectionExtensions
                 )
             );
 
-        if (configuration.GetValue<bool>($"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled"))
-        {
-            healthChecks
-                .AddCheck<MongoMigrationCompletionHealthCheck>(
-                    "MongoMigrationCompletion",
-                    tags: [WebApplicationExtensions.Ready, WebApplicationExtensions.Extended]
+        healthChecks
+            .AddCheck<MongoMigrationCompletionHealthCheck>(
+                "MongoMigrationCompletion",
+                tags: [WebApplicationExtensions.Ready, WebApplicationExtensions.Extended]
+            )
+            .Add(
+                new HealthCheckRegistration(
+                    "NotificationCommandQueue",
+                    serviceProvider => new SqsHealthCheck(
+                        serviceProvider.GetRequiredService<IAmazonSQS>(),
+                        serviceProvider
+                            .GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>()
+                            .Value.QueueUrl
+                    ),
+                    HealthStatus.Unhealthy,
+                    tags: [WebApplicationExtensions.Extended],
+                    timeout: TimeSpan.FromSeconds(10)
                 )
-                .Add(
-                    new HealthCheckRegistration(
-                        "NotificationCommandQueue",
-                        serviceProvider => new SqsHealthCheck(
-                            serviceProvider.GetRequiredService<IAmazonSQS>(),
-                            serviceProvider
-                                .GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>()
-                                .Value.QueueUrl
-                        ),
-                        HealthStatus.Unhealthy,
-                        tags: [WebApplicationExtensions.Extended],
-                        timeout: TimeSpan.FromSeconds(10)
-                    )
+            )
+            .Add(
+                new HealthCheckRegistration(
+                    "NotificationDeliveryRecordStore",
+                    serviceProvider => new MongoHealthCheck(
+                        serviceProvider.GetRequiredService<MongoDB.Driver.IMongoClient>(),
+                        serviceProvider.GetRequiredService<IOptions<MongoDbOptions>>().Value.DatabaseName
+                    ),
+                    HealthStatus.Unhealthy,
+                    tags: [WebApplicationExtensions.Extended],
+                    timeout: TimeSpan.FromSeconds(10)
                 )
-                .Add(
-                    new HealthCheckRegistration(
-                        "NotificationDeliveryRecordStore",
-                        serviceProvider => new MongoHealthCheck(
-                            serviceProvider.GetRequiredService<MongoDB.Driver.IMongoClient>(),
-                            serviceProvider.GetRequiredService<IOptions<MongoDbOptions>>().Value.DatabaseName
-                        ),
-                        HealthStatus.Unhealthy,
-                        tags: [WebApplicationExtensions.Extended],
-                        timeout: TimeSpan.FromSeconds(10)
-                    )
+            )
+            .Add(
+                new HealthCheckRegistration(
+                    "Notify",
+                    serviceProvider => new NotifyHealthCheck(serviceProvider.GetRequiredService<INotifyEmailClient>()),
+                    HealthStatus.Unhealthy,
+                    tags: [WebApplicationExtensions.Extended],
+                    timeout: TimeSpan.FromSeconds(10)
                 )
-                .Add(
-                    new HealthCheckRegistration(
-                        "Notify",
-                        serviceProvider => new NotifyHealthCheck(
-                            serviceProvider.GetRequiredService<INotifyEmailClient>()
-                        ),
-                        HealthStatus.Unhealthy,
-                        tags: [WebApplicationExtensions.Extended],
-                        timeout: TimeSpan.FromSeconds(10)
-                    )
-                );
-        }
+            );
 
         return services;
     }
