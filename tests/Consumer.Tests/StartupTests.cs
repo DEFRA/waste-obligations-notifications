@@ -44,6 +44,7 @@ public class ConsumerWebApplicationFactory : WebApplicationFactory<Program>
                 {
                     ["AWS_EMF_ENABLED"] = "false",
                     ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
+                    ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
                     ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,

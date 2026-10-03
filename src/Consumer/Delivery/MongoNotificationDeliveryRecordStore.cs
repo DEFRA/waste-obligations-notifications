@@ -12,6 +12,13 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     internal const string CollectionName = nameof(NotificationDeliveryRecord);
     private const string OutcomeField = "outcome";
     private const string ServerNow = "$$NOW";
+    private const string NotificationKeyField = "notificationKey";
+    private const string ImmutableFieldsField = "immutableFields";
+    private const string RecordedAtField = "recordedAtUtc";
+    private const string LeaseExpiresAtField = "leaseExpiresAtUtc";
+    private const string LeaseExpiresAtExpression = "$leaseExpiresAtUtc";
+    private const string PendingOutcome = "delivery-pending";
+    private const string AbandonedOutcome = "delivery-abandoned";
     private readonly INotificationCommandDigest _digest;
     private readonly IMongoCollection<NotificationDeliveryRecord> _records;
 
@@ -25,6 +32,160 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         _records = mongoClient
             .GetDatabase(options.Value.DatabaseName)
             .GetCollection<NotificationDeliveryRecord>(CollectionName);
+    }
+
+    public async Task<NotificationDeliveryState> Inspect(
+        NotificationCommand command,
+        CancellationToken cancellationToken
+    )
+    {
+        var fields = new BsonDocument
+        {
+            { "_id", 0 },
+            { OutcomeField, 1 },
+            { RecordedAtField, 1 },
+            { LeaseExpiresAtField, 1 },
+            {
+                "matches",
+                new BsonDocument(
+                    "$eq",
+                    new BsonArray { "$immutableFields", Literal(_digest.CreateImmutableFieldsDigest(command)) }
+                )
+            },
+            {
+                "active",
+                new BsonDocument(
+                    "$gt",
+                    new BsonArray
+                    {
+                        new BsonDocument(
+                            "$ifNull",
+                            new BsonArray { LeaseExpiresAtExpression, new BsonDateTime(DateTime.UnixEpoch) }
+                        ),
+                        ServerNow,
+                    }
+                )
+            },
+        };
+        var record = await _records
+            .Aggregate()
+            .Match(new BsonDocument(NotificationKeyField, _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey)))
+            .Project<BsonDocument>(fields)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (record is null)
+            return new("unrecorded", null, null);
+        var classification = record[OutcomeField].AsString switch
+        {
+            PendingOutcome => record["active"].AsBoolean ? "active-claim" : "expired-claim",
+            "delivery-accepted" => "delivery-accepted",
+            "delivery-suppressed" => "delivery-suppressed",
+            AbandonedOutcome => AbandonedOutcome,
+            _ => "unknown-delivery-state",
+        };
+        if (!record["matches"].AsBoolean)
+            classification = "immutable-conflict";
+
+        return new(classification, ReadTimestamp(record, RecordedAtField), ReadTimestamp(record, LeaseExpiresAtField));
+    }
+
+    private static DateTimeOffset? ReadTimestamp(BsonDocument record, string name) =>
+        record.TryGetValue(name, out var value) && value.BsonType == BsonType.DateTime
+            ? new DateTimeOffset(value.ToUniversalTime())
+            : null;
+
+    public async Task<AbandonmentResult> RecordAbandonment(
+        NotificationCommand command,
+        CancellationToken cancellationToken
+    )
+    {
+        var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
+        var immutableFields = _digest.CreateImmutableFieldsDigest(command);
+        var filter = new BsonDocument
+        {
+            { NotificationKeyField, notificationKey },
+            { ImmutableFieldsField, immutableFields },
+            { OutcomeField, PendingOutcome },
+        };
+        var abandoned = new BsonDocument
+        {
+            { "_id", "$_id" },
+            { NotificationKeyField, Literal(notificationKey) },
+            { ImmutableFieldsField, Literal(immutableFields) },
+            { "recipient", Literal(_digest.CreateRecipientDigest(command.EmailAddress)) },
+            { "notificationType", Literal(command.NotificationType) },
+            { "actionOccurredAtUtc", command.ActionOccurredAtUtc.UtcDateTime },
+            { OutcomeField, AbandonedOutcome },
+            { RecordedAtField, ServerNow },
+        };
+        var expired = new BsonDocument(
+            "$lte",
+            new BsonArray
+            {
+                new BsonDocument(
+                    "$ifNull",
+                    new BsonArray { LeaseExpiresAtExpression, new BsonDateTime(DateTime.UnixEpoch) }
+                ),
+                ServerNow,
+            }
+        );
+        var update = new PipelineUpdateDefinition<NotificationDeliveryRecord>(
+            new[]
+            {
+                new BsonDocument(
+                    "$replaceWith",
+                    new BsonDocument("$cond", new BsonArray { expired, abandoned, "$$ROOT" })
+                ),
+            }
+        );
+        try
+        {
+            var record = await _records.FindOneAndUpdateAsync(
+                filter,
+                update,
+                new FindOneAndUpdateOptions<NotificationDeliveryRecord>
+                {
+                    IsUpsert = true,
+                    ReturnDocument = ReturnDocument.After,
+                },
+                cancellationToken
+            );
+
+            return record.Outcome == AbandonedOutcome ? AbandonmentResult.Recorded : AbandonmentResult.Conflict;
+        }
+        catch (MongoCommandException exception) when (exception.Code == 11000)
+        {
+            return await ReadExistingAbandonment(notificationKey, immutableFields, cancellationToken);
+        }
+        catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return await ReadExistingAbandonment(notificationKey, immutableFields, cancellationToken);
+        }
+    }
+
+    private async Task<AbandonmentResult> ReadExistingAbandonment(
+        string notificationKey,
+        string immutableFields,
+        CancellationToken cancellationToken
+    )
+    {
+        var record = await _records
+            .Find(new BsonDocument(NotificationKeyField, notificationKey))
+            .Project<BsonDocument>(
+                new BsonDocument
+                {
+                    { "_id", 0 },
+                    { ImmutableFieldsField, 1 },
+                    { OutcomeField, 1 },
+                }
+            )
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return
+            record is not null
+            && record.GetValue(ImmutableFieldsField, BsonNull.Value) == immutableFields
+            && record.GetValue(OutcomeField, BsonNull.Value) == AbandonedOutcome
+            ? AbandonmentResult.AlreadyAbandoned
+            : AbandonmentResult.Conflict;
     }
 
     public async Task<SuppressionClaimResult> RecordSuppression(
@@ -82,22 +243,22 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
         var filter = new BsonDocument
         {
-            { "notificationKey", notificationKey },
-            { "immutableFields", immutableFields },
-            { OutcomeField, "delivery-pending" },
+            { NotificationKeyField, notificationKey },
+            { ImmutableFieldsField, immutableFields },
+            { OutcomeField, PendingOutcome },
         };
         var fields = new BsonDocument
         {
-            { "notificationKey", Literal(notificationKey) },
-            { "immutableFields", Literal(immutableFields) },
+            { NotificationKeyField, Literal(notificationKey) },
+            { ImmutableFieldsField, Literal(immutableFields) },
             { "recipient", Literal(_digest.CreateRecipientDigest(command.EmailAddress)) },
             { "notificationType", Literal(command.NotificationType) },
             { "actionOccurredAtUtc", command.ActionOccurredAtUtc.UtcDateTime },
-            { OutcomeField, "delivery-pending" },
-            { "recordedAtUtc", ServerNow },
+            { OutcomeField, PendingOutcome },
+            { RecordedAtField, ServerNow },
             { "attemptOwner", Literal(attemptOwner) },
             {
-                "leaseExpiresAtUtc",
+                LeaseExpiresAtField,
                 new BsonDocument(
                     "$dateAdd",
                     new BsonDocument
@@ -115,7 +276,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             {
                 new BsonDocument(
                     "$ifNull",
-                    new BsonArray { "$leaseExpiresAtUtc", new BsonDateTime(DateTime.UnixEpoch) }
+                    new BsonArray { LeaseExpiresAtExpression, new BsonDateTime(DateTime.UnixEpoch) }
                 ),
                 ServerNow,
             }
@@ -173,10 +334,10 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             throw new InvalidDataException("Notify acceptance evidence is incomplete or inconsistent.");
         var filter = new BsonDocument
         {
-            { "notificationKey", _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey) },
-            { "immutableFields", _digest.CreateImmutableFieldsDigest(command) },
+            { NotificationKeyField, _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey) },
+            { ImmutableFieldsField, _digest.CreateImmutableFieldsDigest(command) },
             { "attemptOwner", attemptOwner },
-            { OutcomeField, "delivery-pending" },
+            { OutcomeField, PendingOutcome },
         };
         var fields = new BsonDocument
         {
@@ -186,13 +347,13 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { "templateVersion", acceptance.TemplateVersion },
             { "notifyNotificationId", Literal(acceptance.NotificationId) },
             { "acceptedAtUtc", ServerNow },
-            { "recordedAtUtc", ServerNow },
+            { RecordedAtField, ServerNow },
         };
         var update = new PipelineUpdateDefinition<NotificationDeliveryRecord>(
             new[]
             {
                 new BsonDocument("$set", fields),
-                new BsonDocument("$unset", new BsonArray { "attemptOwner", "leaseExpiresAtUtc" }),
+                new BsonDocument("$unset", new BsonArray { "attemptOwner", LeaseExpiresAtField }),
             }
         );
         var result = await _records.UpdateOneAsync(filter, update, cancellationToken: cancellationToken);
@@ -220,5 +381,5 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private static BsonDocument Literal(string value) => new("$literal", value);
 
     private static bool IsTerminal(string outcome) =>
-        outcome is "delivery-accepted" or "delivery-suppressed" or "delivery-abandoned";
+        outcome is "delivery-accepted" or "delivery-suppressed" or AbandonedOutcome;
 }
