@@ -178,6 +178,20 @@ container image, and sends coverage to SonarCloud under
 `DEFRA_waste-obligations-notifications`. Dependabot manages NuGet, actions, and
 container dependency updates. Journey tests are not currently part of this service.
 
+## Digest-key lifetime
+
+`EvidenceDigestSecret` is durable identity material, not a replaceable API
+credential. Preserve it across hosts and deployments for as long as delivery
+evidence or replayable commands exist. Changing it makes old records invisible
+to duplicate detection and can resend an already accepted email. The `v1:`
+prefix identifies the digest format, not a key ID. Key rotation is unsupported;
+it requires a separately designed migration that preserves existing identities.
+
+All publishers and consumers must share the same `RecipientLaneSecret`.
+Changing it creates different FIFO groups for the same recipient and can break
+ordering while commands remain in the source queue or DLQ. No lane-key rotation
+procedure is provided. Keep both values in deployment-owned secret storage.
+
 ## Nullable initial cutover and handover
 
 `NotificationCommandDelivery:EmailDeliveryCutoverUtc` defaults to null. With

@@ -45,3 +45,10 @@ MongoDB, the command queue and DLQ, Notify credentials, and identity-key
 material become deployment-owned dependencies. Records retain minimal delivery
 evidence indefinitely and must not retain recipient addresses, personalisation,
 rendered content, or full Notify responses.
+
+The evidence digest secret is part of durable command identity. Preserve it for
+the lifetime of retained evidence and replayable commands; replacing it can
+bypass duplicate suppression. The digest format version is not a key ID, and
+rotation is unsupported without an identity-preserving migration. The recipient
+lane secret must match every publisher and consumer; changing it while commands
+remain queued or dead-lettered can break per-recipient ordering.
