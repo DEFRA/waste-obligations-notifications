@@ -79,7 +79,7 @@ public sealed class MongoMigrationRunner : IMongoMigrationRunner
         using var execution = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
-            await RunMigrations(execution.Token, deadline);
+            await RunMigrations(deadline, execution.Token);
         }
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
@@ -91,7 +91,7 @@ public sealed class MongoMigrationRunner : IMongoMigrationRunner
         }
     }
 
-    private async Task RunMigrations(CancellationToken cancellationToken, CancellationTokenSource deadline)
+    private async Task RunMigrations(CancellationTokenSource deadline, CancellationToken cancellationToken)
     {
         using var engine = new MigrationEngineBuilder().UseDatabase(
             _database.Client,
