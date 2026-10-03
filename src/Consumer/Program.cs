@@ -26,11 +26,14 @@ try
         .Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<NotificationCommandDeliveryOptions>>()
         .Value;
     var cutoverValid = delivery.TryReadCutover(out var cutover);
-    app.Logger.LogInformation(
-        "Email delivery cutover {EmailDeliveryCutoverUtc}; cutover valid {CutoverValid}",
-        cutover,
-        cutoverValid
-    );
+    if (app.Logger.IsEnabled(LogLevel.Information))
+    {
+        app.Logger.LogInformation(
+            "Email delivery cutover {EmailDeliveryCutoverUtc}; cutover valid {CutoverValid}",
+            cutover,
+            cutoverValid
+        );
+    }
 
     app.UseHeaderPropagation();
     app.UseAuthorization();
