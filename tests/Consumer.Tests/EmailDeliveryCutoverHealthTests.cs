@@ -52,7 +52,6 @@ public sealed class EmailDeliveryCutoverHealthTests
         Assert.Equal("Healthy", result.GetProperty("status").GetString());
         var data = result.GetProperty("data");
         Assert.Equal(expected, data.GetProperty("emailDeliveryCutoverUtc").GetString());
-        Assert.True(data.GetProperty("cutoverValid").GetBoolean());
         Assert.Equal(mode, data.GetProperty("mode").GetString());
         using var ready = await client.GetAsync("/health", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, ready.StatusCode);

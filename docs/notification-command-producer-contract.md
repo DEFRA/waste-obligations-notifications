@@ -35,7 +35,7 @@ Action time must be explicit UTC (`Z`, `+00:00` or `-00:00`) and truncated to
 whole milliseconds before serialization. Reject a value that truncates to the
 default timestamp. For declarations, use the immutable `Submitted` or
 `Cancelled` audit-entry timestamp as in Waste Obligations
-[`EmailService`](https://github.com/DEFRA/waste-obligations/blob/MO-561-add-email-delivery-cutover/src/Api/Services/EmailService.cs).
+[`EmailService`](https://github.com/DEFRA/waste-obligations/blob/3a40f0c0538aab906202edf14218766078545ad6/src/Api/Services/EmailService.cs).
 Do not use processing time or mutable declaration timestamps. Recipient and
 template/version selection remain MO-549/MO-550/MO-562 policy.
 

@@ -102,6 +102,8 @@ prevent startup. Null cutover permanently
 suppresses commands; it does not pause consumption. Keep secrets outside source
 control and logs. Digest creation also rejects unconfigured secrets when the
 publisher is used independently.
+Verify the target environment's effective configuration and access before merging
+when [CDP auto-deploy](https://github.com/DEFRA/cdp-documentation/blob/main/how-to/auto-deployment.md) is enabled.
 Cutover configuration and serialized `actionOccurredAtUtc` values must include
 `Z` or a numeric zero offset (`+00:00` or `-00:00`). Offset-free timestamps are
 rejected regardless of host timezone; nonzero offsets are rejected without
@@ -340,7 +342,7 @@ X; Waste Obligations sends only actions before X. The
 handover is forward-only after X; do not clear or change the cutover after X.
 Each host logs its parsed cutover at startup.
 `/health/all` reports `EmailDeliveryCutover` with the normalized UTC value or null,
-validity and fixed suppression/boundary mode. Compare every active host, not only
+and fixed suppression/boundary mode. Compare every active host, not only
 saved configuration. This diagnostic does not gate `/health`; null is valid.
 See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
 

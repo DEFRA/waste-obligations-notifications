@@ -15,7 +15,7 @@ Waste Obligations already has a Mongo migration engine and lease process.
 
 Use the same AdaskoTheBeAsT.MongoDbMigrations engine, renewable Mongo lease,
 retry policy and attempt timeouts as Waste Obligations. Run migrations in a
-background service when command processing is enabled. Migration 001 creates
+background service on every host. Migration 001 creates
 `notificationKey_unique` on `NotificationDeliveryRecord` and retains an
 existing matching index.
 A critical index must have completed building, not merely appear in the catalog.
@@ -94,7 +94,7 @@ existing documents using `Owner` and `ExpiresAt` must be reconciled with all
 command-processing hosts stopped before rollout.
 
 Critical migration completion is reported by the `MongoMigrationCompletion`
-entry in `/health/all` and gates `/health` while command processing is enabled.
+entry in `/health/all` and gates `/health` on every host.
 Migration 001 is flagged `Critical = true`; migrations default to non-critical.
 An absent or invalid critical prerequisite returns 503, including when another
 host owns the lease or every host exhausts its attempts. Already-applied critical
