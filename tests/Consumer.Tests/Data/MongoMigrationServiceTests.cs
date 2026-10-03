@@ -158,6 +158,7 @@ public sealed class MongoMigrationServiceTests
     public async Task WhenRenewalStalls_ShouldCancelEngineBeforeExpiryAndIgnoreLateSuccess(bool ignoresCancellation)
     {
         var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
         var renewalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var renewalCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var engineCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -348,6 +349,7 @@ public sealed class MongoMigrationServiceTests
     public async Task WhenRenewalIntervalIsHalfLeaseDuration_ShouldAllowConfirmationBeforeDeadline()
     {
         var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
         var renewed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var lease = Substitute.For<IMongoMigrationLeaseService>();
@@ -403,6 +405,7 @@ public sealed class MongoMigrationServiceTests
     public async Task WhenAcquisitionConfirmationIsTooLate_ShouldReleaseWithoutUsingEngineAttempt()
     {
         var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
         var lease = Substitute.For<IMongoMigrationLeaseService>();
         lease
             .TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
@@ -445,6 +448,7 @@ public sealed class MongoMigrationServiceTests
     public async Task WhenLeaseRenewalFailsWithAttemptsRemaining_ShouldReacquireAndComplete(bool throws)
     {
         var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
         var lease = Substitute.For<IMongoMigrationLeaseService>();
         lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
         lease
@@ -552,6 +556,7 @@ public sealed class MongoMigrationServiceTests
     public async Task WhenRenewalsExhaustAttemptsAcrossAcquisitions_ShouldOnlyObservePeerCompletion(bool throws)
     {
         var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
         var lease = Substitute.For<IMongoMigrationLeaseService>();
         lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
         lease
@@ -618,6 +623,7 @@ public sealed class MongoMigrationServiceTests
     public async Task WhenLeaseIsUnavailable_ShouldRetryUntilAcquired(bool throws, int alertThreshold)
     {
         var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
         var lease = Substitute.For<IMongoMigrationLeaseService>();
         lease
             .TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())

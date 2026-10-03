@@ -21,65 +21,75 @@ public sealed class MongoMigrationService(
 
         try
         {
-            var failedChecks = 0;
-            var readinessStartedAt = timeProvider.GetUtcNow();
-            var readinessAlertLogged = false;
-
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                var leaseDuration = TimeSpan.FromSeconds(options.Value.LeaseDurationSeconds);
-                bool acquired;
-                long leaseRequestStartedAt;
-
-                try
-                {
-                    if (await migrationRunner.CheckCompletion(stoppingToken))
-                        return;
-
-                    leaseRequestStartedAt = timeProvider.GetTimestamp();
-                    acquired =
-                        _attemptCount < options.Value.MaximumAttempts
-                        && await leaseService.TryAcquire(leaseDuration, stoppingToken);
-                }
-                catch (Exception) when (stoppingToken.IsCancellationRequested)
-                {
-                    return;
-                }
-                catch (Exception exception)
-                {
-                    if (failedChecks == 0)
-                        LogDependencyFailure(LogLevel.Error, "readiness-check-or-acquisition", exception);
-                    failedChecks++;
-                    readinessAlertLogged = await WaitForReadinessRetry(
-                        readinessStartedAt,
-                        readinessAlertLogged,
-                        stoppingToken
-                    );
-                    continue;
-                }
-
-                if (!acquired)
-                {
-                    readinessAlertLogged = await WaitForReadinessRetry(
-                        readinessStartedAt,
-                        readinessAlertLogged,
-                        stoppingToken
-                    );
-                    continue;
-                }
-
-                if (await RunMigrationsWithLease(leaseDuration, leaseRequestStartedAt, stoppingToken))
-                    return;
-
-                LogAttemptExhaustionIfRequired();
-                if (!criticalCompletion.IsCompleted && _attemptCount < options.Value.MaximumAttempts)
-                    await Task.Delay(ReadinessCheckInterval, timeProvider, stoppingToken);
-            }
+            await RunPendingMigrations(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             // Expected while stopping or waiting between acquisitions.
         }
+    }
+
+    private async Task RunPendingMigrations(CancellationToken stoppingToken)
+    {
+        var failedChecks = 0;
+        var readinessStartedAt = timeProvider.GetUtcNow();
+        var readinessAlertLogged = false;
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var leaseDuration = TimeSpan.FromSeconds(options.Value.LeaseDurationSeconds);
+            bool acquired;
+            long leaseRequestStartedAt;
+
+            try
+            {
+                if (await migrationRunner.CheckCompletion(stoppingToken))
+                    return;
+
+                leaseRequestStartedAt = timeProvider.GetTimestamp();
+                acquired =
+                    _attemptCount < options.Value.MaximumAttempts
+                    && await leaseService.TryAcquire(leaseDuration, stoppingToken);
+            }
+            catch (Exception) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                LogFirstReadinessFailure(failedChecks, exception);
+                failedChecks++;
+                readinessAlertLogged = await WaitForReadinessRetry(
+                    readinessStartedAt,
+                    readinessAlertLogged,
+                    stoppingToken
+                );
+                continue;
+            }
+
+            if (!acquired)
+            {
+                readinessAlertLogged = await WaitForReadinessRetry(
+                    readinessStartedAt,
+                    readinessAlertLogged,
+                    stoppingToken
+                );
+                continue;
+            }
+
+            if (await RunMigrationsWithLease(leaseDuration, leaseRequestStartedAt, stoppingToken))
+                return;
+
+            LogAttemptExhaustionIfRequired();
+            if (!criticalCompletion.IsCompleted && _attemptCount < options.Value.MaximumAttempts)
+                await Task.Delay(ReadinessCheckInterval, timeProvider, stoppingToken);
+        }
+    }
+
+    private void LogFirstReadinessFailure(int failedChecks, Exception exception)
+    {
+        if (failedChecks == 0)
+            LogDependencyFailure(LogLevel.Error, "readiness-check-or-acquisition", exception);
     }
 
     private void LogAttemptExhaustionIfRequired()
@@ -341,13 +351,16 @@ public sealed class MongoMigrationService(
         - TimeSpan.FromSeconds(options.Value.LeaseRenewalIntervalSeconds / 2.0)
         - timeProvider.GetElapsedTime(requestStartedAt);
 
-    private void LogDependencyFailure(LogLevel level, string reason, Exception exception) =>
-        logger.Log(
-            level,
-            "Mongo migration {FailureReason} failed ({ExceptionType}).",
-            reason,
-            exception.GetType().Name
-        );
+    private void LogDependencyFailure(LogLevel level, string reason, Exception exception)
+    {
+        if (logger.IsEnabled(level))
+            logger.Log(
+                level,
+                "Mongo migration {FailureReason} failed ({ExceptionType}).",
+                reason,
+                exception.GetType().Name
+            );
+    }
 
     private async Task ReleaseLease()
     {

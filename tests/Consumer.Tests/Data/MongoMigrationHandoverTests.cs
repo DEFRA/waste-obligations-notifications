@@ -184,6 +184,7 @@ public sealed class MongoMigrationHandoverTests
                 );
             });
         var logger = Substitute.For<ILogger>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
         using var host = new HostBuilder()
             .ConfigureLogging(logging => logging.ClearProviders().AddProvider(new TestLoggerProvider(logger)))
             .ConfigureServices(services =>
@@ -253,6 +254,7 @@ public sealed class MongoMigrationHandoverTests
         }
         runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(FailAfterCancellation);
         var logger = Substitute.For<ILogger>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
         using var host = new HostBuilder()
             .ConfigureLogging(logging => logging.ClearProviders().AddProvider(new TestLoggerProvider(logger)))
             .ConfigureServices(services =>

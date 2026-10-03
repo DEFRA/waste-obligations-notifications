@@ -42,22 +42,15 @@ public sealed class NotificationCommandConsumer(
 
                     failureReason = "store-error";
                     var store = recordStoreFactory.GetRecordStore();
-                    SuppressionClaimResult result;
-                    if (IsAtOrAfterCutover(command.ActionOccurredAtUtc, cutover))
+                    var result = await ReadOrRecordSuppression(store, command, cutover, stoppingToken);
+                    if (result is null)
                     {
-                        var existing = await store.GetSuppression(command, stoppingToken);
-                        if (existing is null)
-                        {
-                            // Ticket 02 adds sending; only already-suppressed commands can complete this path.
-                            failureReason = "delivery-unavailable";
-                            throw new InvalidOperationException(
-                                "Notification command delivery after cutover is not yet enabled."
-                            );
-                        }
-                        result = existing.Value;
+                        // Ticket 02 adds sending; only already-suppressed commands can complete this path.
+                        failureReason = "delivery-unavailable";
+                        throw new InvalidOperationException(
+                            "Notification command delivery after cutover is not yet enabled."
+                        );
                     }
-                    else
-                        result = await store.RecordSuppression(command, stoppingToken);
 
                     if (result == SuppressionClaimResult.Conflict)
                     {
@@ -69,15 +62,7 @@ public sealed class NotificationCommandConsumer(
 
                     var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
                     metrics.RecordOutcome(notificationType, outcome);
-                    if (logger.IsEnabled(LogLevel.Information))
-                    {
-                        logger.LogInformation(
-                            "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId}",
-                            outcome,
-                            notificationType,
-                            message.MessageId
-                        );
-                    }
+                    LogOutcome(outcome, notificationType, message.MessageId);
                     failureReason = "queue-error";
                     await sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, stoppingToken);
                 }
@@ -93,6 +78,30 @@ public sealed class NotificationCommandConsumer(
                 await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
             }
         }
+    }
+
+    private static async Task<SuppressionClaimResult?> ReadOrRecordSuppression(
+        INotificationDeliveryRecordStore store,
+        NotificationCommand command,
+        DateTimeOffset? cutover,
+        CancellationToken cancellationToken
+    )
+    {
+        if (IsAtOrAfterCutover(command.ActionOccurredAtUtc, cutover))
+            return await store.GetSuppression(command, cancellationToken);
+
+        return await store.RecordSuppression(command, cancellationToken);
+    }
+
+    private void LogOutcome(string outcome, string notificationType, string messageId)
+    {
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation(
+                "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId}",
+                outcome,
+                notificationType,
+                messageId
+            );
     }
 
     private static NotificationCommand ReadCommand(Message message, ref string failureReason)
