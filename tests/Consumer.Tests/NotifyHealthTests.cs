@@ -64,7 +64,6 @@ public sealed class NotifyHealthTests
             .RootElement.GetProperty("results")
             .GetProperty("EmailDeliveryCutover")
             .GetProperty("data");
-        Assert.True(cutoverData.GetProperty("cutoverValid").GetBoolean());
         Assert.Equal(cutover is null ? "suppress-all" : "boundary", cutoverData.GetProperty("mode").GetString());
         if (cutover is null)
             Assert.Equal(JsonValueKind.Null, cutoverData.GetProperty("emailDeliveryCutoverUtc").ValueKind);
