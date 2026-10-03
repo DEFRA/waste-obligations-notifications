@@ -25,18 +25,12 @@ public sealed class CommandDlqVerificationTests
     private const string PrivateError = "private-recipient@example.com";
 
     [Theory]
-    [InlineData("missing", true, true, 401)]
-    [InlineData("viewer", true, true, 403)]
-    [InlineData("admin", false, true, 503)]
-    [InlineData("admin", true, false, 409)]
-    public async Task WhenCreationIsNotPermitted_ShouldRejectBeforeQueueOrStore(
-        string caller,
-        bool ready,
-        bool processing,
-        int status
-    )
+    [InlineData("missing", true, 401)]
+    [InlineData("viewer", true, 403)]
+    [InlineData("admin", false, 503)]
+    public async Task WhenCreationIsNotPermitted_ShouldRejectBeforeQueueOrStore(string caller, bool ready, int status)
     {
-        await using var fixture = await VerificationFixture.Start(ready, processing);
+        await using var fixture = await VerificationFixture.Start(ready);
         using var request = Request(caller);
         using var response = await fixture.Client.SendAsync(request, TestContext.Current.CancellationToken);
 
@@ -248,7 +242,7 @@ public sealed class CommandDlqVerificationTests
         public INotificationDeliveryRecordStore Store { get; } = store;
         public INotificationCommandDigest Digest { get; } = digest;
 
-        public static async Task<VerificationFixture> Start(bool ready = true, bool processing = true)
+        public static async Task<VerificationFixture> Start(bool ready = true)
         {
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseTestServer();
@@ -257,7 +251,6 @@ public sealed class CommandDlqVerificationTests
             builder.Configuration.AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
-                    ["NotificationCommandDelivery:ProcessingEnabled"] = processing.ToString(),
                     ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/verification-source.fifo",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "unit-verification-evidence",
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "unit-verification-lane",

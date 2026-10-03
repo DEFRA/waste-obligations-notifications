@@ -135,7 +135,6 @@ public sealed class NotificationCommandSendTests : IDisposable
             new()
             {
                 QueueUrl = QueueUrl,
-                ProcessingEnabled = true,
                 EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
                 EvidenceDigestSecret = "test-secret",
                 RecipientLaneSecret = "test-lane",
@@ -389,7 +388,6 @@ public sealed class NotificationCommandSendTests : IDisposable
             new()
             {
                 QueueUrl = QueueUrl,
-                ProcessingEnabled = true,
                 EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
                 EvidenceDigestSecret = "test-secret",
                 RecipientLaneSecret = "test-lane",
@@ -468,7 +466,6 @@ public sealed class NotificationCommandSendTests : IDisposable
             new()
             {
                 QueueUrl = QueueUrl,
-                ProcessingEnabled = true,
                 EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
                 EvidenceDigestSecret = "test-secret",
                 RecipientLaneSecret = "test-lane",
@@ -540,7 +537,6 @@ public sealed class NotificationCommandSendTests : IDisposable
             new()
             {
                 QueueUrl = QueueUrl,
-                ProcessingEnabled = true,
                 EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
                 EvidenceDigestSecret = "test-secret",
                 RecipientLaneSecret = "test-lane",
@@ -650,7 +646,6 @@ public sealed class NotificationCommandSendTests : IDisposable
             new()
             {
                 QueueUrl = QueueUrl,
-                ProcessingEnabled = true,
                 EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
                 EvidenceDigestSecret = "test-secret",
                 RecipientLaneSecret = "test-lane",
@@ -985,7 +980,6 @@ public sealed class NotificationCommandSendTests : IDisposable
                     ?? new()
                     {
                         QueueUrl = QueueUrl,
-                        ProcessingEnabled = true,
                         EmailDeliveryCutoverUtc = "2026-09-29T00:00:00Z",
                         EvidenceDigestSecret = "test-secret",
                         RecipientLaneSecret = "test-lane",

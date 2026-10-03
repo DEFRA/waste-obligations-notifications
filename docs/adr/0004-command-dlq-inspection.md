@@ -5,8 +5,8 @@ Status: Accepted
 ## Context
 
 Operators need to inspect failed notification commands without exposing message
-content or altering delivery evidence. Command sending can be paused during
-recovery. The approved administration contract uses Waste Obligations' Basic/OAuth ACL
+content or altering delivery evidence. Every host consumes commands after startup
+readiness; null cutover permanently suppresses them. The approved administration contract uses Waste Obligations' Basic/OAuth ACL
 and administrator endpoint structure.
 
 ## Decision
@@ -31,7 +31,9 @@ consequence of this service's explicitly approved gateway-only contract. Gateway
 Cognito authentication must cover every administrator route. This decision
 does not provision deployed access or claim in-service signature validation.
 
-Start/check Mongo migrations for administration even when sending is paused. Critical migrations gate `/health`. The admin HTTP boundary
+Start/check Mongo migrations on every host, including with null cutover. Require
+valid command/DLQ queues, digest secrets, Mongo and Notify settings and complete
+sending budgets at startup. Critical migrations gate `/health`. The admin HTTP boundary
 returns 503 until its first successful anonymous response completes. Inspection
 then receives one visible FIFO
 DLQ message. It does not publish, delete or modify delivery evidence. A bounded
@@ -89,6 +91,12 @@ Notify.
 
 ## Consequences
 
+Malformed commands and immutable conflicts cannot be cleared through these APIs.
+They require configured queue retention or deployment-owned controlled removal;
+this decision supplies no verified removal tool. Preserve the evidence secret for
+durable identity, selection signing, Notify references and redrive deduplication.
+These uses have distinct HMAC domains; key rotation is unsupported.
+
 Inspection temporarily changes visibility and receive count. All management
 routes are registered and authenticate through the configured admin ACL.
 Deployments supply credentials and operator access separately.
@@ -119,7 +127,7 @@ contract apply to every route.
 
 The user approved an authenticated body-free verification-command route on
 2026-10-02. It confirms fresh permanent suppression before enqueueing a fixed
-synthetic command on the configured DLQ. Active processing is required. Normal
+synthetic command on the configured DLQ. Normal
 redrive and consumption delete the terminal duplicate without Notify or evidence
 changes. This supplies an operator probe for inspect/replay/redrive while native
 AWS proof is unavailable. It does not prove successful discard or authorise

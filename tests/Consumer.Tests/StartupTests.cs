@@ -1,5 +1,6 @@
 using System.Net;
 using Amazon.SQS;
+using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -42,31 +43,41 @@ public class ConsumerWebApplicationFactory : WebApplicationFactory<Program>
                 new Dictionary<string, string?>
                 {
                     ["AWS_EMF_ENABLED"] = "false",
-                    ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
-                    ["NotificationCommandDelivery:ProcessingEnabled"] = "false",
-                    ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/commands.fifo",
+                    ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
-                    ["NotificationCommandDelivery:EvidenceDigestSecret"] = "startup-test-evidence-secret",
-                    ["NotificationCommandDelivery:RecipientLaneSecret"] = "startup-test-lane-secret",
+                    ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
+                    ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
+                    ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
+                    ["Notify:BaseAddress"] = "http://notify.local",
+                    ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
+                    ["Mongo:DatabaseName"] = "startup-test",
                 }
             )
         );
         builder.ConfigureTestServices(services =>
         {
+            services.RemoveAll<IAmazonSQS>();
+            var sqs = Substitute.For<IAmazonSQS>();
+            sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+                .Returns(async call =>
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+
+                    return new ReceiveMessageResponse();
+                });
+            services.AddSingleton(sqs);
             foreach (
-                var descriptor in services
-                    .Where(descriptor =>
-                        descriptor.ServiceType == typeof(IHostedService)
-                        && descriptor.ImplementationType == typeof(MongoMigrationService)
+                var hosted in services
+                    .Where(service =>
+                        service.ServiceType == typeof(IHostedService)
+                        && service.ImplementationType == typeof(MongoMigrationService)
                     )
                     .ToArray()
             )
-                services.Remove(descriptor);
+                services.Remove(hosted);
             var completion = new MongoMigrationCompletion();
             completion.MarkCompleted();
             services.AddSingleton(completion);
-            services.RemoveAll<IAmazonSQS>();
-            services.AddSingleton(Substitute.For<IAmazonSQS>());
         });
     }
 }

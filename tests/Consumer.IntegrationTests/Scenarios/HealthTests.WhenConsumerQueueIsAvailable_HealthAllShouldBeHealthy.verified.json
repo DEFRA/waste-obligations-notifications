@@ -1,6 +1,14 @@
 {
   "status": "Healthy",
   "results": {
+    "EmailDeliveryCutover": {
+      "status": "Healthy",
+      "data": {
+        "emailDeliveryCutoverUtc": "2100-01-01T00:00:00.0000000+00:00",
+        "cutoverValid": true,
+        "mode": "boundary"
+      }
+    },
     "AnalyticsEventQueue": {
       "status": "Healthy",
       "description": "Connected to AWS queue: http://localhost:4566/000000000000/waste_obligations_notifications_analytics_events_queue"

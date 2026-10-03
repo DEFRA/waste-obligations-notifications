@@ -210,7 +210,6 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                 {
                     ["AWS_EMF_ENABLED"] = "false",
                     ["NotificationCommandDelivery:QueueUrl"] = fixture.QueueUrl,
-                    ["NotificationCommandDelivery:ProcessingEnabled"] = "true",
                     ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2026-09-29T00:00:00Z",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = EvidenceSecret,
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "isolated-test-lane-secret",
@@ -244,7 +243,7 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                 builder.Services.AddNotificationCommandDelivery(builder.Configuration);
                 builder.Services.AddSingleton<IAmazonSQS>(fixture.Sqs);
                 builder.Services.AddSingleton<IMongoClient>(fixture._mongo);
-                builder.Services.AddHealth(builder.Configuration);
+                builder.Services.AddHealth();
                 var app = builder.Build();
                 app.MapHealth();
                 fixture._host = app;

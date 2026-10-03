@@ -328,7 +328,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 mongo,
                 120,
                 oauth: oauth,
-                processing: true,
+                runConsumer: true,
                 notifyApiKey: apiKey,
                 cutover: cutover
             );
@@ -634,7 +634,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         IMongoClient mongo,
         int lifetime,
         bool oauth = false,
-        bool processing = false,
+        bool runConsumer = false,
         string? notifyApiKey = null,
         string? cutover = null
     ) : WebApplicationFactory<Program>
@@ -645,7 +645,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
-            if (processing && cutover is null)
+            if (cutover is null)
                 builder.ConfigureAppConfiguration(
                     (_, configuration) =>
                         configuration.AddJsonStream(
@@ -658,6 +658,18 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 );
             builder.ConfigureTestServices(services =>
             {
+                if (!runConsumer)
+                {
+                    foreach (
+                        var descriptor in services
+                            .Where(descriptor =>
+                                descriptor.ServiceType == typeof(IHostedService)
+                                && descriptor.ImplementationType == typeof(NotificationCommandConsumer)
+                            )
+                            .ToArray()
+                    )
+                        services.Remove(descriptor);
+                }
                 // Use the genuine isolated Mongo client: the SDK's AWS mechanism registration is process-global.
                 // Both in-process hosts retain the actual migrations, store and readiness at this Mongo boundary.
                 services.RemoveAll<IMongoClient>();
@@ -679,26 +691,21 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                         ["AWS_EMF_ENABLED"] = "false",
                         ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
                         ["AnalyticsEventConsumer:QueueUrl"] = AnalyticsEventsQueueUrl,
-                        ["NotificationCommandDelivery:ProcessingEnabled"] = processing.ToString(),
                         ["NotificationCommandDelivery:QueueUrl"] = commandQueue,
                         ["NotificationCommandDelivery:EvidenceDigestSecret"] = "local-inspection-evidence-secret",
                         ["NotificationCommandDelivery:RecipientLaneSecret"] = "local-inspection-lane-secret",
-                        ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = processing
-                            ? cutover
-                            : "set-automatically-when-deployed",
-                        ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = processing ? "60" : "0",
+                        ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover,
+                        ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = "60",
                         ["NotificationCommandDelivery:WaitTimeSeconds"] = "1",
-                        ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = processing ? "30" : "0",
+                        ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = "30",
                         ["CommandDlqAdministration:QueueUrl"] = dlq,
                         ["CommandDlqAdministration:SelectionLifetimeSeconds"] = lifetime.ToString(
                             System.Globalization.CultureInfo.InvariantCulture
                         ),
                         ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                         ["Mongo:DatabaseName"] = databaseName,
-                        ["Notify:ApiKey"] = notifyApiKey ?? "set-automatically-when-deployed",
-                        ["Notify:BaseAddress"] = processing
-                            ? "http://localhost:8086"
-                            : "set-automatically-when-deployed",
+                        ["Notify:ApiKey"] = notifyApiKey ?? $"local-only-{Guid.NewGuid()}-{Guid.NewGuid()}",
+                        ["Notify:BaseAddress"] = "http://localhost:8086",
                         ["Acl:Clients:admin:Type"] = oauth ? "OAuth" : "ApiKey",
                         ["Acl:Clients:admin:Secret"] = oauth ? null : Secret,
                         ["Acl:Clients:admin:Scopes:0"] = "admin",

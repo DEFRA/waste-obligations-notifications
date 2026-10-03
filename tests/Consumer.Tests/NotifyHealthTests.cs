@@ -25,8 +25,10 @@ public sealed class NotifyHealthTests
     private const string PrivateData =
         "recipient@example.com private-personalisation private-template private-notify-id";
 
-    [Fact]
-    public async Task WhenCommandProcessingIsEnabled_ShouldCheckNotifyOnlyOnExtendedHealth()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("2100-01-01T00:00:00Z")]
+    public async Task WhenCutoverIsNullOrConfigured_ShouldAlwaysCheckNotifyOnlyOnExtendedHealth(string? cutover)
     {
         using var handler = new ControlledHandler(
             (_, _) =>
@@ -41,7 +43,7 @@ public sealed class NotifyHealthTests
                     }
                 )
         );
-        await using var factory = new HealthApplicationFactory(true, handler);
+        await using var factory = new HealthApplicationFactory(cutover, handler);
         using var client = factory.CreateClient();
 
         using var ready = await client.GetAsync("/health", TestContext.Current.CancellationToken);
@@ -58,6 +60,14 @@ public sealed class NotifyHealthTests
         var notify = body.RootElement.GetProperty("results").GetProperty("Notify");
         Assert.Equal("Healthy", notify.GetProperty("status").GetString());
         Assert.Equal("Connected to GOV.UK Notify.", notify.GetProperty("description").GetString());
+        var cutoverData = body
+            .RootElement.GetProperty("results")
+            .GetProperty("EmailDeliveryCutover")
+            .GetProperty("data");
+        Assert.True(cutoverData.GetProperty("cutoverValid").GetBoolean());
+        Assert.Equal(cutover is null ? "suppress-all" : "boundary", cutoverData.GetProperty("mode").GetString());
+        if (cutover is null)
+            Assert.Equal(JsonValueKind.Null, cutoverData.GetProperty("emailDeliveryCutoverUtc").ValueKind);
         Assert.Equal(1, handler.RequestCount);
         var text = body.RootElement.GetRawText();
         foreach (var value in PrivateData.Split(' ').Append(NotifyTestCredentials.ApiKey))
@@ -68,25 +78,6 @@ public sealed class NotifyHealthTests
                 message => Assert.DoesNotContain(value, message, StringComparison.Ordinal)
             );
         }
-    }
-
-    [Fact]
-    public async Task WhenCommandProcessingIsDisabled_ShouldNotRegisterOrCallNotify()
-    {
-        using var handler = new ControlledHandler(
-            (_, _) => throw new InvalidOperationException("Notify should not be called.")
-        );
-        await using var factory = new HealthApplicationFactory(false, handler);
-        using var client = factory.CreateClient();
-
-        using var response = await client.GetAsync("/health/all", TestContext.Current.CancellationToken);
-        using var body = JsonDocument.Parse(
-            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
-        );
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.False(body.RootElement.GetProperty("results").TryGetProperty("Notify", out _));
-        Assert.Equal(0, handler.RequestCount);
     }
 
     [Theory]
@@ -102,7 +93,7 @@ public sealed class NotifyHealthTests
                         new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent(PrivateData) }
                     )
         );
-        await using var factory = new HealthApplicationFactory(true, handler);
+        await using var factory = new HealthApplicationFactory("2100-01-01T00:00:00Z", handler);
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync("/health/all", TestContext.Current.CancellationToken);
@@ -157,7 +148,7 @@ public sealed class NotifyHealthTests
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
         );
-        await using var factory = new HealthApplicationFactory(true, handler);
+        await using var factory = new HealthApplicationFactory("2100-01-01T00:00:00Z", handler);
         using var client = factory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(20);
 
@@ -180,7 +171,7 @@ public sealed class NotifyHealthTests
         );
     }
 
-    private sealed class HealthApplicationFactory(bool processingEnabled, HttpMessageHandler handler)
+    private sealed class HealthApplicationFactory(string? cutover, HttpMessageHandler handler)
         : WebApplicationFactory<Program>
     {
         public RecordingLogs Logs { get; } = new();
@@ -194,25 +185,25 @@ public sealed class NotifyHealthTests
         protected override IHost CreateHost(IHostBuilder builder)
         {
             builder.ConfigureHostConfiguration(configuration =>
-                configuration.AddInMemoryCollection(
-                    new Dictionary<string, string?>
-                    {
-                        ["AWS_EMF_ENABLED"] = "false",
-                        ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
-                        ["AnalyticsEventConsumer:QueueUrl"] = "http://sqs.local/analytics",
-                        ["NotificationCommandDelivery:ProcessingEnabled"] = processingEnabled.ToString(),
-                        ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/commands.fifo",
-                        ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
-                        ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",
-                        ["NotificationCommandDelivery:EvidenceDigestSecret"] = "health-test-evidence-secret",
-                        ["NotificationCommandDelivery:RecipientLaneSecret"] = "health-test-recipient-secret",
-                        ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
-                        ["Mongo:DatabaseName"] = "health-test",
-                        ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
-                        ["Notify:BaseAddress"] = "http://notify.local",
-                    }
-                )
-            );
+            {
+                var values = new Dictionary<string, string?>
+                {
+                    ["AWS_EMF_ENABLED"] = "false",
+                    ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
+                    ["AnalyticsEventConsumer:QueueUrl"] = "http://sqs.local/analytics",
+                    ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/commands.fifo",
+                    ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
+                    ["NotificationCommandDelivery:EvidenceDigestSecret"] = "health-test-evidence-secret",
+                    ["NotificationCommandDelivery:RecipientLaneSecret"] = "health-test-recipient-secret",
+                    ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
+                    ["Mongo:DatabaseName"] = "health-test",
+                    ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
+                    ["Notify:BaseAddress"] = "http://notify.local",
+                };
+                if (cutover is not null)
+                    values["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover;
+                configuration.AddInMemoryCollection(values);
+            });
 
             return base.CreateHost(builder);
         }

@@ -1,7 +1,5 @@
 using Defra.WasteObligations.Consumer.Administration;
-using Defra.WasteObligations.Consumer.Delivery;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Endpoints.Admin;
 
@@ -20,7 +18,6 @@ public static class CommandDlqEndpoints
     private static async Task<IResult> CreateVerificationCommand(
         HttpRequest request,
         CommandDlqVerificationCommandCreator creator,
-        IOptions<NotificationCommandDeliveryOptions> delivery,
         CancellationToken cancellationToken
     )
     {
@@ -33,8 +30,6 @@ public static class CommandDlqEndpoints
                 statusCode: StatusCodes.Status400BadRequest,
                 detail: "Verification command creation accepts no request body."
             );
-        if (!delivery.Value.ProcessingEnabled)
-            return Results.Problem(statusCode: StatusCodes.Status409Conflict, detail: "Command processing is paused.");
         try
         {
             return Results.Ok(await creator.Create(cancellationToken));

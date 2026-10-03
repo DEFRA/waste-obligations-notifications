@@ -276,9 +276,9 @@ public sealed class CommandDlqInspectionTests
     }
 
     [Fact]
-    public async Task WhenActualCommandConsumerIsPausedWithInvalidNotifyAndSendingSettings_ShouldStartAndInspectWithoutSending()
+    public async Task WhenAdminOnlyHostUsesMandatoryDeliveryDependencies_ShouldInspectAndRegisterNotifyHealth()
     {
-        await using var factory = new InspectionApplicationFactory(useActualPausedConsumer: true);
+        await using var factory = new InspectionApplicationFactory();
         using var client = factory.CreateClient();
         using var request = Request("admin");
 
@@ -289,17 +289,13 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(HttpStatusCode.OK, readiness.StatusCode);
         Assert.Single(factory.Sqs.ReceivedCalls());
         Assert.Single(factory.Store.ReceivedCalls());
-        Assert.Contains(
-            factory.Logs.Messages,
-            message => message.Contains("Notification command consumption is disabled", StringComparison.Ordinal)
-        );
         var registrations = factory
             .Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>>()
             .Value.Registrations;
         Assert.Contains(registrations, registration => registration.Name == "NotificationCommandQueue");
         Assert.Contains(registrations, registration => registration.Name == "NotificationCommandDeadLetterQueue");
         Assert.Contains(registrations, registration => registration.Name == "NotificationDeliveryRecordStore");
-        Assert.DoesNotContain(registrations, registration => registration.Name == "Notify");
+        Assert.Contains(registrations, registration => registration.Name == "Notify");
         Assert.Empty(factory.Notify.ReceivedCalls());
     }
 
@@ -533,7 +529,6 @@ public sealed class CommandDlqInspectionTests
 
     private sealed class InspectionApplicationFactory(
         Dictionary<string, string?>? overrides = null,
-        bool useActualPausedConsumer = false,
         bool emptyAcl = false
     ) : WebApplicationFactory<Program>
     {
@@ -574,10 +569,7 @@ public sealed class CommandDlqInspectionTests
                         .Where(descriptor =>
                             descriptor.ServiceType == typeof(IHostedService)
                             && (
-                                (
-                                    !useActualPausedConsumer
-                                    && descriptor.ImplementationType == typeof(NotificationCommandConsumer)
-                                )
+                                descriptor.ImplementationType == typeof(NotificationCommandConsumer)
                                 || descriptor.ImplementationType == typeof(MongoMigrationService)
                             )
                         )
@@ -588,11 +580,8 @@ public sealed class CommandDlqInspectionTests
                 services.RemoveAll<INotificationDeliveryRecordStore>();
                 services.AddSingleton(Sqs);
                 services.AddSingleton(Store);
-                if (!useActualPausedConsumer)
-                {
-                    services.RemoveAll<INotifyEmailClient>();
-                    services.AddSingleton(Notify);
-                }
+                services.RemoveAll<INotifyEmailClient>();
+                services.AddSingleton(Notify);
                 var completion = new MongoMigrationCompletion();
                 completion.MarkCompleted();
                 services.AddSingleton(completion);
@@ -608,17 +597,13 @@ public sealed class CommandDlqInspectionTests
             {
                 ["AWS_EMF_ENABLED"] = "false",
                 ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
-                ["NotificationCommandDelivery:ProcessingEnabled"] = "false",
                 ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/commands.fifo",
                 ["NotificationCommandDelivery:EvidenceDigestSecret"] = "private-evidence-secret",
                 ["NotificationCommandDelivery:RecipientLaneSecret"] = "private-lane-secret",
-                ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "set-automatically-when-deployed",
-                ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = "0",
-                ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = "0",
                 ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                 ["Mongo:DatabaseName"] = "inspection-test",
-                ["Notify:ApiKey"] = "set-automatically-when-deployed",
-                ["Notify:BaseAddress"] = "set-automatically-when-deployed",
+                ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
+                ["Notify:BaseAddress"] = "http://notify.local",
                 ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
                 ["Acl:Clients:admin:Type"] = "ApiKey",
                 ["Acl:Clients:admin:Secret"] = Secret,

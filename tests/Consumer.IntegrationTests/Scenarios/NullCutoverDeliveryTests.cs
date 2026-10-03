@@ -62,7 +62,6 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
             await new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, readiness).Run(token);
             var settings = new NotificationCommandDeliveryOptions
             {
-                ProcessingEnabled = true,
                 QueueUrl = queue.QueueUrl,
                 EvidenceDigestSecret = "test-null-cutover-evidence-secret",
                 RecipientLaneSecret = "test-null-cutover-lane-secret",

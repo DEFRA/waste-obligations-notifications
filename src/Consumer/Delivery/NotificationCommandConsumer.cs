@@ -20,14 +20,6 @@ public sealed class NotificationCommandConsumer(
 {
     protected override async Task ExecuteAfterStartup(CancellationToken stoppingToken)
     {
-        if (!options.Value.ProcessingEnabled)
-        {
-            logger.LogWarning("Notification command consumption is disabled");
-            await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
-
-            return;
-        }
-
         var cutover = ReadCutover();
         if (!options.Value.HasValidProcessingBudget)
             throw new InvalidOperationException(

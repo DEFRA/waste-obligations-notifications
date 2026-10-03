@@ -144,7 +144,7 @@ public class NotificationCommandPublisherTests
     public async Task Publish_WhenProcessingIsDisabledAndLaneSecretIsUnconfigured_ShouldNotQueueCommand(string secret)
     {
         var sqsClient = Substitute.For<IAmazonSQS>();
-        var options = CreateOptions() with { ProcessingEnabled = false, RecipientLaneSecret = secret };
+        var options = CreateOptions() with { RecipientLaneSecret = secret };
         var subject = new NotificationCommandPublisher(
             sqsClient,
             Options.Create(options),

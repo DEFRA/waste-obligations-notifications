@@ -31,10 +31,12 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WhenSendingIsPaused_ShouldGateCriticalStartupAndInspectOnlyOneRealFifoMessage(bool oauth)
+    public async Task WhenAdminOnlyHostStarts_ShouldGateCriticalStartupAndInspectOnlyOneRealFifoMessage(bool oauth)
     {
         using var sqs = CreateSqsClient();
         using var mongo = CreateMongoClient();
+        using var fixture = new HttpClient { BaseAddress = new Uri("http://localhost:8086") };
+        var notifyApiKey = await fixture.GetStringAsync("/test/api-key", TestContext.Current.CancellationToken);
         var databaseName = $"notifications_inspection_{Guid.NewGuid():N}";
         var database = mongo.GetDatabase(databaseName);
         var token = TestContext.Current.CancellationToken;
@@ -73,7 +75,8 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
                 destination.QueueUrl,
                 databaseName,
                 oauth,
-                mongo
+                mongo,
+                notifyApiKey
             );
             using var client = factory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(20);
@@ -168,7 +171,7 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
             Assert.True(results.TryGetProperty("NotificationCommandQueue", out _));
             Assert.True(results.TryGetProperty("NotificationCommandDeadLetterQueue", out _));
             Assert.True(results.TryGetProperty("NotificationDeliveryRecordStore", out _));
-            Assert.False(results.TryGetProperty("Notify", out _));
+            Assert.Equal("Healthy", results.GetProperty("Notify").GetProperty("status").GetString());
             Assert.Equal(1, factory.Sqs.ReceiveCount);
             foreach (
                 var value in new[]
@@ -286,7 +289,8 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
         string commandQueue,
         string databaseName,
         bool oauth,
-        IMongoClient mongo
+        IMongoClient mongo,
+        string notifyApiKey
     ) : WebApplicationFactory<Program>
     {
         public CountingSqsClient Sqs { get; } = new();
@@ -297,6 +301,15 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
             builder.UseEnvironment("Testing");
             builder.ConfigureTestServices(services =>
             {
+                foreach (
+                    var descriptor in services
+                        .Where(descriptor =>
+                            descriptor.ServiceType == typeof(IHostedService)
+                            && descriptor.ImplementationType == typeof(NotificationCommandConsumer)
+                        )
+                        .ToArray()
+                )
+                    services.Remove(descriptor);
                 // Both theory hosts use real isolated Mongo without repeating the SDK's process-global AWS registration.
                 services.RemoveAll<IMongoClient>();
                 services.AddSingleton(mongo);
@@ -317,18 +330,14 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
                         ["AWS_EMF_ENABLED"] = "false",
                         ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
                         ["AnalyticsEventConsumer:QueueUrl"] = AnalyticsEventsQueueUrl,
-                        ["NotificationCommandDelivery:ProcessingEnabled"] = "false",
                         ["NotificationCommandDelivery:QueueUrl"] = commandQueue,
                         ["NotificationCommandDelivery:EvidenceDigestSecret"] = "local-inspection-evidence-secret",
                         ["NotificationCommandDelivery:RecipientLaneSecret"] = "local-inspection-lane-secret",
-                        ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "set-automatically-when-deployed",
-                        ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = "0",
-                        ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = "0",
                         ["CommandDlqAdministration:QueueUrl"] = dlq,
                         ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                         ["Mongo:DatabaseName"] = databaseName,
-                        ["Notify:ApiKey"] = "set-automatically-when-deployed",
-                        ["Notify:BaseAddress"] = "set-automatically-when-deployed",
+                        ["Notify:ApiKey"] = notifyApiKey,
+                        ["Notify:BaseAddress"] = "http://localhost:8086",
                         ["Acl:Clients:admin:Type"] = oauth ? "OAuth" : "ApiKey",
                         ["Acl:Clients:admin:Secret"] = oauth ? null : Secret,
                         ["Acl:Clients:admin:Scopes:0"] = "admin",

@@ -225,6 +225,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                 );
                 Assert.Equal(unrelated.IdempotencyKey, NotificationCommandMessageReader.Read(remaining).IdempotencyKey);
                 if (state == "new")
+                {
                     await VerifyFutureDuplicate(
                         sqs,
                         mongo,
@@ -235,6 +236,8 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                         digest,
                         token
                     );
+                    Assert.Equal(record, await records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
+                }
             }
             else
             {
@@ -308,7 +311,6 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
         {
             ["AWS_EMF_ENABLED"] = "false",
             ["NotificationCommandDelivery:QueueUrl"] = queue,
-            ["NotificationCommandDelivery:ProcessingEnabled"] = "true",
             ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2026-09-29T00:00:00Z",
             ["NotificationCommandDelivery:EvidenceDigestSecret"] = "local-inspection-evidence-secret",
             ["NotificationCommandDelivery:RecipientLaneSecret"] = "local-inspection-lane-secret",
@@ -322,7 +324,7 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
         builder.WebHost.UseTestServer();
         builder.Configuration.AddInMemoryCollection(values);
         builder.Services.AddNotificationCommandDelivery(builder.Configuration);
-        builder.Services.AddHealth(builder.Configuration);
+        builder.Services.AddHealth();
         builder.Services.AddSingleton<IAmazonSQS>(sqs);
         builder.Services.AddSingleton(mongo);
         await using var host = builder.Build();
@@ -586,6 +588,15 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
             builder.UseEnvironment("Testing");
             builder.ConfigureTestServices(services =>
             {
+                foreach (
+                    var descriptor in services
+                        .Where(descriptor =>
+                            descriptor.ServiceType == typeof(IHostedService)
+                            && descriptor.ImplementationType == typeof(NotificationCommandConsumer)
+                        )
+                        .ToArray()
+                )
+                    services.Remove(descriptor);
                 // Use the genuine isolated Mongo client: the SDK's AWS mechanism registration is process-global.
                 // Both in-process hosts retain the actual migrations, store and readiness at this Mongo boundary.
                 services.RemoveAll<IMongoClient>();
@@ -618,13 +629,9 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                         ["AWS_EMF_ENABLED"] = "false",
                         ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
                         ["AnalyticsEventConsumer:QueueUrl"] = AnalyticsEventsQueueUrl,
-                        ["NotificationCommandDelivery:ProcessingEnabled"] = "false",
                         ["NotificationCommandDelivery:QueueUrl"] = commandQueue,
                         ["NotificationCommandDelivery:EvidenceDigestSecret"] = "local-inspection-evidence-secret",
                         ["NotificationCommandDelivery:RecipientLaneSecret"] = "local-inspection-lane-secret",
-                        ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "set-automatically-when-deployed",
-                        ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = "0",
-                        ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = "0",
                         ["CommandDlqAdministration:QueueUrl"] = dlq,
                         ["CommandDlqAdministration:DependencyTimeoutSeconds"] = lateWrite ? "1" : "10",
                         ["CommandDlqAdministration:SelectionLifetimeSeconds"] = lifetime.ToString(
@@ -632,8 +639,8 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                         ),
                         ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                         ["Mongo:DatabaseName"] = databaseName,
-                        ["Notify:ApiKey"] = "set-automatically-when-deployed",
-                        ["Notify:BaseAddress"] = "set-automatically-when-deployed",
+                        ["Notify:ApiKey"] = $"local-only-{Guid.NewGuid()}-{Guid.NewGuid()}",
+                        ["Notify:BaseAddress"] = "http://localhost:8086",
                         ["Acl:Clients:admin:Type"] = oauth ? "OAuth" : "ApiKey",
                         ["Acl:Clients:admin:Secret"] = oauth ? null : Secret,
                         ["Acl:Clients:admin:Scopes:0"] = "admin",

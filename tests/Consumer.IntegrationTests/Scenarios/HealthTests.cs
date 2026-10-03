@@ -10,6 +10,7 @@ public sealed class HealthTests : IntegrationTestBase
 
         response.EnsureSuccessStatusCode();
 
-        await VerifyJson(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        await VerifyJson(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken))
+            .DontScrubDateTimes();
     }
 }

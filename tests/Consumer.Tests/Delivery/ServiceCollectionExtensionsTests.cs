@@ -14,18 +14,17 @@ public sealed class ServiceCollectionExtensionsTests
     [InlineData(20, 10, false)]
     [InlineData(0, 1, true)]
     [InlineData(0, 0, false)]
-    public void WhenSendingIsEnabled_ShouldRequireReceiveTimeoutToExceedLongPollWait(
+    public void WhenReceiveTimeoutIsConfigured_ShouldRequireItToExceedLongPollWait(
         int waitTimeSeconds,
         int receiveTimeoutSeconds,
         bool valid
     )
     {
-        using var provider = CreateProvider(true, waitTimeSeconds, receiveTimeoutSeconds);
+        using var provider = CreateProvider(waitTimeSeconds, receiveTimeoutSeconds);
         var options = provider.GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>();
 
         if (valid)
         {
-            Assert.True(options.Value.ProcessingEnabled);
             Assert.Equal(waitTimeSeconds, options.Value.WaitTimeSeconds);
             Assert.Equal(receiveTimeoutSeconds, options.Value.ReceiveTimeoutSeconds);
             Assert.Equal(1, options.Value.BatchSize);
@@ -42,34 +41,14 @@ public sealed class ServiceCollectionExtensionsTests
         }
     }
 
-    [Theory]
-    [InlineData(20, 20)]
-    [InlineData(20, 10)]
-    [InlineData(0, 0)]
-    public void WhenSendingIsPaused_ShouldPermitUnusedReceiveBudgets(int waitTimeSeconds, int receiveTimeoutSeconds)
-    {
-        using var provider = CreateProvider(false, waitTimeSeconds, receiveTimeoutSeconds);
-        var options = provider.GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>().Value;
-
-        Assert.False(options.ProcessingEnabled);
-        Assert.Equal(waitTimeSeconds, options.WaitTimeSeconds);
-        Assert.Equal(receiveTimeoutSeconds, options.ReceiveTimeoutSeconds);
-    }
-
-    private static ServiceProvider CreateProvider(
-        bool processingEnabled,
-        int waitTimeSeconds,
-        int receiveTimeoutSeconds
-    )
+    private static ServiceProvider CreateProvider(int waitTimeSeconds, int receiveTimeoutSeconds)
     {
         const string ampleBudgetSeconds = "1000";
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
-                    ["AWS_EMF_ENABLED"] = "false",
-                    ["NotificationCommandDelivery:ProcessingEnabled"] = processingEnabled.ToString(),
-                    ["NotificationCommandDelivery:QueueUrl"] = "commands.fifo",
+                    ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
@@ -102,7 +81,7 @@ public sealed class ServiceCollectionExtensionsTests
             .AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
-                    ["NotificationCommandDelivery:QueueUrl"] = "commands.fifo",
+                    ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
                     ["NotificationCommandDelivery:DiagnosticNotificationTypes:0"] = label,

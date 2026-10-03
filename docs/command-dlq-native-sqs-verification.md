@@ -1,15 +1,21 @@
 # Native SQS command-DLQ verification
 
-Administration endpoints are always registered and protected by the Basic/OAuth admin ACL. The user approved this contract while native FIFO replay remains unverified. Floci/LocalStack checks supply a labelled test adapter and cannot supply native proof. There is no administration enablement switch; an empty ACL permits startup and denies administrator calls.
+Administration endpoints are always registered and protected by the Basic/OAuth admin ACL. Native FIFO replay remains unverified. Floci/LocalStack checks supply a labelled test adapter and cannot supply native proof. There is no administration enablement switch; an empty ACL permits startup and denies administrator calls.
 
 ## Synthetic verification through the deployed service
 
 An authorised operator can use the always-registered body-free verification-command endpoint on the configured DLQ. It records permanent suppression before enqueueing; Notify cannot be called for the matching command. This is an operator action after deployment, not permission for an agent to call shared queues or provision cloud resources.
 
-1. Confirm `/health` succeeds, command processing is active and the admin ACL grants access through the approved gateway/Basic contract. POST `/admin/notification-commands/dlq/verification-command` with no payload. Save its generated `idempotencyKey` and `messageId` privately. A 409 means processing is paused; a 503 does not confirm queuing and may leave safe suppression evidence.
+1. Confirm `/health` succeeds and the admin ACL grants access through the approved gateway/Basic contract. POST `/admin/notification-commands/dlq/verification-command` with no payload. Save its generated `idempotencyKey` and `messageId` privately. A 503 does not confirm queuing and may leave safe suppression evidence.
 2. POST `/admin/notification-commands/dlq/inspect`. Verify its raw key matches the generated key before any action. Inspection only selects the next visible message. If another command is selected, leave it untouched and wait for selection/visibility expiry; this API cannot search for the probe by key.
 3. Redrive the probe using its selection token, preferably through another service host within expiry. With differing host selection lifetimes, production still uses the token's original visibility parameter. Confirm a 204 redrive response, then source-queue processing/deletion, unchanged `delivery-suppressed` evidence and no Notify call for its reference. Logs should report terminal-duplicate processing for the recovered SQS message; redrive success alone is not proof that processing completed.
 4. Record native region, revision, host/configuration differences, outcomes and safe evidence links. No token, receipt handle, credentials or message body belongs in logs/reports. The probe must be refused by discard because suppressed evidence is protected. Successful native discard and the explicit changed-visibility experiment below remain separate gaps.
+
+Malformed commands and immutable conflicts cannot be cleared through these APIs.
+Use configured queue retention or deployment-owned controlled removal for those
+messages; this runbook supplies no verified removal tool. Null cutover permanently
+suppresses valid commands while every host continues consuming. All hosts require
+valid command/DLQ queues, digest secrets, Mongo and Notify settings and sending budgets.
 
 ## Full isolated recovery protocol
 

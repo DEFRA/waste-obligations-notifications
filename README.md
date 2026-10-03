@@ -20,8 +20,8 @@ SQS for visibility-timeout retry and queue redrive. A redriven command does not
 regain its original recipient-lane position.
 
 Configured Basic or OAuth administrators can inspect one next-visible command-DLQ message
-through `POST /admin/notification-commands/dlq/inspect`. Administration is disabled
-by default. Inspection returns minimal metadata and a signed expiring selection;
+through `POST /admin/notification-commands/dlq/inspect`. Administration is always
+registered; an empty ACL denies access. Inspection returns minimal metadata and a signed expiring selection;
 `POST /admin/notification-commands/dlq/redrive` accepts that selection in a JSON
 body, republishes the unchanged command, then removes only the selected source
 after publication is confirmed. Neither operation changes delivery evidence.
@@ -102,17 +102,17 @@ service-owned `AnalyticsEventConsumer__QueueUrl`. The deployed queue must be a
 separate subscription from the producer queue and must have the CDP dead-letter
 queue convention configured.
 
-`NotificationCommandDelivery` is deployment-owned. Before enabling it, CDP must
-provide its FIFO queue URL, optional cutover timestamp,
-and distinct evidence-digest and recipient-lane secrets. Set `Notify__ApiKey` to
-the service's Notify API key; `Notify__BaseAddress` defaults to the GOV.UK Notify
-API. Enabled command processing validates the SDK's API key shape before consuming. Do not put those secrets
-in source control or logs.
-Enabled command processing permits null and validates any supplied cutover timestamp.
-Both digest secrets are required for administration, including when sending is paused.
-Blank or deployment-placeholder secrets prevent startup. Paused sending permits
-Notify, cutover and sending-budget placeholders. Digest creation also rejects
-unconfigured secrets when the publisher is used independently.
+`NotificationCommandDelivery` is deployment-owned. Every host consumes commands
+after successful startup readiness; there is no command-processing enablement
+flag. Before deployment, provide the FIFO queue URL, optional cutover, distinct
+evidence-digest and recipient-lane secrets, Mongo connectivity/permissions and Notify credentials.
+Set `Notify__ApiKey` to the service's Notify API key; `Notify__BaseAddress` defaults
+to the GOV.UK Notify API. Every host validates the SDK key shape, API URL and
+complete send budget, including with null cutover. Queue and secret placeholders
+prevent startup. Null cutover permanently
+suppresses commands; it does not pause consumption. Keep secrets outside source
+control and logs. Digest creation also rejects unconfigured secrets when the
+publisher is used independently.
 Cutover configuration and serialized `actionOccurredAtUtc` values must include
 `Z` or a numeric zero offset (`+00:00` or `-00:00`). Offset-free timestamps are
 rejected regardless of host timezone; nonzero offsets are rejected without
@@ -225,7 +225,7 @@ the pinned SDK's [ECS implementation](https://github.com/awslabs/aws-embedded-me
 builds an invalid derived endpoint. `AWS_EMF_ENVIRONMENT=Agent` also avoids metadata
 discovery when the collector route is already known.
 
-When command processing or administration is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
+Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
 A critical index must have completed building, not merely appear in the catalog.
@@ -290,21 +290,21 @@ The client identifies itself as `waste-obligiations-notifications-consumer` and 
 reads for delivery evidence, even if the URI specifies another read preference.
 
 Local Compose uses unauthenticated standalone Mongo and cannot verify CDP IAM or
-TLS. Before enabling command processing in CDP, verify authentication, certificate
+TLS. Before deploying to CDP, verify authentication, certificate
 loading, database permissions, migration completion and `/health/all`. Mongo
-migrations and command queue/DLQ/Mongo health checks always run for administration.
+migrations and critical health checks run for every host.
 
-When command processing is enabled, `/health/all` also checks GOV.UK Notify with
+`/health/all` checks GOV.UK Notify on every host, including with null cutover, with
 one authenticated `GET /v2/templates?type=email`, bounded by the existing
 ten-second health timeout. It uses the SDK template-list operation to check
 connectivity and credentials. The SDK reads and deserializes the response within
 the same cancellation bound; template content is discarded and never exposed or
 logged. This does not validate a command's template or confirm email delivery.
 Failures expose a fixed description without dependency error details.
-Disabled command processing does not register or call this check. `/health`
+`/health`
 remains independent of Notify and the other extended dependency checks.
 
-Inspection, redrive and discard are always registered independently of command sending. Configure the administration FIFO `QueueUrl`, a distinct command FIFO URL and both delivery digest secrets, including while sending is paused. `SelectionLifetimeSeconds` defaults to 120 and must be strictly below AWS's 300-second receive-attempt window; `DependencyTimeoutSeconds` defaults to 10 and must be positive and shorter than the selection lifetime. Administrator requests return 503 until critical migrations complete and the first successful anonymous `/health` response finishes. Redrive and discard share one dependency deadline capped by the signed selection's remaining lifetime. Notify credentials, cutover and sending budgets are required only when sending is enabled. There is no administration enablement switch.
+Inspection, redrive and discard are always registered. Every host requires the administration FIFO `QueueUrl`, a distinct command FIFO URL, both delivery digest secrets, Mongo connectivity and valid Notify credentials/API URL and sending budgets, including with null cutover. `SelectionLifetimeSeconds` defaults to 120 and must be strictly below AWS's 300-second receive-attempt window; `DependencyTimeoutSeconds` defaults to 10 and must be positive and shorter than the selection lifetime. Administrator requests return 503 until critical migrations complete and the first successful anonymous `/health` response finishes. Redrive and discard share one dependency deadline capped by the signed selection's remaining lifetime. Null cutover permanently suppresses commands while consumption continues. There is no administration enablement switch.
 
 The ACL follows Waste Obligations: `Acl__Clients__<clientId>__Type=ApiKey`,
 `Acl__Clients__<clientId>__Secret`, and `Acl__Clients__<clientId>__Scopes__0=admin`.
@@ -318,7 +318,7 @@ cannot elevate a caller. ApiKey clients cannot use Bearer and OAuth clients
 cannot use Basic. Basic credentials use UTF-8 and split at
 the first colon, permitting colons in a secret. Supply secrets through CDP,
 never source control. CDP operator routing and credentials must be configured
-separately; local Compose keeps administration disabled.
+separately; local Compose uses an empty ACL to deny administrator access.
 
 As explicitly approved, Bearer validation matches Waste Obligations: the private
 CDP gateway validates Cognito signatures, issuer and audience; this service
@@ -347,7 +347,7 @@ Selections contain only receive-attempt ID, SQS message ID, an HMAC queue bindin
 absolute expiry, immutable-field digest and the original receive visibility timeout. Hosts sharing the evidence secret
 and DLQ configuration can validate them; no message body or receipt handle is
 returned or stored. Expiry starts before the receive request, and late dependency
-confirmations fail safely. `/health/all` always checks the DLQ, while Notify health remains conditional on sending. `/health` gates critical migrations; the remaining dependency checks are extended health.
+confirmations fail safely. `/health/all` always checks the DLQ and Notify, including with null cutover. `/health` gates critical migrations; the remaining dependency checks are extended health.
 
 Selection format `v2` binds the original visibility timeout, so another host
 replays the same receive parameters even with different local selection settings.
@@ -402,7 +402,7 @@ Native replay remains unverified. Follow the
 to record deployment evidence; local checks cannot supply native proof.
 The user approved always-registered authenticated administration despite this evidence gap.
 
-Authenticated `POST /admin/notification-commands/dlq/verification-command` accepts no body and requires active command processing. It creates a random `verification-` key with fixed synthetic fields, confirms matching permanent suppression in Mongo, then enqueues it on the configured DLQ. The response contains `idempotencyKey` and `messageId`; it confirms queuing, not processing. Store rejection or failure never publishes; publication failure leaves safe suppression evidence. Inspect and match the generated key before redriving. The normal consumer then processes it as a terminal duplicate, deletes it and makes no Notify call, with either a null cutover or a boundary before its fixed 2000-01-01 action time. This enables operator verification without recipient mail. It cannot verify successful discard because suppressed evidence is protected. Follow the runbook and retain the native proof gap until it is run against AWS.
+Authenticated `POST /admin/notification-commands/dlq/verification-command` accepts no body. It creates a random `verification-` key with fixed synthetic fields, confirms matching permanent suppression in Mongo, then enqueues it on the configured DLQ. The response contains `idempotencyKey` and `messageId`; it confirms queuing, not processing. Store rejection or failure never publishes; publication failure leaves safe suppression evidence. Inspect and match the generated key before redriving. The normal consumer then processes it as a terminal duplicate, deletes it and makes no Notify call, with either a null cutover or a boundary before its fixed 2000-01-01 action time. This enables operator verification without recipient mail. It cannot verify successful discard because suppressed evidence is protected. Follow the runbook and retain the native proof gap until it is run against AWS.
 
 ## Code quality and delivery
 
@@ -418,19 +418,41 @@ tests read the same fixture credential from its test-only API. No Notify account
 credential is stored in development settings or test source. Compose teardown
 removes the generated volume.
 
+## Digest-key lifetime
+
+`EvidenceDigestSecret` is durable identity material, not a replaceable API
+credential. Preserve it across hosts and deployments for as long as delivery
+evidence or replayable commands exist. Changing it makes old records invisible
+to duplicate detection and can resend an already accepted email. The `v1:`
+prefix identifies the digest format, not a key ID. The same secret signs DLQ selections and derives Notify references and redrive transport deduplication IDs using separate HMAC domains. Preserve it while any signed selection or replayable command exists. Changing it invalidates selections and changes reference/deduplication identities. Key rotation is unsupported;
+it requires a separately designed migration that preserves existing identities.
+
+All publishers and consumers must share the same `RecipientLaneSecret`.
+Changing it creates different FIFO groups for the same recipient and can break
+ordering while commands remain in the source queue or DLQ. No lane-key rotation
+procedure is provided. Keep both values in deployment-owned secret storage.
+
 ## Nullable initial cutover and handover
 
 `NotificationCommandDelivery:EmailDeliveryCutoverUtc` defaults to null. With
 otherwise valid configuration, processing can run in suppression mode while
 Waste Obligations sends every action. Suppression is durable before queue deletion;
-malformed or conflicting commands still retry. Suppressed evidence remains terminal
+malformed or conflicting commands still retry. The administration APIs cannot clear malformed commands or immutable conflicts. Resolve them through configured queue retention or deployment-owned controlled removal; no verified removal tool is supplied here. Suppressed evidence remains terminal
 and is never backfilled into a send after configuration changes. Empty strings,
 whitespace, deployment placeholders and non-UTC values are invalid supplied cutovers.
 
-After the producer dry run, configure the identical future X in both services and
-verify both deployments complete before X. Notifications sends actions at or after
-X once ticket02 is present; Waste Obligations sends only actions before X. The
-handover is forward-only after X; do not clear the cutover to restore direct sends.
+After the producer dry run, configure Notifications with a future X first.
+Verify every active host uses X and the post-cutover delivery implementation,
+and stop old null-cutover consumers. Then configure Waste Obligations with the
+identical X and verify its rollout completes before X. Waste Obligations must
+not stop sending while any Notifications consumer still uses null: both paths
+would permanently suppress the affected commands. Notifications sends actions at or after
+X; Waste Obligations sends only actions before X. The
+handover is forward-only after X; do not clear or change the cutover after X.
+Each host logs its parsed cutover at startup.
+`/health/all` reports `EmailDeliveryCutover` with the normalized UTC value or null,
+validity and fixed suppression/boundary mode. Compare every active host, not only
+saved configuration. This diagnostic does not gate `/health`; null is valid.
 See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
 
 Critical migration completion is reported by the `MongoMigrationCompletion`

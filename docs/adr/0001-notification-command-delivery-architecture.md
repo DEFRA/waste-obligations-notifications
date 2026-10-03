@@ -18,6 +18,9 @@ would not protect an intended email after its limited deduplication window.
 
 ## Decision
 
+The [producer contract](../notification-command-producer-contract.md) pins the
+wire and FIFO rules; it does not prescribe declaration recipient/template policy.
+
 Notifications will consume versioned notification commands from a dedicated,
 service-owned SQS FIFO queue. Upstream producers use a shared command publisher
 to assign the command's idempotency key as the SQS deduplication ID and a
@@ -86,3 +89,10 @@ MongoDB, the command queue and DLQ, Notify credentials, and identity-key
 material become deployment-owned dependencies. Records retain minimal delivery
 evidence indefinitely and must not retain recipient addresses, personalisation,
 rendered content, or full Notify responses.
+
+The evidence digest secret is part of durable command identity. Preserve it for
+the lifetime of retained evidence and replayable commands; replacing it can
+bypass duplicate suppression. The digest format version is not a key ID, and
+rotation is unsupported without an identity-preserving migration. The recipient
+lane secret must match every publisher and consumer; changing it while commands
+remain queued or dead-lettered can break per-recipient ordering.
