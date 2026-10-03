@@ -211,7 +211,7 @@ X once ticket02 is present; Waste Obligations sends only actions before X. The
 handover is forward-only after X; do not clear or change the cutover after X.
 Each host logs its parsed cutover at startup.
 `/health/all` reports `EmailDeliveryCutover` with the normalized UTC value or null,
-validity and fixed suppression/boundary mode. Compare every active host, not only
+and fixed suppression/boundary mode. Compare every active host, not only
 saved configuration. This diagnostic does not gate `/health`; null is valid.
 See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
 
