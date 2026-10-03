@@ -10,6 +10,9 @@ Follow [CODING_STANDARDS.md](CODING_STANDARDS.md) when writing code.
   and inherit `IntegrationTestBase`.
 - Local Compose may create and own isolated resources. Tests must not alter
   shared queues, topics, or deployed CDP configuration.
+- The isolated Compose Mongo enables test commands for index-build failpoint
+  regressions. These tests run serially, release failpoints before cleanup, and
+  must never run against a shared or deployed Mongo instance.
 - Journey tests are not currently part of this repository. Do not add their
   workflows or secrets unless explicitly brought into scope.
 

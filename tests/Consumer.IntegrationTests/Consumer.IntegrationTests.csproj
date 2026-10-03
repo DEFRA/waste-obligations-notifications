@@ -21,5 +21,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Consumer/Consumer.csproj" />
+    <ProjectReference Include="../Consumer.MigrationFixtures/Consumer.MigrationFixtures.csproj" />
   </ItemGroup>
 </Project>

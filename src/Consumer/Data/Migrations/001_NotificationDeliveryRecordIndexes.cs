@@ -12,6 +12,8 @@ public sealed class NotificationDeliveryRecordIndexes : MongoMigration
 {
     internal const string NotificationKeyIndexName = "notificationKey_unique";
 
+    public override bool Critical => true;
+
     public override MigrationVersion Version => new(1, 0, 0);
 
     public override string Name => "001 - NotificationDeliveryRecord indexes";
@@ -22,7 +24,8 @@ public sealed class NotificationDeliveryRecordIndexes : MongoMigration
             MongoNotificationDeliveryRecordStore.CollectionName,
             NotificationKeyIndexName,
             Builders<NotificationDeliveryRecord>.IndexKeys.Ascending(record => record.NotificationKey),
-            unique: true
+            unique: true,
+            replaceExisting: false
         );
 
     public override Task DownAsync(MigrationContext context) =>
@@ -41,11 +44,17 @@ public sealed class NotificationDeliveryRecordIndexes : MongoMigration
 
         if (
             index is null
+            || index.Contains("partialFilterExpression")
             || index.GetValue("unique", false) != BsonBoolean.True
             || !index.GetValue("key", new BsonDocument()).Equals(new BsonDocument("notificationKey", 1))
         )
             return false;
 
-        return true;
+        return await HasCompletedIndex(
+            database,
+            MongoNotificationDeliveryRecordStore.CollectionName,
+            NotificationKeyIndexName,
+            cancellationToken
+        );
     }
 }

@@ -109,6 +109,12 @@ conversion. Both timestamps are truncated to whole milliseconds before compariso
 matching MongoDB storage precision. Command serialisation and immutable evidence
 use the same precision so a Mongo roundtrip does not change command identity.
 
+Logs and command metric tags use `NotificationCommandDelivery__DiagnosticNotificationTypes`
+(an optional list of at most 32 lowercase ASCII category labels, each at most 64
+characters). Unconfigured types use `other`. Failure logs contain a fixed cause
+and exception type, without retaining dependency exception text or payloads.
+Delivery evidence retains the command type and identity digests, outside diagnostic output.
+
 Command consumption starts the next receive immediately after success or an
 empty response. `NotificationCommandDelivery__PollIntervalSeconds` is the
 error backoff only (15 seconds initially). Each host processes one command
@@ -218,21 +224,28 @@ discovery when the collector route is already known.
 When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
-Each host checks migration history and the latest migration's current-schema
-validation before command consumption starts. Migration 001 verifies its unique
-notification-key index. The consumer waits once at startup; stores have no
-migration-completion dependency. Future migrations explicitly define the
-current schema requirements. A host can become ready after another host applies migrations
-without acquiring the lease itself. Commands stay on SQS while migrations are
-incomplete; analytics consumption and `/health` continue independently.
+A critical index must have completed building, not merely appear in the catalog.
+Incompatible existing definitions are rejected without dropping them. A retry
+confirms an unfinished matching build before saving migration history; completed
+hidden indexes remain valid.
+Each host confirms critical history and the latest critical migration's schema
+before `/health` can succeed. Both consumers start only after the first successful
+health response. Record stores do not wait on migrations. A peer can establish
+the prerequisite; non-critical failures do not block deployment readiness.
 Failures are retried up to `MongoMigrations__MaximumAttempts` across all lease
-acquisitions on the host. A renewal error cancels the attempt; once the engine
+acquisitions and phase changes on the host. While critical prerequisites are
+incomplete, a failed attempt relinquishes the lease after engine and renewal
+work stop, then waits five seconds before reacquiring. Once critical readiness
+is established, standard failures retain the lease and the 30-second retry delay. A renewal error cancels the attempt; once the engine
 stops, the host releases the lease and can reacquire it using the remaining
 attempt budget. After exhaustion,
 the host releases the lease and continues checking for completion by another host.
 It needs a restart to make further migration attempts itself. Failed attempts,
 exhaustion and prolonged readiness waits produce error logs for support alerts.
-An attempt timeout or host shutdown requests cancellation and continues renewing
+Each critical migration operation has a 20-second cooperative deadline; standard
+operations retain a 300-second deadline. Each ordered operation receives its own
+budget, including standard work between two critical migrations. A deadline or
+host shutdown requests cancellation and continues renewing
 the lease while renewal succeeds until execution stops; a migration that does not
 stop needs support intervention.
 
@@ -245,10 +258,12 @@ the engine and outstanding renewal work to stop. This requests cancellation befo
 lease expiry; the migration engine has synchronous operations that can outlive
 cancellation, and the lease does not fence those operations after ownership is lost.
 
-`MongoMigrations` configures lease duration, renewal interval, attempt timeout,
+`MongoMigrations` configures lease duration, renewal interval, standard operation timeout,
 retry delay and readiness-wait alert threshold in seconds (the latter uses
 `LeaseAcquisitionAlertThresholdSeconds`). The defaults are
-60, 15, 300, 30 and 300 respectively, with three attempts. Renewal must be no
+30, 10, 300, 30 and 300 respectively, with three attempts.
+`CriticalOperationTimeoutSeconds` defaults to 20; `AttemptTimeoutSeconds` is the
+per-operation standard budget, rather than a deadline for the whole migration chain. Renewal must be no
 more than half the lease duration. CDP can override these defaults separately
 from local Compose configuration.
 
@@ -314,9 +329,25 @@ X once ticket02 is present; Waste Obligations sends only actions before X. The
 handover is forward-only after X; do not clear the cutover to restore direct sends.
 See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
 
-Migration completion is reported by the `MongoMigrationCompletion` entry in
-`/health/all` while command processing is enabled. Until completion that endpoint
-returns 503, while `/health` and analytics remain available. If every host
-exhausts its migration attempts, repair the migration problem and restart a host
-to retry; hosts continue observing completion by a peer meanwhile. This check
-reads the startup signal and performs no schema or index queries.
+Critical migration completion is reported by the `MongoMigrationCompletion`
+entry in `/health/all` and gates `/health` while command processing is enabled.
+Migration 001 is flagged `Critical = true`; migrations default to non-critical.
+An absent or invalid critical prerequisite returns 503, including when another
+host owns the lease or every host exhausts its attempts. Already-applied critical
+migrations satisfy readiness without being rerun. Non-critical failures do not
+block readiness. The latest critical migration owns the current schema validation;
+older critical history remains required without retaining obsolete schema checks.
+
+HTTP and migration work start first. Both consumers wait through a shared hosting
+boundary until this host completes its first successful anonymous `/health`
+response. `/health/all` and `/health/authorized` do not release that boundary.
+Stores and business operations have no migration checks. Health reads a latched
+startup result and performs no Mongo queries; later dependency outages are
+reported by extended health. CDP controls replacement of hosts that remain
+unhealthy. Long critical migrations must fit the actual platform startup budget
+or be applied before rollout; the documented 95 seconds is not an overall
+deployment deadline. Metrics and startup logging remain available for diagnosis.
+
+Suppression recorded with an unset cutover remains terminal after configuration,
+including an action at or after the new boundary. Delete matching replays without
+changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.

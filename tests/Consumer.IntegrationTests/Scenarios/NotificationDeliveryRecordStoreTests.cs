@@ -61,6 +61,12 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
                 store.RecordSuppression(command, cancelledOperation.Token)
             );
+            Assert.Equal(
+                0,
+                await database
+                    .GetCollection<BsonDocument>("NotificationDeliveryRecord")
+                    .CountDocumentsAsync(new BsonDocument(), cancellationToken: cancellationToken)
+            );
             Assert.Equal(SuppressionClaimResult.Recorded, await store.RecordSuppression(command, cancellationToken));
             Assert.Equal(
                 SuppressionClaimResult.TerminalDuplicate,

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -15,8 +16,12 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
 public sealed class NullCutoverDeliveryTests : IntegrationTestBase
 {
-    [Fact]
-    public async Task WhenNullCutoverCommandBecomesSendEligible_ShouldPreserveSuppressionWithoutNotify()
+    [Theory]
+    [InlineData("2026-09-28T10:00:00Z")]
+    [InlineData("2101-01-01T00:00:00Z")]
+    public async Task WhenNullCutoverCommandBecomesSendEligible_ShouldPreserveSuppressionWithoutNotify(
+        string actionTimestamp
+    )
     {
         using var sqs = CreateSqsClient();
         using var mongo = CreateMongoClient();
@@ -49,6 +54,8 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
         );
         var database = mongo.GetDatabase(databaseName);
         var readiness = new MongoMigrationCompletion();
+        var startup = new ApplicationStartup();
+        startup.MarkStarted();
         BsonDocument? original = null;
         try
         {
@@ -81,7 +88,7 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
                     sqs,
                     Options.Create(settings with { EmailDeliveryCutoverUtc = cutover }),
                     new NotificationDeliveryRecordStoreFactory(services),
-                    readiness,
+                    startup,
                     services.GetRequiredService<INotificationCommandMetrics>(),
                     NullLogger<NotificationCommandConsumer>.Instance,
                     notify,
@@ -99,7 +106,7 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
                             {
                                 schemaVersion = 1,
                                 idempotencyKey = commandKey,
-                                actionOccurredAtUtc = "2026-09-28T10:00:00Z",
+                                actionOccurredAtUtc = actionTimestamp,
                                 notificationType = "submitted",
                                 emailAddress = "recipient@example.com",
                                 templateId = "private-template",

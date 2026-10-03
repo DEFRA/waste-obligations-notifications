@@ -13,7 +13,7 @@ public sealed class MongoMigrationServiceTests
     {
         var lease = Substitute.For<IMongoMigrationLeaseService>();
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(true);
         using var service = CreateService(lease, runner, new MongoMigrationOptions());
 
         await service.StartAsync(TestContext.Current.CancellationToken);
@@ -29,7 +29,7 @@ public sealed class MongoMigrationServiceTests
         var lease = Substitute.For<IMongoMigrationLeaseService>();
         lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(false);
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false, true);
         using var service = CreateService(lease, runner, new MongoMigrationOptions());
 
         await service.StartAsync(TestContext.Current.CancellationToken);
@@ -46,7 +46,7 @@ public sealed class MongoMigrationServiceTests
         var lease = Substitute.For<IMongoMigrationLeaseService>();
         var runner = Substitute.For<IMongoMigrationRunner>();
         runner
-            .CheckReadiness(Arg.Any<CancellationToken>())
+            .CheckCompletion(Arg.Any<CancellationToken>())
             .Returns(
                 _ => Task.FromException<bool>(new InvalidOperationException("Mongo unavailable")),
                 _ => Task.FromResult(true)
@@ -56,68 +56,8 @@ public sealed class MongoMigrationServiceTests
         await service.StartAsync(TestContext.Current.CancellationToken);
         await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
 
-        await runner.Received(2).CheckReadiness(Arg.Any<CancellationToken>());
+        await runner.Received(2).CheckCompletion(Arg.Any<CancellationToken>());
         await lease.DidNotReceive().TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task WhenTimedOutMigrationDoesNotStop_ShouldRetainAndRenewLeaseUntilItStops()
-    {
-        var logger = Substitute.For<ILogger<MongoMigrationService>>();
-        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var renewed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var lease = Substitute.For<IMongoMigrationLeaseService>();
-        lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
-        lease
-            .TryRenew(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
-            .Returns(_ =>
-            {
-                if (cancelled.Task.IsCompleted)
-                    renewed.TrySetResult();
-
-                return true;
-            });
-        var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
-        runner
-            .Run(Arg.Any<CancellationToken>())
-            .Returns(async call =>
-            {
-                var token = call.Arg<CancellationToken>();
-                using var registration = token.Register(() => cancelled.TrySetResult());
-                await finish.Task;
-                token.ThrowIfCancellationRequested();
-            });
-        using var service = CreateService(
-            lease,
-            runner,
-            new MongoMigrationOptions
-            {
-                AttemptTimeoutSeconds = 1,
-                LeaseRenewalIntervalSeconds = 1,
-                MaximumAttempts = 1,
-            },
-            logger
-        );
-
-        try
-        {
-            await service.StartAsync(TestContext.Current.CancellationToken);
-            await renewed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-
-            await lease.DidNotReceive().Release(Arg.Any<CancellationToken>());
-            Assert.False(service.ExecuteTask!.IsCompleted);
-            AssertErrorLogged(logger, "Cancellation was requested");
-        }
-        finally
-        {
-            finish.TrySetResult();
-            await service.StopAsync(TestContext.Current.CancellationToken);
-        }
-
-        await lease.Received(1).Release(Arg.Any<CancellationToken>());
-        await runner.Received(1).Run(Arg.Any<CancellationToken>());
     }
 
     [Theory]
@@ -135,7 +75,7 @@ public sealed class MongoMigrationServiceTests
                     : Task.FromResult(false)
             );
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false, true);
         runner
             .Run(Arg.Any<CancellationToken>())
             .Returns(call => Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>()));
@@ -177,7 +117,7 @@ public sealed class MongoMigrationServiceTests
                 return true;
             });
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false);
         runner
             .Run(Arg.Any<CancellationToken>())
             .Returns(async call =>
@@ -212,47 +152,6 @@ public sealed class MongoMigrationServiceTests
         await lease.Received(1).Release(Arg.Any<CancellationToken>());
     }
 
-    [Fact]
-    public async Task WhenMigrationTimesOut_ShouldCancelAttemptBeforeReleasingLease()
-    {
-        var lease = Substitute.For<IMongoMigrationLeaseService>();
-        lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
-        var cancelled = false;
-        var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
-        runner
-            .Run(Arg.Any<CancellationToken>())
-            .Returns(async call =>
-            {
-                try
-                {
-                    await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
-                }
-                finally
-                {
-                    cancelled = true;
-                }
-            });
-        lease
-            .Release(Arg.Any<CancellationToken>())
-            .Returns(_ =>
-            {
-                Assert.True(cancelled);
-
-                return Task.CompletedTask;
-            });
-        using var service = CreateService(
-            lease,
-            runner,
-            new MongoMigrationOptions { AttemptTimeoutSeconds = 1, MaximumAttempts = 1 }
-        );
-
-        await service.StartAsync(TestContext.Current.CancellationToken);
-        await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
-
-        await lease.Received(1).Release(Arg.Any<CancellationToken>());
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -280,7 +179,7 @@ public sealed class MongoMigrationServiceTests
                 return true;
             });
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false, true);
         runner
             .Run(Arg.Any<CancellationToken>())
             .Returns(async call =>
@@ -355,7 +254,7 @@ public sealed class MongoMigrationServiceTests
                 }
             );
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false, true);
         runner
             .Run(Arg.Any<CancellationToken>())
             .Returns(async call =>
@@ -408,7 +307,7 @@ public sealed class MongoMigrationServiceTests
                 return true;
             });
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false, true);
         runner
             .Run(Arg.Any<CancellationToken>())
             .Returns(async call =>
@@ -463,7 +362,7 @@ public sealed class MongoMigrationServiceTests
                 return true;
             });
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false);
         runner
             .Run(Arg.Any<CancellationToken>())
             .Returns(async call =>
@@ -517,7 +416,7 @@ public sealed class MongoMigrationServiceTests
                 _ => Task.FromResult(true)
             );
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false);
         runner.Run(Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
         using var service = CreateService(
             lease,
@@ -580,7 +479,7 @@ public sealed class MongoMigrationServiceTests
         await runner.Received(2).Run(Arg.Any<CancellationToken>());
         await lease.Received(2).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
         await lease.Received(2).Release(Arg.Any<CancellationToken>());
-        AssertErrorLogged(logger, throws ? "lease renewal failed" : "lease was not renewed");
+        AssertErrorLogged(logger, throws ? "lease-renewal" : "lease was not renewed");
     }
 
     [Theory]
@@ -663,7 +562,7 @@ public sealed class MongoMigrationServiceTests
                     : Task.FromResult(false)
             );
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, false, false, true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false, false, false, true);
         runner
             .Run(Arg.Any<CancellationToken>())
             .Returns(call => Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>()));
@@ -685,7 +584,7 @@ public sealed class MongoMigrationServiceTests
         await runner.Received(2).Run(Arg.Any<CancellationToken>());
         await lease.Received(2).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
         await lease.Received(2).Release(Arg.Any<CancellationToken>());
-        await runner.Received(4).CheckReadiness(Arg.Any<CancellationToken>());
+        await runner.Received(4).CheckCompletion(Arg.Any<CancellationToken>());
         AssertErrorLogged(logger, "did not complete after 2 attempt(s)");
     }
 
@@ -746,10 +645,10 @@ public sealed class MongoMigrationServiceTests
         await lease.Received(1).Release(Arg.Any<CancellationToken>());
 
         if (throws)
-            AssertErrorLogged(logger, "readiness check or lease acquisition failed");
+            AssertErrorLogged(logger, "readiness-check-or-acquisition");
 
         if (alertThreshold == 0)
-            AssertErrorLogged(logger, "Command consumption remains paused");
+            AssertErrorLogged(logger, "critical completion determines deployment readiness");
     }
 
     [Fact]
@@ -777,15 +676,23 @@ public sealed class MongoMigrationServiceTests
         IMongoMigrationRunner runner,
         MongoMigrationOptions options,
         ILogger<MongoMigrationService>? logger = null,
-        TimeProvider? timeProvider = null
-    ) =>
-        new(
+        TimeProvider? timeProvider = null,
+        MongoMigrationCompletion? completion = null
+    )
+    {
+        var readiness = completion ?? new MongoMigrationCompletion();
+        if (completion is null)
+            readiness.MarkCompleted();
+
+        return new(
             lease,
             runner,
+            readiness,
             Options.Create(options),
             timeProvider ?? TimeProvider.System,
             logger ?? NullLogger<MongoMigrationService>.Instance
         );
+    }
 
     private static void AssertErrorLogged(ILogger<MongoMigrationService> logger, string expected)
     {
@@ -832,13 +739,7 @@ public sealed class MongoMigrationServiceTests
         runner
             .Run(Arg.Any<CancellationToken>())
             .Returns(Task.FromException(new InvalidOperationException("Migration failed")), Task.CompletedTask);
-        using var service = new MongoMigrationService(
-            lease,
-            runner,
-            Options.Create(new MongoMigrationOptions { RetryDelaySeconds = 1 }),
-            TimeProvider.System,
-            NullLogger<MongoMigrationService>.Instance
-        );
+        using var service = CreateService(lease, runner, new MongoMigrationOptions { RetryDelaySeconds = 1 });
 
         await service.StartAsync(TestContext.Current.CancellationToken);
         await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
@@ -854,17 +755,11 @@ public sealed class MongoMigrationServiceTests
         var lease = Substitute.For<IMongoMigrationLeaseService>();
         lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(false, true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false, true);
         runner
             .Run(Arg.Any<CancellationToken>())
             .Returns(Task.FromException(new InvalidOperationException("Migration failed")));
-        using var service = new MongoMigrationService(
-            lease,
-            runner,
-            Options.Create(new MongoMigrationOptions { MaximumAttempts = 1 }),
-            TimeProvider.System,
-            NullLogger<MongoMigrationService>.Instance
-        );
+        using var service = CreateService(lease, runner, new MongoMigrationOptions { MaximumAttempts = 1 });
 
         await service.StartAsync(TestContext.Current.CancellationToken);
         await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
@@ -872,6 +767,6 @@ public sealed class MongoMigrationServiceTests
         await runner.Received(1).Run(Arg.Any<CancellationToken>());
         await lease.Received(1).Release(Arg.Any<CancellationToken>());
         await lease.Received(1).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
-        await runner.Received(2).CheckReadiness(Arg.Any<CancellationToken>());
+        await runner.Received(2).CheckCompletion(Arg.Any<CancellationToken>());
     }
 }

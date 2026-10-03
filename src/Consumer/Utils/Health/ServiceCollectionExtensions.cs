@@ -3,6 +3,8 @@ using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
@@ -13,6 +15,8 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddHealth(this IServiceCollection services, IConfiguration configuration)
     {
+        services.TryAddSingleton<ApplicationStartup>();
+
         var healthChecks = services
             .AddHealthChecks()
             .Add(
@@ -33,7 +37,7 @@ public static class ServiceCollectionExtensions
             healthChecks
                 .AddCheck<MongoMigrationCompletionHealthCheck>(
                     "MongoMigrationCompletion",
-                    tags: [WebApplicationExtensions.Extended]
+                    tags: [WebApplicationExtensions.Ready, WebApplicationExtensions.Extended]
                 )
                 .Add(
                     new HealthCheckRegistration(

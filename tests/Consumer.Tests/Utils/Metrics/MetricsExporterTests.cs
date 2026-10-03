@@ -9,6 +9,7 @@ using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -63,7 +64,7 @@ public sealed class MetricsExporterTests
         var readiness = new MongoMigrationCompletion();
         readiness.MarkCompleted();
         var runner = Substitute.For<IMongoMigrationRunner>();
-        runner.CheckReadiness(Arg.Any<CancellationToken>()).Returns(true);
+        runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(true);
         using var host = new HostBuilder()
             .ConfigureLogging(logging => logging.AddProvider(logs))
             .ConfigureAppConfiguration(configuration => configuration.AddInMemoryCollection(Configuration()))
@@ -82,6 +83,7 @@ public sealed class MetricsExporterTests
             .Build();
 
         await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ApplicationStartup>().MarkStarted();
         await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await host.StopAsync(TestContext.Current.CancellationToken);
 

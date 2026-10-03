@@ -2,7 +2,7 @@ using System.Diagnostics;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
-using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
@@ -11,14 +11,14 @@ public sealed class NotificationCommandConsumer(
     IAmazonSQS sqsClient,
     IOptions<NotificationCommandDeliveryOptions> options,
     INotificationDeliveryRecordStoreFactory recordStoreFactory,
-    MongoMigrationCompletion migrationCompletion,
+    ApplicationStartup startup,
     INotificationCommandMetrics metrics,
     ILogger<NotificationCommandConsumer> logger,
     INotifyEmailClient notifyClient,
     INotificationCommandDigest digest
-) : BackgroundService
+) : StartupBackgroundService(startup)
 {
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAfterStartup(CancellationToken stoppingToken)
     {
         if (!options.Value.ProcessingEnabled)
         {
@@ -33,7 +33,6 @@ public sealed class NotificationCommandConsumer(
             throw new InvalidOperationException(
                 "Notification command lease and visibility do not cover the processing budget."
             );
-        await migrationCompletion.Wait(stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -54,7 +53,12 @@ public sealed class NotificationCommandConsumer(
                     await Process(message, command, reference, cutover, receiveStartedAt, stoppingToken);
                 }
             }
-            catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+            catch (Exception) when (stoppingToken.IsCancellationRequested)
+            {
+                // Dependency failures after cancellation must not reach host exception logging.
+                return;
+            }
+            catch (Exception exception)
             {
                 // Dependency exceptions may contain payload or recipient data. Log a bounded category only.
                 LogFailure(exception, messageId, notificationType, reference);

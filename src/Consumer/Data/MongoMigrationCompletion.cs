@@ -1,12 +1,11 @@
 namespace Defra.WasteObligations.Consumer.Data;
 
+// Records only critical startup prerequisites; optional migration progress is independent.
 public sealed class MongoMigrationCompletion
 {
-    private readonly TaskCompletionSource _completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private volatile bool _completed;
 
-    public bool IsCompleted => _completed.Task.IsCompletedSuccessfully;
+    public bool IsCompleted => _completed;
 
-    public Task Wait(CancellationToken cancellationToken) => _completed.Task.WaitAsync(cancellationToken);
-
-    public void MarkCompleted() => _completed.TrySetResult();
+    public void MarkCompleted() => _completed = true;
 }

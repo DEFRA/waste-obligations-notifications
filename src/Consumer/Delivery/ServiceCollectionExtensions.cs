@@ -1,7 +1,9 @@
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Notify.Client;
 using Notify.Interfaces;
 
@@ -14,6 +16,8 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration
     )
     {
+        services.TryAddSingleton<ApplicationStartup>();
+
         services
             .AddOptions<NotificationCommandDeliveryOptions>()
             .Bind(configuration.GetRequiredSection(NotificationCommandDeliveryOptions.SectionName))
