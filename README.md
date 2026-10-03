@@ -187,8 +187,12 @@ malformed or conflicting commands still retry. Suppressed evidence remains termi
 and is never backfilled into a send after configuration changes. Empty strings,
 whitespace, deployment placeholders and non-UTC values are invalid supplied cutovers.
 
-After the producer dry run, configure the identical future X in both services and
-verify both deployments complete before X. Notifications sends actions at or after
+After the producer dry run, configure Notifications with a future X first.
+Verify every active host uses X and the post-cutover delivery implementation,
+and stop old null-cutover consumers. Then configure Waste Obligations with the
+identical X and verify its rollout completes before X. Waste Obligations must
+not stop sending while any Notifications consumer still uses null: both paths
+would permanently suppress the affected commands. Notifications sends actions at or after
 X once ticket02 is present; Waste Obligations sends only actions before X. The
 handover is forward-only after X; do not clear the cutover to restore direct sends.
 See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).

@@ -46,8 +46,15 @@ processing is enabled.
 
 Deploy both services with null first, activate the MO-549/MO-550 producers and
 compare suppression evidence with Waste Obligations sends. Then choose the
-identical future X, deploy Notifications and Waste Obligations before X, and
-verify both deployed values match. Local configuration does not set CDP values.
+identical future X and configure Notifications first. Confirm every active host
+has X and the post-cutover delivery implementation, and stop every old null-cutover
+consumer before configuring Waste Obligations with X. Complete and verify the
+Waste Obligations rollout before X. Local configuration does not set CDP values.
+
+Do not configure Waste Obligations first. If it stops sending at X while a
+Notifications consumer still uses null, both paths suppress the action. That
+suppression is permanent; redrive cannot restore delivery for the same command.
+A deployment setting alone does not prove every running host has adopted it.
 Once X passes, the handover is forward-only: do not clear or move the cutover
 backward to restore direct sending. There is no fallback to Waste Obligations
 after X; use Notifications delivery/recovery to resolve failures.
