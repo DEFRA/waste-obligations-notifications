@@ -43,6 +43,13 @@ decision must use the same precision. Validate the cutover at startup on every h
 
 ## Consequences
 
+Commands are always consumed after startup readiness; there is no command-only
+pause. Null cutover permanently suppresses commands and cannot preserve a backlog.
+For whole-service incident containment, use [CDP Undeploy](https://github.com/DEFRA/cdp-documentation/blob/main/how-to/undeploy.md),
+which sets the service instance count to zero and also stops analytics and admin
+endpoints. Redeploy with the same cutover, digest keys and retained evidence; after
+X, undeployment does not reverse the handover.
+
 Deploy both services with null first, activate the MO-549/MO-550 producers and
 compare suppression evidence with Waste Obligations sends. Then choose the
 identical future X and configure Notifications first. Confirm every active host

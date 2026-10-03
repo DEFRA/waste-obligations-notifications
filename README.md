@@ -77,6 +77,8 @@ Queue and secret placeholders prevent startup. Null cutover permanently
 suppresses commands; it does not pause consumption. Keep secrets outside source
 control and logs. Digest creation also rejects unconfigured secrets when the
 publisher is used independently.
+Verify the target environment's effective configuration and access before merging
+when [CDP auto-deploy](https://github.com/DEFRA/cdp-documentation/blob/main/how-to/auto-deployment.md) is enabled.
 Cutover configuration and serialized `actionOccurredAtUtc` values must include
 `Z` or a numeric zero offset (`+00:00` or `-00:00`). Offset-free timestamps are
 rejected regardless of host timezone; nonzero offsets are rejected without
