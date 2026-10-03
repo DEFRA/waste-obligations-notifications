@@ -1,8 +1,9 @@
-# Notification delivery
+# Notification-delivery terminology
 
-This service receives notification commands from upstream producers and delivers
-their email intent. It does not decide whether a business event requires a
-notification.
+This glossary defines notification-delivery terms. See
+[service behaviour](docs/service-behaviour.md) for current scope and processing
+requirements, and the [architecture ADR](docs/adr/0001-notification-command-delivery-architecture.md)
+for the proposed delivery design.
 
 ## Language
 

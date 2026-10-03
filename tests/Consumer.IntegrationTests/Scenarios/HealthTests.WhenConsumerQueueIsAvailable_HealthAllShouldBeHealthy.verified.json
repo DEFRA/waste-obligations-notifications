@@ -1,9 +1,28 @@
 ﻿{
   "status": "Healthy",
   "results": {
+    "EmailDeliveryCutover": {
+      "status": "Healthy",
+      "data": {
+        "emailDeliveryCutoverUtc": "2100-01-01T00:00:00.0000000+00:00",
+        "mode": "boundary"
+      }
+    },
     "AnalyticsEventQueue": {
       "status": "Healthy",
       "description": "Connected to AWS queue: http://localhost:4566/000000000000/waste_obligations_notifications_analytics_events_queue"
+    },
+    "MongoMigrationCompletion": {
+      "status": "Healthy",
+      "description": "Critical Mongo migrations completed."
+    },
+    "NotificationCommandQueue": {
+      "status": "Healthy",
+      "description": "Connected to AWS queue: http://localhost:4566/000000000000/waste_obligations_notifications_commands.fifo"
+    },
+    "NotificationDeliveryRecordStore": {
+      "status": "Healthy",
+      "description": "Connected to MongoDB database: waste-obligations-notifications"
     }
   }
 }

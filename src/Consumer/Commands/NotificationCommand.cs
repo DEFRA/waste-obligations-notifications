@@ -1,0 +1,65 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Defra.WasteObligations.Consumer.Data;
+
+namespace Defra.WasteObligations.Consumer.Commands;
+
+public sealed record NotificationCommand(
+    int SchemaVersion,
+    string IdempotencyKey,
+    [property: JsonConverter(typeof(UtcDateTimeOffsetConverter))] DateTimeOffset ActionOccurredAtUtc,
+    string NotificationType,
+    string EmailAddress,
+    string TemplateId,
+    JsonElement Personalisation
+)
+{
+    public const int CurrentSchemaVersion = 1;
+
+    public NotificationCommand NormaliseRecipient() =>
+        this with
+        {
+            EmailAddress = EmailAddress.Trim().ToLowerInvariant(),
+        };
+
+    public void Validate()
+    {
+        if (SchemaVersion != CurrentSchemaVersion)
+        {
+            throw new InvalidDataException($"Notification command schema version '{SchemaVersion}' is not supported.");
+        }
+
+        RequireValue(IdempotencyKey, "idempotencyKey");
+        if (IdempotencyKey.Length > 128 || IdempotencyKey.Any(character => character is < '!' or > '~'))
+        {
+            throw new InvalidDataException(
+                "Notification command idempotencyKey must be at most 128 characters using only SQS-supported ASCII letters, digits, or punctuation."
+            );
+        }
+
+        RequireValue(NotificationType, "notificationType");
+        RequireValue(EmailAddress, "emailAddress");
+        RequireValue(TemplateId, "templateId");
+
+        if (
+            MongoDateTime.TruncateToMilliseconds(ActionOccurredAtUtc) == default
+            || ActionOccurredAtUtc.Offset != TimeSpan.Zero
+        )
+        {
+            throw new InvalidDataException("Notification command actionOccurredAtUtc must be a UTC timestamp.");
+        }
+
+        if (Personalisation.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("Notification command personalisation must be an object.");
+        }
+    }
+
+    private static void RequireValue(string value, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidDataException($"Notification command is missing required property '{propertyName}'.");
+        }
+    }
+}
