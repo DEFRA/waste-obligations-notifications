@@ -9,12 +9,12 @@ namespace Defra.WasteObligations.Consumer.Utils.Metrics;
 public static class MetricsExporter
 {
     private static readonly MeterListener s_listener = new();
-    private static ILogger s_logger = NullLogger.Instance;
+    private static ILogger Logger { get; set; } = NullLogger.Instance;
     private static string s_namespace = string.Empty;
 
     public static void Init(ILoggerFactory loggerFactory, string awsNamespace)
     {
-        s_logger = loggerFactory.CreateLogger(nameof(MetricsExporter));
+        Logger = loggerFactory.CreateLogger(nameof(MetricsExporter));
         s_namespace = awsNamespace;
         s_listener.InstrumentPublished = (instrument, listener) =>
         {
@@ -58,8 +58,8 @@ public static class MetricsExporter
 
     private static void ReportFailure(Exception exception)
     {
-        if (s_logger.IsEnabled(LogLevel.Error))
-            s_logger.LogError("Notification command EMF export failed ({ExceptionType}).", exception.GetType().Name);
+        if (Logger.IsEnabled(LogLevel.Error))
+            Logger.LogError("Notification command EMF export failed ({ExceptionType}).", exception.GetType().Name);
     }
 
     private static bool IsCommandInstrument(string name) =>

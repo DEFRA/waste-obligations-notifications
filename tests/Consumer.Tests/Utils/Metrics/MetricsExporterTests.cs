@@ -15,6 +15,19 @@ namespace Defra.WasteObligations.Consumer.Tests.Utils.Metrics;
 
 public sealed class MetricsExporterTests
 {
+    private static readonly string[] s_expectedOutcomes =
+    [
+        "active-claim",
+        "conflict",
+        "delivery-abandoned",
+        "delivery-accepted",
+        "delivery-suppressed",
+        "failure",
+        "terminal-duplicate",
+        "unavailable",
+    ];
+    private static readonly double[] s_receivedValues = [1d, 9d];
+    private static readonly string[] s_guardedProperties = ["NotificationCommandOutcome", "Service", "_aws"];
     private const string ProbeEnvironment = "NOTIFICATIONS_EMF_TEST_PROBE";
     private const string PrivateValue = "private-key-recipient@example.invalid";
 
@@ -81,17 +94,7 @@ public sealed class MetricsExporterTests
                 AssertGuardedDocument(document, ns);
         }
         Assert.Equal(
-            new[]
-            {
-                "active-claim",
-                "conflict",
-                "delivery-abandoned",
-                "delivery-accepted",
-                "delivery-suppressed",
-                "failure",
-                "terminal-duplicate",
-                "unavailable",
-            },
+            s_expectedOutcomes,
             documents
                 .Where(document =>
                     document.TryGetProperty("NotificationCommandOutcome", out _)
@@ -101,7 +104,7 @@ public sealed class MetricsExporterTests
                 .Order()
         );
         Assert.Equal(
-            new[] { 1d, 9d },
+            s_receivedValues,
             documents
                 .Where(document => document.TryGetProperty("NotificationCommandReceived", out _))
                 .Select(document => document.GetProperty("NotificationCommandReceived").GetDouble())
@@ -143,7 +146,7 @@ public sealed class MetricsExporterTests
         Assert.Equal(ns, directive.GetProperty("Namespace").GetString());
         Assert.Equal(unit, metric.GetProperty("Unit").GetString());
         if (name == "NotificationCommandReceived")
-            Assert.Contains(root.GetProperty(name).GetDouble(), new[] { 1d, 9d });
+            Assert.Contains(root.GetProperty(name).GetDouble(), s_receivedValues);
         else
             Assert.Equal(value, root.GetProperty(name).GetDouble());
         Assert.Equal("waste-obligations-notifications", root.GetProperty("Service").GetString());
@@ -171,10 +174,7 @@ public sealed class MetricsExporterTests
 
     private static void AssertGuardedDocument(JsonElement root, string ns)
     {
-        Assert.Equal(
-            new[] { "NotificationCommandOutcome", "Service", "_aws" }.Order(),
-            root.EnumerateObject().Select(property => property.Name).Order()
-        );
+        Assert.Equal(s_guardedProperties.Order(), root.EnumerateObject().Select(property => property.Name).Order());
         Assert.Equal(1d, root.GetProperty("NotificationCommandOutcome").GetDouble());
         Assert.Equal("waste-obligations-notifications", root.GetProperty("Service").GetString());
         var directive = Assert.Single(root.GetProperty("_aws").GetProperty("CloudWatchMetrics").EnumerateArray());
