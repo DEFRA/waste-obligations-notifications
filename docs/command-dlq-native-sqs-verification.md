@@ -1,8 +1,8 @@
 # Native SQS command-DLQ verification
 
-Keep `CommandDlqAdministration:Enabled` false on the service's queues until this
-verification passes in CDP dev. Native FIFO receive replay has not been verified.
-Floci/LocalStack checks supply a labelled test adapter and cannot satisfy this gate.
+Administration endpoints are always registered and protected by the Basic/OAuth admin ACL. The user approved this contract while native FIFO replay remains unverified. Floci/LocalStack checks supply a labelled test adapter and cannot supply native proof. There is no administration enablement switch; an empty ACL permits startup and denies administrator calls.
+
+The following full recovery protocol requires isolated resources that are not currently available. Provisioning them is a separate operator decision; this implementation does not create cloud resources or test shared queues.
 
 An operator must provision dedicated, disposable native AWS FIFO source and
 destination queues, an isolated Mongo database and two verification service hosts.
@@ -39,8 +39,7 @@ This runbook does not authorize provisioning or changing deployed resources.
 
 Store the date, native AWS region, service revision, host/configuration differences,
 request parameters, pass/fail outcomes and safe evidence links. Do not retain
-credentials, tokens, receipt handles or command content in reports. If required
-production replay/recovery checks fail or cannot run, keep administration disabled.
+credentials, tokens, receipt handles or command content in reports. If native replay/recovery checks fail or cannot run, record the unresolved evidence gap.
 Record the changed-timeout experiment separately from the stable production check.
 
 Inspection returns only one next-visible message. It cannot search by key or list

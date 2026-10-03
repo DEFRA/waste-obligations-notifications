@@ -48,11 +48,10 @@ original recipient-lane position.
   payloads, or persist event data.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
-- Allow a null cutover; validate any supplied UTC cutover and configured evidence and recipient-lane secrets
-  at startup when command processing is enabled. Digest secrets are also required
-  for enabled command-DLQ administration; cutover and sending budgets are required
-  only for sending. Invalid configuration must not consume commands; disabled
-  capabilities permit deployment placeholders.
+- Allow a null cutover and validate any supplied UTC cutover only for enabled sending.
+  Always validate the evidence/recipient-lane secrets and distinct administration
+  FIFO queue URLs. Sending can be paused with Notify, cutover and sending-budget
+  placeholders; administration still requires configured dependencies.
   Digest creation also rejects unconfigured secrets independently of processing.
 - Use the idempotency key as the FIFO message-deduplication ID and a
   non-reversible per-recipient digest as the FIFO message-group ID.
@@ -61,8 +60,8 @@ original recipient-lane position.
   [SQS SendMessage](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html#API_SendMessage_RequestParameters).
   Reject invalid keys without changing them; never trim, truncate or replace
   the key to fit the queue constraints.
-- Run versioned Mongo migrations under a renewable exclusive lease when command
-  processing or command-DLQ administration is enabled. Critical migrations gate `/health`; migration 001 is
+- Run versioned Mongo migrations under a renewable exclusive lease for administration,
+  including paused sending. Critical migrations gate `/health`; migration 001 is
   critical because its full unique notification-key index enforces idempotency.
   Require the build to complete before recording history or readiness; catalog
   presence alone is insufficient. Reject incompatible existing definitions without
@@ -207,16 +206,17 @@ cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
 
 ## Command-DLQ inspection
 
-Administration is disabled by default and exposes no routes while disabled.
-Enabled `POST /admin/notification-commands/dlq/inspect` requires authenticated
+Administration is always registered independently of sending.
+`POST /admin/notification-commands/dlq/inspect` requires authenticated
 Basic or Bearer credentials from the Waste Obligations `Acl.Clients` shape with
 an ACL `admin` scope. Basic requires an ApiKey client and its secret; Bearer
 requires exactly one `client_id` identifying an OAuth client. Unknown clients,
 wrong client types, incorrect/malformed credentials, invalid lifetimes and
 read/write-only clients cannot reach queue or record operations. Token-provided
 scope or role claims cannot grant privileges; only configured ACL scopes apply. Validate
-enabled ACL entries, admin credentials, distinct command/DLQ FIFO URLs and digest secrets at
-startup. Either an ApiKey or OAuth administrator satisfies enabled startup.
+all configured ACL entries, distinct command/DLQ FIFO URLs and digest secrets at
+startup. An empty ACL or one with no admin scope permits startup and denies all
+administrator calls.
 See [ADR 0004](adr/0004-command-dlq-inspection.md).
 
 Bearer follows the explicitly approved Waste Obligations gateway trust contract:
@@ -226,11 +226,11 @@ five-minute clock skew, but does not verify signature, issuer or audience.
 Gateway authentication must protect every administrator route. Direct backend
 callers can assert an ACL client identity; deployment-owned network controls
 must establish that trust boundary. Private routing alone does not establish
-gateway validation. Disabled administration stays absent without a live gateway.
+gateway validation.
 Another CDP service reaching the backend could forge an unexpired token for a
 known OAuth administrator client ID and permanently abandon delivery. Client IDs
 are not secrets. This consequence belongs to the explicitly approved gateway-only
-contract and requires deployment-owned access controls before enablement.
+contract and requires deployment-owned access controls for administrator access.
 
 Administration can run while sending is paused. It starts the same Mongo
 migrations. Its HTTP boundary returns 503 until the first successful anonymous
@@ -325,8 +325,7 @@ publication, deduplication, deletion and isolation, and real Mongo verifies
 readiness and unchanged evidence. Native AWS replay remains a deployment
 validation requirement.
 
-Command queue/Mongo extended health runs when sending or administration is
-enabled, with DLQ health added for administration. Notify health remains enabled
+Command queue/DLQ/Mongo extended health always runs for administration. Notify health remains enabled
 only for sending. Critical migrations gate `/health`; analytics and administration
 start after its first successful anonymous response completes.
 
@@ -340,7 +339,7 @@ start after its first successful anonymous response completes.
   deployment-owned. Local Compose settings do not configure CDP environments.
   Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
   Fluent-host endpoint derivation is malformed.
-- Administration enablement, DLQ URL, selection/timeout settings, Basic/OAuth client
+- Administration DLQ URL, selection/timeout settings, Basic/OAuth client
   credentials/scopes and operator routing are deployment-owned. Compose defaults
   do not configure CDP access.
 
@@ -368,7 +367,7 @@ and do not clear or move the cutover backward. ADR0002 records this accepted,
 forward-only handover. Local examples do not configure deployed values.
 
 Critical migration completion is reported by the `MongoMigrationCompletion`
-entry in `/health/all` and gates `/health` while command processing or administration is enabled.
+entry in `/health/all` and gates `/health` for every host.
 Migration 001 is flagged `Critical = true`; migrations default to non-critical.
 An absent or invalid critical prerequisite returns 503, including when another
 host owns the lease or every host exhausts its attempts. Already-applied critical

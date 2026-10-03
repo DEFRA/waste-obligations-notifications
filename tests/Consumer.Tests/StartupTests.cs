@@ -1,11 +1,13 @@
 using System.Net;
 using Amazon.SQS;
+using Defra.WasteObligations.Consumer.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using NSubstitute;
 
 namespace Defra.WasteObligations.Consumer.Tests;
@@ -36,10 +38,33 @@ public class ConsumerWebApplicationFactory : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Testing");
         builder.ConfigureAppConfiguration(configuration =>
-            configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["AWS_EMF_ENABLED"] = "false" })
+            configuration.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["AWS_EMF_ENABLED"] = "false",
+                    ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
+                    ["NotificationCommandDelivery:ProcessingEnabled"] = "false",
+                    ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/commands.fifo",
+                    ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
+                    ["NotificationCommandDelivery:EvidenceDigestSecret"] = "startup-test-evidence-secret",
+                    ["NotificationCommandDelivery:RecipientLaneSecret"] = "startup-test-lane-secret",
+                }
+            )
         );
         builder.ConfigureTestServices(services =>
         {
+            foreach (
+                var descriptor in services
+                    .Where(descriptor =>
+                        descriptor.ServiceType == typeof(IHostedService)
+                        && descriptor.ImplementationType == typeof(MongoMigrationService)
+                    )
+                    .ToArray()
+            )
+                services.Remove(descriptor);
+            var completion = new MongoMigrationCompletion();
+            completion.MarkCompleted();
+            services.AddSingleton(completion);
             services.RemoveAll<IAmazonSQS>();
             services.AddSingleton(Substitute.For<IAmazonSQS>());
         });

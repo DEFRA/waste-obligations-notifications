@@ -534,7 +534,6 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                         ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "set-automatically-when-deployed",
                         ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = "0",
                         ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = "0",
-                        ["CommandDlqAdministration:Enabled"] = "true",
                         ["CommandDlqAdministration:QueueUrl"] = dlq,
                         ["CommandDlqAdministration:SelectionLifetimeSeconds"] = lifetime.ToString(
                             System.Globalization.CultureInfo.InvariantCulture

@@ -625,7 +625,6 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
                         ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "set-automatically-when-deployed",
                         ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = "0",
                         ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = "0",
-                        ["CommandDlqAdministration:Enabled"] = "true",
                         ["CommandDlqAdministration:QueueUrl"] = dlq,
                         ["CommandDlqAdministration:DependencyTimeoutSeconds"] = lateWrite ? "1" : "10",
                         ["CommandDlqAdministration:SelectionLifetimeSeconds"] = lifetime.ToString(

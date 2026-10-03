@@ -222,22 +222,6 @@ public sealed class CommandDlqRedriveTests
         await AssertPrivacy(factory, response, token);
     }
 
-    [Fact]
-    public async Task WhenAdministrationIsDisabled_ShouldExposeNoRedriveSurface()
-    {
-        await using var factory = new RedriveApplicationFactory(
-            new() { ["CommandDlqAdministration:Enabled"] = "false" }
-        );
-        using var client = factory.CreateClient();
-        using var request = Request("private-selection-token");
-
-        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-        Assert.Empty(factory.Sqs.ReceivedCalls());
-        await AssertPrivacy(factory, response, "private-selection-token");
-    }
-
     [Theory]
     [InlineData("missing")]
     [InlineData("malformed")]
@@ -828,7 +812,6 @@ public sealed class CommandDlqRedriveTests
                 ["Mongo:DatabaseName"] = "inspection-test",
                 ["Notify:ApiKey"] = "set-automatically-when-deployed",
                 ["Notify:BaseAddress"] = "set-automatically-when-deployed",
-                ["CommandDlqAdministration:Enabled"] = "true",
                 ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
                 ["Acl:Clients:admin:Type"] = "ApiKey",
                 ["Acl:Clients:admin:Secret"] = Secret,

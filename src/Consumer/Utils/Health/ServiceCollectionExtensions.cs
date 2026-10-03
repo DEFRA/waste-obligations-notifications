@@ -36,57 +36,48 @@ public static class ServiceCollectionExtensions
         var processingEnabled = configuration.GetValue<bool>(
             $"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled"
         );
-        var administrationEnabled = configuration.GetValue<bool>(
-            $"{CommandDlqAdministrationOptions.SectionName}:Enabled"
+        healthChecks.AddCheck<MongoMigrationCompletionHealthCheck>(
+            "MongoMigrationCompletion",
+            tags: [WebApplicationExtensions.Ready, WebApplicationExtensions.Extended]
         );
-        if (processingEnabled || administrationEnabled)
-        {
-            healthChecks.AddCheck<MongoMigrationCompletionHealthCheck>(
-                "MongoMigrationCompletion",
-                tags: [WebApplicationExtensions.Ready, WebApplicationExtensions.Extended]
-            );
-            healthChecks.Add(
-                new HealthCheckRegistration(
-                    "NotificationCommandQueue",
-                    serviceProvider => new SqsHealthCheck(
-                        serviceProvider.GetRequiredService<IAmazonSQS>(),
-                        serviceProvider
-                            .GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>()
-                            .Value.QueueUrl
-                    ),
-                    HealthStatus.Unhealthy,
-                    tags: [WebApplicationExtensions.Extended],
-                    timeout: TimeSpan.FromSeconds(10)
-                )
-            );
-            healthChecks.Add(
-                new HealthCheckRegistration(
-                    "NotificationDeliveryRecordStore",
-                    serviceProvider => new MongoHealthCheck(
-                        serviceProvider.GetRequiredService<MongoDB.Driver.IMongoClient>(),
-                        serviceProvider.GetRequiredService<IOptions<MongoDbOptions>>().Value.DatabaseName
-                    ),
-                    HealthStatus.Unhealthy,
-                    tags: [WebApplicationExtensions.Extended],
-                    timeout: TimeSpan.FromSeconds(10)
-                )
-            );
-        }
-        if (administrationEnabled)
-        {
-            healthChecks.Add(
-                new HealthCheckRegistration(
-                    "NotificationCommandDeadLetterQueue",
-                    serviceProvider => new SqsHealthCheck(
-                        serviceProvider.GetRequiredService<IAmazonSQS>(),
-                        serviceProvider.GetRequiredService<IOptions<CommandDlqAdministrationOptions>>().Value.QueueUrl
-                    ),
-                    HealthStatus.Unhealthy,
-                    tags: [WebApplicationExtensions.Extended],
-                    timeout: TimeSpan.FromSeconds(10)
-                )
-            );
-        }
+        healthChecks.Add(
+            new HealthCheckRegistration(
+                "NotificationCommandQueue",
+                serviceProvider => new SqsHealthCheck(
+                    serviceProvider.GetRequiredService<IAmazonSQS>(),
+                    serviceProvider.GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>().Value.QueueUrl
+                ),
+                HealthStatus.Unhealthy,
+                tags: [WebApplicationExtensions.Extended],
+                timeout: TimeSpan.FromSeconds(10)
+            )
+        );
+        healthChecks.Add(
+            new HealthCheckRegistration(
+                "NotificationDeliveryRecordStore",
+                serviceProvider => new MongoHealthCheck(
+                    serviceProvider.GetRequiredService<MongoDB.Driver.IMongoClient>(),
+                    serviceProvider.GetRequiredService<IOptions<MongoDbOptions>>().Value.DatabaseName
+                ),
+                HealthStatus.Unhealthy,
+                tags: [WebApplicationExtensions.Extended],
+                timeout: TimeSpan.FromSeconds(10)
+            )
+        );
+
+        healthChecks.Add(
+            new HealthCheckRegistration(
+                "NotificationCommandDeadLetterQueue",
+                serviceProvider => new SqsHealthCheck(
+                    serviceProvider.GetRequiredService<IAmazonSQS>(),
+                    serviceProvider.GetRequiredService<IOptions<CommandDlqAdministrationOptions>>().Value.QueueUrl
+                ),
+                HealthStatus.Unhealthy,
+                tags: [WebApplicationExtensions.Extended],
+                timeout: TimeSpan.FromSeconds(10)
+            )
+        );
+
         if (processingEnabled)
         {
             healthChecks.Add(

@@ -6,8 +6,6 @@ public sealed record CommandDlqAdministrationOptions
 {
     public const string SectionName = "CommandDlqAdministration";
 
-    public bool Enabled { get; init; }
-
     [Required]
     public string QueueUrl { get; init; } = "set-automatically-when-deployed";
 

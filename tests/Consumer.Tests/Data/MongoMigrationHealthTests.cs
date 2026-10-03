@@ -47,13 +47,10 @@ public sealed class MongoMigrationHealthTests
         await Task.Delay(100, TestContext.Current.CancellationToken);
         Assert.Equal(0, Volatile.Read(ref receives));
         Assert.False(startup.IsStarted);
-        if (commandsEnabled)
-        {
-            using var unavailable = await client.GetAsync("/health", TestContext.Current.CancellationToken);
-            Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
-            Assert.False(startup.IsStarted);
-            Assert.Equal(0, Volatile.Read(ref receives));
-        }
+        using var unavailable = await client.GetAsync("/health", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+        Assert.False(startup.IsStarted);
+        Assert.Equal(0, Volatile.Read(ref receives));
 
         completion.MarkCompleted();
         using var extended = await client.GetAsync("/health/all", TestContext.Current.CancellationToken);

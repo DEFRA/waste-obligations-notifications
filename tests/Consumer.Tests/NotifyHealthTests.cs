@@ -202,6 +202,7 @@ public sealed class NotifyHealthTests
                         ["AnalyticsEventConsumer:QueueUrl"] = "http://sqs.local/analytics",
                         ["NotificationCommandDelivery:ProcessingEnabled"] = processingEnabled.ToString(),
                         ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/commands.fifo",
+                        ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
                         ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",
                         ["NotificationCommandDelivery:EvidenceDigestSecret"] = "health-test-evidence-secret",
                         ["NotificationCommandDelivery:RecipientLaneSecret"] = "health-test-recipient-secret",

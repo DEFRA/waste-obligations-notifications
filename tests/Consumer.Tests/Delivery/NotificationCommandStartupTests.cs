@@ -121,8 +121,32 @@ public sealed class NotificationCommandStartupTests
         await sqs.Received(1).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
     }
 
+    [Theory]
+    [InlineData("EvidenceDigestSecret")]
+    [InlineData("RecipientLaneSecret")]
+    public async Task WhenPausedWithUnconfiguredAdministrationDigest_ShouldFailStartupWithoutReceiving(string field)
+    {
+        var sqs = Substitute.For<IAmazonSQS>();
+        using var host = CreateHost(
+            sqs,
+            Substitute.For<ILogger>(),
+            false,
+            new Dictionary<string, string?>
+            {
+                [$"NotificationCommandDelivery:{field}"] = "set-automatically-when-deployed",
+            }
+        );
+
+        var exception = await Assert.ThrowsAsync<OptionsValidationException>(() =>
+            host.StartAsync(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Contains(field, exception.Message, StringComparison.Ordinal);
+        await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
     [Fact]
-    public async Task WhenDisabledWithDeploymentPlaceholders_ShouldStartWithoutReceiving()
+    public async Task WhenPausedWithSendingPlaceholdersAndConfiguredDigests_ShouldStartWithoutReceiving()
     {
         const string placeholder = "set-automatically-when-deployed";
         var sqs = Substitute.For<IAmazonSQS>();
@@ -132,8 +156,6 @@ public sealed class NotificationCommandStartupTests
             false,
             new Dictionary<string, string?>
             {
-                ["NotificationCommandDelivery:EvidenceDigestSecret"] = placeholder,
-                ["NotificationCommandDelivery:RecipientLaneSecret"] = placeholder,
                 ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = placeholder,
                 ["Notify:ApiKey"] = placeholder,
             }

@@ -1,4 +1,3 @@
-using Defra.WasteObligations.Consumer.Administration;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
@@ -18,8 +17,6 @@ public static class ServiceCollectionExtensions
             .AddOptions<AclOptions>()
             .Configure(options =>
             {
-                if (!configuration.GetValue<bool>($"{CommandDlqAdministrationOptions.SectionName}:Enabled"))
-                    return;
                 try
                 {
                     configuration
@@ -37,10 +34,8 @@ public static class ServiceCollectionExtensions
             })
             .ValidateDataAnnotations()
             .Validate(
-                options =>
-                    !configuration.GetValue<bool>($"{CommandDlqAdministrationOptions.SectionName}:Enabled")
-                    || options.HasConfiguredAdmin,
-                "Configured ApiKey or OAuth clients and an admin scope are required when command DLQ administration is enabled."
+                options => options.HasValidClients,
+                "Configured ACL entries must contain valid ApiKey or OAuth clients and scopes."
             )
             .ValidateOnStart();
         services

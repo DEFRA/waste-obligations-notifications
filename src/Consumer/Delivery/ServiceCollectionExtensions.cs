@@ -1,6 +1,5 @@
 using System.ComponentModel.DataAnnotations;
 using Amazon.SQS;
-using Defra.WasteObligations.Consumer.Administration;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Startup;
@@ -18,9 +17,6 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration
     )
     {
-        var administrationEnabled = configuration.GetValue<bool>(
-            $"{CommandDlqAdministrationOptions.SectionName}:Enabled"
-        );
         var processingEnabled = configuration.GetValue<bool>(
             $"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled"
         );
@@ -51,16 +47,12 @@ public static class ServiceCollectionExtensions
                 "Notification command receive timeout must exceed the long-poll wait"
             )
             .Validate(
-                options =>
-                    !(options.ProcessingEnabled || administrationEnabled)
-                    || NotificationCommandDeliveryOptions.IsSecretConfigured(options.EvidenceDigestSecret),
-                "EvidenceDigestSecret must be configured when notification command processing or administration is enabled"
+                options => NotificationCommandDeliveryOptions.IsSecretConfigured(options.EvidenceDigestSecret),
+                "EvidenceDigestSecret must be configured for notification command administration"
             )
             .Validate(
-                options =>
-                    !(options.ProcessingEnabled || administrationEnabled)
-                    || NotificationCommandDeliveryOptions.IsSecretConfigured(options.RecipientLaneSecret),
-                "RecipientLaneSecret must be configured when notification command processing or administration is enabled"
+                options => NotificationCommandDeliveryOptions.IsSecretConfigured(options.RecipientLaneSecret),
+                "RecipientLaneSecret must be configured for notification command administration"
             )
             .Validate(
                 options => !options.ProcessingEnabled || options.TryReadCutover(out _),

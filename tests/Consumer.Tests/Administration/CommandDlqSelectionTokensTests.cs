@@ -122,12 +122,7 @@ public sealed class CommandDlqSelectionTokensTests
     ) =>
         new(
             Options.Create(
-                new CommandDlqAdministrationOptions
-                {
-                    Enabled = true,
-                    QueueUrl = queue,
-                    SelectionLifetimeSeconds = lifetime,
-                }
+                new CommandDlqAdministrationOptions { QueueUrl = queue, SelectionLifetimeSeconds = lifetime }
             ),
             Options.Create(
                 new NotificationCommandDeliveryOptions

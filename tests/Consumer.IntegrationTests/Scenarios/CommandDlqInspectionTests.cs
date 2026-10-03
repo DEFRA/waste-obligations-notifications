@@ -324,7 +324,6 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
                         ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "set-automatically-when-deployed",
                         ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = "0",
                         ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = "0",
-                        ["CommandDlqAdministration:Enabled"] = "true",
                         ["CommandDlqAdministration:QueueUrl"] = dlq,
                         ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                         ["Mongo:DatabaseName"] = databaseName,

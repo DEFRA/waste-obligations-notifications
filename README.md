@@ -108,11 +108,11 @@ and distinct evidence-digest and recipient-lane secrets. Set `Notify__ApiKey` to
 the service's Notify API key; `Notify__BaseAddress` defaults to the GOV.UK Notify
 API. Enabled command processing validates the SDK's API key shape before consuming. Do not put those secrets
 in source control or logs.
-Enabled command processing permits null and validates any supplied cutover timestamp and both digest
-secrets at startup. Blank or deployment-placeholder secrets prevent startup
-before commands are consumed. Disabled command processing permits the shipped
-deployment placeholders so analytics-only hosts can start. Digest creation also
-rejects unconfigured secrets when the publisher is used independently.
+Enabled command processing permits null and validates any supplied cutover timestamp.
+Both digest secrets are required for administration, including when sending is paused.
+Blank or deployment-placeholder secrets prevent startup. Paused sending permits
+Notify, cutover and sending-budget placeholders. Digest creation also rejects
+unconfigured secrets when the publisher is used independently.
 Cutover configuration and serialized `actionOccurredAtUtc` values must include
 `Z` or a numeric zero offset (`+00:00` or `-00:00`). Offset-free timestamps are
 rejected regardless of host timezone; nonzero offsets are rejected without
@@ -292,8 +292,7 @@ reads for delivery evidence, even if the URI specifies another read preference.
 Local Compose uses unauthenticated standalone Mongo and cannot verify CDP IAM or
 TLS. Before enabling command processing in CDP, verify authentication, certificate
 loading, database permissions, migration completion and `/health/all`. Mongo
-migrations and command queue/Mongo health checks run when command processing
-or command-DLQ administration is enabled.
+migrations and command queue/DLQ/Mongo health checks always run for administration.
 
 When command processing is enabled, `/health/all` also checks GOV.UK Notify with
 one authenticated `GET /v2/templates?type=email`, bounded by the existing
@@ -305,21 +304,12 @@ Failures expose a fixed description without dependency error details.
 Disabled command processing does not register or call this check. `/health`
 remains independent of Notify and the other extended dependency checks.
 
-`CommandDlqAdministration__Enabled=true` enables inspection, redrive and discard independently of
-command sending. Configure its FIFO `QueueUrl`, a distinct command FIFO URL and both
-delivery digest secrets. `SelectionLifetimeSeconds` defaults to 120 and must be
-strictly below AWS's 300-second receive-attempt window;
-`DependencyTimeoutSeconds` defaults to 10 and must be positive and shorter than
-the selection lifetime. All administrator requests return 503 until critical migrations complete and
-the first successful anonymous `/health` response finishes. Redrive and discard apply the dependency timeout to each whole operation,
-further limited by the signed selection's remaining lifetime. Notify credentials, cutover and sending budgets are required only
-when sending is enabled. Disabled administration ignores its unvalidated ACL
-and permits deployment placeholders; its endpoints remain absent.
+Inspection, redrive and discard are always registered independently of command sending. Configure the administration FIFO `QueueUrl`, a distinct command FIFO URL and both delivery digest secrets, including while sending is paused. `SelectionLifetimeSeconds` defaults to 120 and must be strictly below AWS's 300-second receive-attempt window; `DependencyTimeoutSeconds` defaults to 10 and must be positive and shorter than the selection lifetime. Administrator requests return 503 until critical migrations complete and the first successful anonymous `/health` response finishes. Redrive and discard share one dependency deadline capped by the signed selection's remaining lifetime. Notify credentials, cutover and sending budgets are required only when sending is enabled. There is no administration enablement switch.
 
 The ACL follows Waste Obligations: `Acl__Clients__<clientId>__Type=ApiKey`,
 `Acl__Clients__<clientId>__Secret`, and `Acl__Clients__<clientId>__Scopes__0=admin`.
-Enabled administration validates every client entry and requires a configured
-ApiKey or OAuth admin. OAuth follows Waste Obligations: set
+Every configured client entry is validated. An empty ACL or one without an admin
+allows startup but denies administrator access. OAuth follows Waste Obligations: set
 `Acl__Clients__<clientId>__Type=OAuth` and
 `Acl__Clients__<clientId>__Scopes__0=admin`; an OAuth entry needs no Basic secret.
 Bearer tokens must identify exactly one configured OAuth client through
@@ -357,8 +347,7 @@ Selections contain only receive-attempt ID, SQS message ID, an HMAC queue bindin
 absolute expiry, immutable-field digest and the original receive visibility timeout. Hosts sharing the evidence secret
 and DLQ configuration can validate them; no message body or receipt handle is
 returned or stored. Expiry starts before the receive request, and late dependency
-confirmations fail safely. `/health/all` checks the DLQ when administration is
-enabled, while Notify health remains conditional on sending. `/health` gates critical migrations; the remaining dependency checks are extended health.
+confirmations fail safely. `/health/all` always checks the DLQ, while Notify health remains conditional on sending. `/health` gates critical migrations; the remaining dependency checks are extended health.
 
 Selection format `v2` binds the original visibility timeout, so another host
 replays the same receive parameters even with different local selection settings.
@@ -408,9 +397,10 @@ deduplication, deletion, selected-message isolation and Mongo readiness/evidence
 remain real. Native AWS replay must be checked during deployment validation;
 local tests do not modify shared resources.
 
-Before enabling administration on the service's queues, complete the
-[native SQS verification runbook](docs/command-dlq-native-sqs-verification.md).
-Native replay remains unverified; passing local checks does not satisfy this gate.
+Native replay remains unverified. Follow the
+[native SQS verification runbook](docs/command-dlq-native-sqs-verification.md)
+to record deployment evidence; local checks cannot supply native proof.
+The user approved always-registered authenticated administration despite this evidence gap.
 
 ## Code quality and delivery
 
@@ -442,7 +432,7 @@ handover is forward-only after X; do not clear the cutover to restore direct sen
 See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
 
 Critical migration completion is reported by the `MongoMigrationCompletion`
-entry in `/health/all` and gates `/health` while command processing or administration is enabled.
+entry in `/health/all` and gates `/health` for every host.
 Migration 001 is flagged `Critical = true`; migrations default to non-critical.
 An absent or invalid critical prerequisite returns 503, including when another
 host owns the lease or every host exhausts its attempts. Already-applied critical

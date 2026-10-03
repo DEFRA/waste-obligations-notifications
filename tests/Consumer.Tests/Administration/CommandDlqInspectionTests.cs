@@ -61,34 +61,42 @@ public sealed class CommandDlqInspectionTests
         AssertPrivacy(factory, body);
     }
 
-    [Fact]
-    public async Task WhenDisabledWithMalformedAclPlaceholders_ShouldExposeNoSurfaceOrDependencies()
+    [Theory]
+    [InlineData("inspect")]
+    [InlineData("redrive")]
+    [InlineData("discard")]
+    public async Task WhenAclIsEmpty_ShouldStartAndDenyEveryAdminRouteWithoutEffects(string action)
     {
-        await using var factory = new InspectionApplicationFactory(
-            new()
-            {
-                ["CommandDlqAdministration:Enabled"] = "false",
-                ["CommandDlqAdministration:SelectionLifetimeSeconds"] = "private-placeholder",
-                ["Acl:Clients:admin:Type"] = "private-invalid-type",
-                ["NotificationCommandDelivery:EvidenceDigestSecret"] = "set-automatically-when-deployed",
-                ["NotificationCommandDelivery:RecipientLaneSecret"] = "set-automatically-when-deployed",
-            }
-        );
+        await using var factory = new InspectionApplicationFactory(emptyAcl: true);
         using var client = factory.CreateClient();
         using var request = Request("admin");
-
+        request.RequestUri = new Uri($"/admin/notification-commands/dlq/{action}", UriKind.Relative);
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var health = await client.GetAsync("/health", TestContext.Current.CancellationToken);
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, health.StatusCode);
         Assert.Empty(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
     }
 
+    [Fact]
+    public async Task WhenConfiguredClientsHaveNoAdminScope_ShouldStartAndDenyAdministratorAccess()
+    {
+        await using var factory = new InspectionApplicationFactory(new() { ["Acl:Clients:admin:Scopes:0"] = "read" });
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+    }
+
     [Theory]
     [InlineData("Acl:Clients:admin:Type", "private-unknown-type")]
     [InlineData("Acl:Clients:admin:Secret", "set-automatically-when-deployed")]
-    [InlineData("Acl:Clients:admin:Scopes:0", "read")]
     [InlineData("Acl:Clients:read:Type", "private-malformed-entry")]
     [InlineData("CommandDlqAdministration:QueueUrl", "private-invalid-queue")]
     [InlineData("CommandDlqAdministration:QueueUrl", "http://sqs.local/commands.fifo")]
@@ -525,7 +533,8 @@ public sealed class CommandDlqInspectionTests
 
     private sealed class InspectionApplicationFactory(
         Dictionary<string, string?>? overrides = null,
-        bool useActualPausedConsumer = false
+        bool useActualPausedConsumer = false,
+        bool emptyAcl = false
     ) : WebApplicationFactory<Program>
     {
         public IAmazonSQS Sqs { get; } = CreateSqs();
@@ -610,7 +619,6 @@ public sealed class CommandDlqInspectionTests
                 ["Mongo:DatabaseName"] = "inspection-test",
                 ["Notify:ApiKey"] = "set-automatically-when-deployed",
                 ["Notify:BaseAddress"] = "set-automatically-when-deployed",
-                ["CommandDlqAdministration:Enabled"] = "true",
                 ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
                 ["Acl:Clients:admin:Type"] = "ApiKey",
                 ["Acl:Clients:admin:Secret"] = Secret,
@@ -625,6 +633,13 @@ public sealed class CommandDlqInspectionTests
                 ["Acl:Clients:write:Secret"] = Secret,
                 ["Acl:Clients:write:Scopes:0"] = "write",
             };
+            if (emptyAcl)
+                foreach (
+                    var key in values
+                        .Keys.Where(key => key.StartsWith("Acl:Clients:", StringComparison.Ordinal))
+                        .ToArray()
+                )
+                    values.Remove(key);
             foreach (var entry in overrides ?? [])
                 values[entry.Key] = entry.Value;
             builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(values));

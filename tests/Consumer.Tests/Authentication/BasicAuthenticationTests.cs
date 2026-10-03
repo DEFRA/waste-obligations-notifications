@@ -174,7 +174,6 @@ public sealed class BasicAuthenticationTests
             builder.Configuration.AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
-                    ["CommandDlqAdministration:Enabled"] = "true",
                     ["Acl:Clients:admin:Type"] = "ApiKey",
                     ["Acl:Clients:admin:Secret"] = adminSecret,
                     ["Acl:Clients:admin:Scopes:0"] = "admin",

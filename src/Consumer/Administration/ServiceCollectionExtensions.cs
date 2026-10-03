@@ -14,8 +14,6 @@ public static class ServiceCollectionExtensions
             .AddOptions<CommandDlqAdministrationOptions>()
             .Configure(options =>
             {
-                if (!configuration.GetValue<bool>($"{CommandDlqAdministrationOptions.SectionName}:Enabled"))
-                    return;
                 try
                 {
                     configuration.GetSection(CommandDlqAdministrationOptions.SectionName).Bind(options);
@@ -31,27 +29,25 @@ public static class ServiceCollectionExtensions
             })
             .ValidateDataAnnotations()
             .Validate(
-                options => !options.Enabled || options.HasValidSelectionBudget,
+                options => options.HasValidSelectionBudget,
                 "Command DLQ selection lifetime must exceed its positive dependency timeout and be below 300 seconds."
             )
             .Validate(
-                options => !options.Enabled || IsQueueConfigured(options.QueueUrl),
-                "A FIFO DLQ URL must be configured when command DLQ administration is enabled."
+                options => IsQueueConfigured(options.QueueUrl),
+                "A FIFO DLQ URL must be configured for command DLQ administration."
             )
             .Validate(
                 options =>
-                    !options.Enabled
-                    || IsQueueConfigured(configuration[$"{NotificationCommandDeliveryOptions.SectionName}:QueueUrl"]),
-                "A FIFO command queue URL must be configured when command DLQ administration is enabled."
+                    IsQueueConfigured(configuration[$"{NotificationCommandDeliveryOptions.SectionName}:QueueUrl"]),
+                "A FIFO command queue URL must be configured for command DLQ administration."
             )
             .Validate(
                 options =>
-                    !options.Enabled
-                    || HasSeparateQueues(
+                    HasSeparateQueues(
                         options.QueueUrl,
                         configuration[$"{NotificationCommandDeliveryOptions.SectionName}:QueueUrl"]
                     ),
-                "Command and DLQ queue URLs must identify different queues when command DLQ administration is enabled."
+                "Command and DLQ queue URLs must identify different queues for command DLQ administration."
             )
             .ValidateOnStart();
         services.AddSingleton<CommandDlqSelectionTokens>();

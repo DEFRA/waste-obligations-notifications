@@ -14,9 +14,10 @@ and administrator endpoint structure.
 Use Waste Obligations' Basic and Bearer providers, `Acl.Clients` configuration
 and authenticated Admin policy requiring an ACL `admin` scope. Basic maps ApiKey
 clients; Bearer maps exactly one `client_id` to an OAuth client. Build privileges
-only from ACL scopes, excluding incoming token scope/role claims. Enabled
-administration requires an ApiKey or OAuth administrator; OAuth needs no Basic
-secret. Preserve generic malformed-header denial and strict Basic UTF-8 decoding.
+only from ACL scopes, excluding incoming token scope/role claims. Administration
+is always registered, independently of sending. An empty ACL or one without an
+admin scope permits startup but denies administrator calls; configured entries
+remain validated. OAuth needs no Basic secret. Preserve generic malformed-header denial and strict Basic UTF-8 decoding.
 
 The user amended the original Basic-only decision on 2026-10-01 and explicitly
 approved Waste Obligations' gateway-only validation. The private CDP gateway
@@ -30,8 +31,7 @@ consequence of this service's explicitly approved gateway-only contract. Gateway
 Cognito authentication must cover every administrator route. This decision
 does not provision deployed access or claim in-service signature validation.
 
-Enable inspection separately from sending and start/check Mongo migrations for
-either capability. Critical migrations gate `/health`. The admin HTTP boundary
+Start/check Mongo migrations for administration even when sending is paused. Critical migrations gate `/health`. The admin HTTP boundary
 returns 503 until its first successful anonymous response completes. Inspection
 then receives one visible FIFO
 DLQ message. It does not publish, delete or modify delivery evidence. A bounded
@@ -89,9 +89,9 @@ Notify.
 
 ## Consequences
 
-Inspection temporarily changes visibility and receive count. Disabled
-administration exposes no management routes and ignores unvalidated ACL entries.
-Deployments must supply admin credentials and operator access separately.
+Inspection temporarily changes visibility and receive count. All management
+routes are registered and authenticate through the configured admin ACL.
+Deployments supply credentials and operator access separately.
 Recovery joins current lane order. An indeterminate publication can leave both
 source and destination; failed deletion preserves publication. Repeated recovery
 is deduplicated inside SQS's window and checked against durable command identity
@@ -101,12 +101,18 @@ earlier indeterminate request failed.
 
 Floci does not implement receive-attempt replay. A labelled test-only API adapter
 supplies that boundary while FIFO effects and Mongo remain real; deployment
-validation must verify native AWS replay before enabling administration on the
-service's queues, following the native SQS runbook. Local results do not satisfy
-this gate, including replay with changed visibility parameters.
+validation still needs native AWS replay evidence, following the native SQS
+runbook. Local results cannot supply that evidence, including replay with changed
+visibility parameters. The user accepted always-registered authenticated routes
+while that evidence is unavailable.
 
 ## References
 
 - [Waste Obligations authentication at e2bacd5](https://github.com/DEFRA/waste-obligations/tree/e2bacd53cc3158df41ee22eebf1fa9b3eee30476/src/Api/Authentication)
 - [AWS ReceiveMessage](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html)
 - [Service behaviour](../service-behaviour.md#command-dlq-inspection)
+
+The user removed the administration enablement switch on 2026-10-02. Native FIFO
+replay remains unverified; this is an evidence gap rather than an endpoint-registration
+gate. Always-registered Basic/OAuth admin protection and the approved gateway trust
+contract apply to every route.

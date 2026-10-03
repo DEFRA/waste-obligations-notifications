@@ -117,23 +117,6 @@ public sealed class CommandDlqDiscardTests
         await AssertPrivacy(factory, response, token);
     }
 
-    [Fact]
-    public async Task WhenAdministrationIsDisabled_ShouldExposeNoDiscardSurface()
-    {
-        await using var factory = new DiscardApplicationFactory(
-            new() { ["CommandDlqAdministration:Enabled"] = "false" }
-        );
-        using var client = factory.CreateClient();
-        using var request = Request("private-selection-token");
-
-        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-        Assert.Empty(factory.Sqs.ReceivedCalls());
-        Assert.Empty(factory.Store.ReceivedCalls());
-        await AssertPrivacy(factory, response, "private-selection-token");
-    }
-
     [Theory]
     [InlineData("missing")]
     [InlineData("malformed")]
@@ -750,7 +733,6 @@ public sealed class CommandDlqDiscardTests
                 ["Mongo:DatabaseName"] = "inspection-test",
                 ["Notify:ApiKey"] = "set-automatically-when-deployed",
                 ["Notify:BaseAddress"] = "set-automatically-when-deployed",
-                ["CommandDlqAdministration:Enabled"] = "true",
                 ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
                 ["Acl:Clients:admin:Type"] = "ApiKey",
                 ["Acl:Clients:admin:Secret"] = Secret,
