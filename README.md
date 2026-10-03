@@ -9,14 +9,33 @@ The service receives every message from its service-owned SQS subscription to th
 entity ID, then deletes the successfully processed message. It deliberately does
 not send notifications, persist data, or act on the event payload.
 
-With the default null cutover, the command consumer records all valid commands
-as `delivery-suppressed` and deletes them for the producer dry run. With a
-configured cutover, it records pre-cutover commands as `delivery-suppressed` and
-deletes them without sending to GOV.UK Notify. Post-cutover delivery belongs to
-ticket 02. Until then, commands at or after the boundary fail without deletion,
-retry after visibility timeout, and can reach the DLQ under queue redrive policy.
-Operators may need to redrive them after ticket 02 enables delivery. A redriven
-command does not regain its original position in the recipient lane.
+With the default null cutover, the command consumer durably suppresses every
+valid command and deletes it without Notify. With a supplied boundary, it
+records pre-cutover commands as `delivery-suppressed` and
+sends at-or-after-cutover commands through GOV.UK Notify. It acquires a Mongo
+claim, makes one send request, records acceptance, and then deletes the command.
+Matching accepted, suppressed, or abandoned commands are deleted without another
+send. Conflicts, active claims, failed sends and incomplete persistence remain on
+SQS for visibility-timeout retry and queue redrive. A redriven command does not
+regain its original recipient-lane position.
+
+Notify acceptance means Notify accepted the email request; it does not prove
+recipient delivery. A timeout, lost response, crash, or persistence failure can
+leave an indeterminate send. After claim expiry, a queue retry may send that email
+again. There is no HTTP retry or Notify-reference reconciliation in this service.
+
+Email sends use the pinned `GovukNotify` 8.1.0 client, following Waste Obligations'
+injectable client factory. The SDK owns authentication, request serialization
+and response models. A transport adapter keeps the configured API routing,
+cancels the complete HTTP request and response buffering, requires `201 Created`,
+and disposes each operation's request and response. Personalisation retains its
+JSON values through SDK serialization; only minimal acceptance evidence leaves
+the client boundary. The SDK's synchronous wait runs off the consumer caller,
+and dependency exceptions are replaced with fixed safe failures.
+
+New suppression records retain their original eight-field shape, omitting absent
+lease and Notify fields. Claims and accepted records retain their additional
+evidence; this change does not rewrite existing documents.
 
 The idempotency key is used unchanged as the FIFO deduplication ID. Publishing
 and consumption reject keys longer than 128 characters or containing whitespace,
@@ -43,7 +62,10 @@ docker compose up --build
 
 The local bootstrap creates `waste_obligations_analytics_events` and subscribes
 `waste_obligations_notifications_analytics_events_queue` with raw message delivery.
-It also creates isolated FIFO command and command dead-letter queues, plus MongoDB.
+It also creates isolated FIFO command and command dead-letter queues, MongoDB,
+and a controlled Notify HTTP fixture. The fixture uses a dummy API key, verifies
+the health request's JWT, and records send requests only in memory for local
+integration tests; it does not contact GOV.UK Notify. Its port is `8086`.
 
 The Consumer health endpoint is available at `http://localhost:8085/health`.
 
@@ -53,7 +75,7 @@ The Consumer health endpoint is available at `http://localhost:8085/health`.
 - [Contributing](CONTRIBUTING.md): formatting, required checks, and change workflow.
 - [Service behaviour](docs/service-behaviour.md): message contracts, processing rules, and deployment ownership.
 - [Context](CONTEXT.md): notification-delivery terminology.
-- ADRs: [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and accepted [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
+- ADRs: accepted [command architecture](docs/adr/0001-notification-command-delivery-architecture.md) and accepted [cutover boundary](docs/adr/0002-email-delivery-cutover-boundary.md).
 - [Agent guidelines](AGENTS.md): entry points and sandbox build guidance for coding agents.
 
 ## Test
@@ -72,8 +94,11 @@ queue convention configured.
 `NotificationCommandDelivery` is deployment-owned. Every host consumes commands
 after successful startup readiness; there is no command-processing enablement
 flag. Before deployment, provide the FIFO queue URL, optional cutover, distinct
-evidence-digest and recipient-lane secrets, and Mongo connectivity/permissions.
-Queue and secret placeholders prevent startup. Null cutover permanently
+evidence-digest and recipient-lane secrets, and Mongo connectivity/permissions, and Notify credentials.
+Set `Notify__ApiKey` to the service's Notify API key; `Notify__BaseAddress` defaults
+to the GOV.UK Notify API. Every host validates the SDK key shape, API URL and
+complete send budget, including with null cutover. Queue and secret placeholders
+prevent startup. Null cutover permanently
 suppresses commands; it does not pause consumption. Keep secrets outside source
 control and logs. Digest creation also rejects unconfigured secrets when the
 publisher is used independently.
@@ -101,6 +126,95 @@ retries, and defaults to 30 seconds. It must exceed `WaitTimeSeconds`. These
 command settings leave analytics polling and the shared SQS client unchanged.
 CDP can override them through the `NotificationCommandDelivery` section;
 local Compose values do not configure deployed environments.
+
+Each receive requests `VisibilityTimeoutSeconds` explicitly (120 seconds initially).
+The delivery claim is separate from migration leases and defaults to 90 seconds, leaving
+30 seconds before visibility expiry so prompt redelivery can acquire a new claim.
+`ClaimTimeoutSeconds`, `NotifyTimeoutSeconds`, `AcceptanceTimeoutSeconds`, and
+`DeleteTimeoutSeconds` initially bound operations to 5, 60, 10, and 5 seconds.
+`SafetyHeadroomSeconds` adds 10 seconds. Startup requires the command lease to
+cover claim plus send, persistence, deletion and headroom (90 seconds), and visibility to cover
+that budget plus the conservative 30-second receive bound: 120 seconds in total.
+The receive and claim clocks start before their dependency requests; late
+confirmations cannot start a send. Mongo uses its own clock for claim expiry and
+owner and pending-outcome checks when acceptance is recorded. Confirmed acceptance
+is always persisted with its own bounded token, even if the send timeout, lease
+or shutdown cancellation has elapsed; a replaced owner cannot overwrite evidence.
+Failed or indeterminate sends retain
+the claim until expiry; the service does not release it early.
+
+These values are initial estimates. Measure dependency latency and validate the
+entire budget before deployment. Configure the deployed FIFO queue visibility and
+DLQ redrive policy separately; local Compose sets visibility to 120 seconds and
+three receives. Delivery does not mutate deployed queue settings. Dependency
+cancellation bounds ordinary request work, but a process stall can let an already
+in-flight request outlive ownership; acceptance remains fenced by Mongo and the
+indeterminate-send limitation above still applies.
+
+Delivery diagnostics use `NotificationType` labels from
+`NotificationCommandDelivery__DiagnosticNotificationTypes` (array entries use
+`__0`, `__1`, and so on). Configure trusted, non-PII category names: at most 32
+labels, each 1–64 lowercase ASCII letters, digits or hyphens. The default list is
+empty. Unknown values use `other` in metrics and operational logs; this changes
+no command data, validation or immutable identity. Local settings show the two
+declaration categories as diagnostic examples.
+
+Failures include fixed `FailureReason` labels and the original `ExceptionType`
+name: `invalid-command`, `conflict`, `active-claim`, `notify-rejected-4xx`,
+`notify-indeterminate`, `store-error`, `queue-error`, `ownership-lost`,
+`processing-timeout` or `unexpected-error`. No exception text, inner exception
+or response content is logged. Operators can search these logs using the DLQ
+message ID; historical failure details are not stored or reconstructed.
+
+The `Defra.WasteObligationsNotifications` meter follows Waste Obligations'
+DI-managed `IMeterFactory` convention. Singleton command instrumentation uses
+shared PascalCase instrument and tag names, `COUNT` counters and `MILLISECONDS`
+claim/send-duration histograms. Milliseconds match Waste Obligations' email-send
+timing and also measure the short Mongo claim operation. Instruments cover
+received commands, terminal outcomes, lease-claim outcomes and duration, Notify
+accepted and failed sends, send duration, and terminal-duplicate suppression.
+Tags contain only the fixed `Service=waste-obligations-notifications` value,
+bounded `NotificationType` category and fixed `Outcome` values. A send acceptance
+metric means Notify returned valid acceptance evidence, even if recording it
+subsequently fails. A send failure metric means the attempt did not confirm acceptance, including timeout or shutdown
+cancellation; it does not prove Notify rejected the email. Persistence failures
+remain errors in operational logs, and failed claims receive a fixed failure
+outcome.
+
+The process-wide exporter follows Waste Obligations' static meter listener and
+CloudWatch EMF 2.2.0 `MetricsLogger`. It is initialised before the host starts and
+observes the command instruments by meter name. Each measurement uses the SDK's
+normal environment provider and emits one document. The pinned SDK flushes on
+logger disposal, so the exporter does not explicitly flush a second time.
+Command dimensions stay bounded; the SDK owns platform metadata decoration,
+environment caching and agent transport. SDK internal diagnostic logging is
+disabled; exporter failures log a fixed message and exception type only.
+
+EMF configuration uses the same root keys as Waste Obligations:
+
+| Setting | Default and behaviour |
+| --- | --- |
+| `AWS_EMF_ENABLED` | `true`; Development, Compose and isolated tests disable export. |
+| `AWS_EMF_NAMESPACE` | Required when enabled; the deployment placeholder is rejected. `Local` permits a blank value and uses `Defra.WasteObligationsNotifications`. |
+| `AWS_EMF_ENVIRONMENT` | SDK process environment: `Local`, `Lambda`, `Agent`, `ECS` or `EC2`; unset/unknown uses SDK discovery. |
+| `AWS_EMF_AGENT_ENDPOINT` | SDK process environment; configure the actual CDP collector endpoint. |
+| `AWS_EMF_AGENT_BUFFER_SIZE` | SDK process environment; defaults to `100` documents. |
+| `AWS_EMF_SERVICE_NAME`, `AWS_EMF_SERVICE_TYPE` | SDK process environment for platform metadata; the command `Service` dimension remains fixed. |
+| `AWS_EMF_LOG_GROUP_NAME`, `AWS_EMF_LOG_STREAM_NAME` | SDK process environment for agent routing. |
+
+The application validates enablement and namespace. Environment discovery and
+routing use the SDK's actual process environment, rather than projecting .NET
+configuration into a custom environment factory. No custom metadata client,
+startup discovery deadline or sink shutdown lifecycle remains. As in Waste
+Obligations, the SDK owns those behaviours and its process-wide cache. Metrics
+are best effort; pending agent metrics may be lost when the process exits.
+
+Set the namespace, environment and collector routing in CDP separately; local
+settings do not configure deployments. For CDP/FluentBit, specify
+`AWS_EMF_AGENT_ENDPOINT` rather than relying on `FLUENT_HOST` endpoint derivation:
+the pinned SDK's [ECS implementation](https://github.com/awslabs/aws-embedded-metrics-dotnet/blob/v2.2.0/src/Amazon.CloudWatch.EMF/Environment/ECSEnvironment.cs)
+builds an invalid derived endpoint. `AWS_EMF_ENVIRONMENT=Agent` also avoids metadata
+discovery when the collector route is already known.
 
 Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
@@ -171,12 +285,29 @@ TLS. Before deploying to CDP, verify authentication, certificate
 loading, database permissions, migration completion and `/health/all`. Mongo
 migrations and critical health checks run for every host.
 
+`/health/all` checks GOV.UK Notify on every host, including with null cutover, with
+one authenticated `GET /v2/templates?type=email`, bounded by the existing
+ten-second health timeout. It uses the SDK template-list operation to check
+connectivity and credentials. The SDK reads and deserializes the response within
+the same cancellation bound; template content is discarded and never exposed or
+logged. This does not validate a command's template or confirm email delivery.
+Failures expose a fixed description without dependency error details.
+`/health`
+remains independent of Notify and the other extended dependency checks.
+
 ## Code quality and delivery
 
 GitHub Actions runs Consumer tests, validates Compose, builds and scans the
 container image, and sends coverage to SonarCloud under
 `DEFRA_waste-obligations-notifications`. Dependabot manages NuGet, actions, and
 container dependency updates. Journey tests are not currently part of this service.
+
+The isolated Notify fixture creates random synthetic API credentials for each fresh
+local volume and reuses them on fixture restarts. Compose supplies them through
+an ephemeral volume and fixture bootstrap script. Integration
+tests read the same fixture credential from its test-only API. No Notify account
+credential is stored in development settings or test source. Compose teardown
+removes the generated volume.
 
 ## Digest-key lifetime
 
@@ -207,7 +338,7 @@ and stop old null-cutover consumers. Then configure Waste Obligations with the
 identical X and verify its rollout completes before X. Waste Obligations must
 not stop sending while any Notifications consumer still uses null: both paths
 would permanently suppress the affected commands. Notifications sends actions at or after
-X once ticket02 is present; Waste Obligations sends only actions before X. The
+X; Waste Obligations sends only actions before X. The
 handover is forward-only after X; do not clear or change the cutover after X.
 Each host logs its parsed cutover at startup.
 `/health/all` reports `EmailDeliveryCutover` with the normalized UTC value or null,
@@ -236,5 +367,4 @@ deployment deadline. Metrics and startup logging remain available for diagnosis.
 
 Suppression recorded with an unset cutover remains terminal after configuration,
 including an action at or after the new boundary. Delete matching replays without
-changing the record. Fresh post-cutover commands remain undeleted in this
-foundation slice; later Notify delivery owns them.
+changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.

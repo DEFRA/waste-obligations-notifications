@@ -1,12 +1,16 @@
+using System.Net.Http.Json;
+using System.Text.Json;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Notify.Client;
 
 namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
@@ -15,13 +19,30 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
     [Theory]
     [InlineData("2026-09-28T10:00:00Z")]
     [InlineData("2101-01-01T00:00:00Z")]
-    public async Task WhenCutoverIsUnsetThenConfigured_ShouldDeleteCommandsAndPreserveTerminalSuppression(
+    public async Task WhenNullCutoverCommandBecomesSendEligible_ShouldPreserveSuppressionWithoutNotify(
         string actionTimestamp
     )
     {
         using var sqs = CreateSqsClient();
         using var mongo = CreateMongoClient();
         var token = TestContext.Current.CancellationToken;
+        var commandKey = $"null-cutover-{Guid.NewGuid():N}";
+        using var notifyHttp = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        {
+            BaseAddress = new Uri("http://localhost:8086"),
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+        var notify = new NotifyEmailClient(
+            notifyHttp,
+            Options.Create(
+                new NotifyOptions
+                {
+                    ApiKey = await notifyHttp.GetStringAsync("/test/api-key", token),
+                    BaseAddress = "http://localhost:8086",
+                }
+            ),
+            (transport, options) => new NotificationClient(transport, options.ApiKey)
+        );
         var databaseName = $"null_cutover_{Guid.NewGuid():N}";
         var queue = await sqs.CreateQueueAsync(
             new CreateQueueRequest
@@ -33,12 +54,12 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
         );
         var database = mongo.GetDatabase(databaseName);
         var readiness = new MongoMigrationCompletion();
+        var startup = new ApplicationStartup();
+        startup.MarkStarted();
         BsonDocument? original = null;
         try
         {
             await new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, readiness).Run(token);
-            var startup = new ApplicationStartup();
-            startup.MarkStarted();
             var settings = new NotificationCommandDeliveryOptions
             {
                 QueueUrl = queue.QueueUrl,
@@ -47,26 +68,30 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
                 WaitTimeSeconds = 0,
                 PollIntervalSeconds = 1,
             };
+            var digest = new NotificationCommandDigest(Options.Create(settings));
             var store = new MongoNotificationDeliveryRecordStore(
                 mongo,
                 Options.Create(
                     new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = databaseName }
                 ),
-                new NotificationCommandDigest(Options.Create(settings))
+                digest
             );
             using var services = new ServiceCollection()
                 .AddSingleton<INotificationDeliveryRecordStore>(store)
+                .AddNotificationCommandMetrics()
                 .BuildServiceProvider();
             var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
-            foreach (var cutover in new string?[] { null, "2100-01-01T00:00:00Z" })
+            foreach (var cutover in new string?[] { null, "2026-09-28T10:00:00Z" })
             {
                 using var consumer = new NotificationCommandConsumer(
                     sqs,
                     Options.Create(settings with { EmailDeliveryCutoverUtc = cutover }),
                     new NotificationDeliveryRecordStoreFactory(services),
                     startup,
-                    new NotificationCommandMetrics(),
-                    NullLogger<NotificationCommandConsumer>.Instance
+                    services.GetRequiredService<INotificationCommandMetrics>(),
+                    NullLogger<NotificationCommandConsumer>.Instance,
+                    notify,
+                    digest
                 );
                 await consumer.StartAsync(token);
                 await sqs.SendMessageAsync(
@@ -75,12 +100,18 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
                         QueueUrl = queue.QueueUrl,
                         MessageGroupId = "null-cutover-test-lane",
                         MessageDeduplicationId = Guid.NewGuid().ToString(),
-                        MessageBody =
-                            """{"schemaVersion":1,"idempotencyKey":"null-cutover-key","actionOccurredAtUtc":"2026-09-28T10:00:00Z","notificationType":"submitted","emailAddress":"recipient@example.com","templateId":"private-template","personalisation":{"body":"private-body"}}""".Replace(
-                                "2026-09-28T10:00:00Z",
-                                actionTimestamp,
-                                StringComparison.Ordinal
-                            ),
+                        MessageBody = JsonSerializer.Serialize(
+                            new
+                            {
+                                schemaVersion = 1,
+                                idempotencyKey = commandKey,
+                                actionOccurredAtUtc = actionTimestamp,
+                                notificationType = "submitted",
+                                emailAddress = "recipient@example.com",
+                                templateId = "private-template",
+                                personalisation = new { body = "private-body" },
+                            }
+                        ),
                     },
                     token
                 );
@@ -108,15 +139,10 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
                     original = record;
                 else
                     Assert.Equal(original, record);
-                foreach (
-                    var value in new[]
-                    {
-                        "null-cutover-key",
-                        "recipient@example.com",
-                        "private-template",
-                        "private-body",
-                    }
-                )
+                var requests = await notifyHttp.GetFromJsonAsync<JsonElement[]>("/test/requests", token);
+                var reference = digest.CreateNotifyReference(commandKey);
+                Assert.DoesNotContain(requests!, request => request.GetProperty("reference").GetString() == reference);
+                foreach (var value in new[] { commandKey, "recipient@example.com", "private-template", "private-body" })
                     Assert.DoesNotContain(value, record.ToJson(), StringComparison.Ordinal);
             }
         }

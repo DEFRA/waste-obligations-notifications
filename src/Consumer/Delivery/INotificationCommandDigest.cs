@@ -11,4 +11,6 @@ public interface INotificationCommandDigest
     string CreateRecipientDigest(string emailAddress);
 
     string CreateRecipientLane(string emailAddress);
+
+    string CreateNotifyReference(string idempotencyKey);
 }

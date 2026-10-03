@@ -2,21 +2,22 @@
 
 This document describes message contracts and processing requirements. Use
 [CONTEXT.md](../CONTEXT.md) for terminology and the linked ADRs for decision
-rationale. The command architecture remains proposed in this initial slice; the cutover
-ADR is accepted. Current scope below does not include Notify sending.
+rationale. The command architecture is accepted; the cutover ADR is accepted. Current
+implementation scope is described below.
 
 ## Current scope
 
 The analytics consumer logs event and entity IDs and deletes successfully
 processed messages. It does not deliver notifications or persist event data.
-With a null cutover, the command consumer records all valid commands as
-`delivery-suppressed` and deletes them. With a configured boundary it records
-pre-cutover commands as `delivery-suppressed` and
-deletes them without sending to GOV.UK Notify. Post-cutover delivery belongs to
-ticket 02. Until then, commands at or after the boundary fail without deletion,
-retry after visibility timeout, and can reach the DLQ under queue redrive policy.
-Operators may need to redrive them once delivery is enabled. Redrive does not
-restore a command's original recipient-lane position.
+With the default null cutover, the command consumer durably suppresses every
+valid command and deletes it without Notify. With a supplied boundary, it
+records pre-cutover commands as `delivery-suppressed` and
+sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
+Notify acceptance must be recorded before SQS deletion. Matching accepted,
+suppressed, or abandoned records suppress duplicates regardless of the current
+cutover. Analytics does not yet create notification commands, and there is no
+administrator DLQ management surface. Redrive does not restore a command's
+original recipient-lane position.
 
 ## Consumers and message handling
 
@@ -45,7 +46,6 @@ restore a command's original recipient-lane position.
 Producer wire fields, timestamp precision and exact FIFO lane calculation are
 specified in the [producer contract](notification-command-producer-contract.md).
 
-
 - Keep notification delivery separate from the analytics-event path. Analytics
   consumption does not deliver notifications, mutate business data, transform
   payloads, or persist event data.
@@ -53,7 +53,8 @@ specified in the [producer contract](notification-command-producer-contract.md).
   only where the command contract requires it.
 - Consume commands unconditionally after successful startup readiness. Null
   cutover permanently suppresses them; it does not pause consumption. Validate
-  the configured FIFO queue, digest secrets and any supplied UTC cutover at
+  the configured FIFO queue, digest secrets, Notify credentials/API URL, complete
+  processing budget and any supplied UTC cutover at
   startup. Invalid values and deployment placeholders prevent startup and queue
   effects. Digest creation independently rejects unconfigured secrets.
 - Use the idempotency key as the FIFO message-deduplication ID and a
@@ -101,9 +102,46 @@ specified in the [producer contract](notification-command-producer-contract.md).
   idempotency and outcomes. Do not persist recipient addresses,
   personalisation, template content, rendered content, or full GOV.UK Notify
   responses.
+  New suppression records retain their original eight fields; optional lease
+  and Notify fields are omitted when absent. Claims and accepted records keep
+  their additional evidence. Existing documents are not rewritten, and older
+  record models are not expected to read pending or accepted records.
 - Treat a duplicate command with different immutable fields as a conflict and
   leave it retryable. A pre-cutover command is terminal only after its
-  `delivery-suppressed` outcome is recorded.
+  `delivery-suppressed` outcome is recorded. A nonterminal claim cannot be
+  mistaken for suppressed evidence or overwritten by suppression.
+- Claim a post-cutover command atomically using the unique notification-key
+  index, matching immutable digest, fresh attempt owner, and Mongo's expiry
+  clock. Active claims cannot send again; expired claims permit one new owner.
+  Acceptance updates require the same owner and a pending outcome, even after
+  lease expiry. Accepted evidence includes the opaque versioned HMAC Notify reference,
+  template ID/version, Notify notification ID, correlation digests, and timestamps.
+- Make one Notify request per claim with no HTTP retry or redirect. Normalize the
+  recipient for the request. Require `201 Created` and consistent minimal
+  acceptance evidence; malformed success is indeterminate and remains retryable.
+  Never log dependency exception text or full responses, which may contain PII.
+  The pinned `GovukNotify` client owns email authentication, serialization and
+  response models, using Waste Obligations' injectable client factory convention.
+  Its per-operation transport preserves configured routing and carries the
+  operation's cancellation through complete response buffering. SDK request and
+  response objects are disposed after success or failure without disposing the
+  shared typed `HttpClient`. JSON personalisation values retain their original
+  semantics; only minimal acceptance evidence is projected from the SDK model.
+- Validate the complete bounded attempt budget at startup. Initially visibility
+  is 120 seconds and command leases are 90 seconds, leaving retry headroom; receive, claim, send, acceptance and deletion
+  bounds are 30, 5, 60, 10 and 5 seconds, plus 10 seconds headroom. Measure elapsed
+  time monotonically from receive/claim request starts and reject late confirmations
+  before sending. Request visibility explicitly on receive without changing shared
+  queue configuration. Pass cancellation through the entire Notify request and
+  response buffering. A failed send retains its claim until expiry.
+- A Notify timeout, lost response, crash, or failed acceptance write does not prove
+  rejection. Queue retry after expiry may send a duplicate email. An already
+  in-flight request can outlive ownership during a process stall; Mongo rejects
+  acceptance from a replaced owner or terminal claim. A complete, valid Notify
+  acceptance is persisted with a fresh bounded token even after send timeout,
+  ownership-budget expiry or shutdown; it is never discarded just for lateness.
+  No Notify-reference reconciliation is implemented. Queue
+  deletion failure after durable acceptance retries as a terminal duplicate.
 - Compare the immutable UTC business-action timestamp with the deployment-owned
   cutover value. Any supplied cutover and serialized action timestamps must
   explicitly include `Z` or a zero offset (`+00:00` or `-00:00`). Reject absent
@@ -113,6 +151,55 @@ specified in the [producer contract](notification-command-producer-contract.md).
   command serialisation and immutable-field digests so sub-millisecond precision
   lost on a Mongo roundtrip does not create a conflict. Do not use processing time
   or mutable entity state.
+
+Operational logs and metrics use a diagnostics-only allowlist of notification
+categories, with an `other` fallback for unknown values. Startup bounds the list
+to 32 non-PII labels of at most 64 lowercase ASCII letters, digits or hyphens.
+This does not restrict producer-defined command types or alter stored immutable
+identity. Claim results and durations, Notify accepted/failed attempts and send
+durations, and terminal duplicates are observed at the hosted-consumer boundary.
+Notify acceptance is counted before persistence; failure means an attempt lacked
+confirmed acceptance and includes indeterminate cancellation and timeout. These
+metrics do not claim recipient delivery or rejection.
+
+Failure logs retain a fixed reason category and the original exception type
+name alongside permitted correlation. Categories distinguish invalid commands,
+conflicts, active claims, Notify 4xx rejection, indeterminate sends, store/queue
+errors, lost ownership, exhausted processing budgets and unexpected errors.
+They contain no dependency exception text, inner exception or response body.
+DLQ operators can correlate a selected message ID with these logs; historical
+errors are not reconstructed or added to persisted delivery evidence.
+
+Instruments follow Waste Obligations' DI-owned meter and singleton instrumentation
+conventions. Shared names and tag keys use PascalCase; counters use CloudWatch
+`COUNT` and claim/send durations use `MILLISECONDS`, matching email-send timing.
+Command dimensions are the fixed Notifications `Service`, bounded
+`NotificationType` and fixed `Outcome`. The process-wide exporter follows Waste
+Obligations' static meter listener and EMF `MetricsLogger` mechanism, initialised
+before the host starts. It observes the known command instruments by meter name.
+One measurement emits one SDK document; logger disposal performs the flush.
+The SDK owns its process-wide environment cache, platform metadata decoration,
+agent transport and lifecycle.
+
+Export defaults to enabled and requires a configured namespace, except that
+`AWS_EMF_ENVIRONMENT=Local` allows a blank namespace and uses the Notifications
+namespace. Disabled export does not resolve an SDK environment. Local development
+and isolated tests disable it. SDK environment selection and routing read actual
+process environment variables. No custom metadata transport, environment factory
+or shutdown lifecycle is present. SDK internal diagnostics are disabled; export
+failures expose a fixed message and exception type without private contents.
+Metrics remain best effort. See the README for configuration and CDP routing.
+
+`/health/all` includes a light read-only Notify check on every host, including
+with null cutover. It makes one authenticated `GET /v2/templates?type=email`,
+requires `200 OK`, and uses the pinned SDK template-list operation. The SDK
+reads and deserializes template data; it is discarded without logging, persistence
+or exposure in the health result. The existing ten-second health timeout cancels
+the complete HTTP request and response buffering; a late response
+after cancellation cannot report healthy. Results and logs expose only fixed
+descriptions, without dependency exceptions or response data. `/health` stays independent
+of extended dependency checks. This check does not validate a specific template
+or confirm recipient delivery.
 
 The command architecture is described in
 [ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the
@@ -124,8 +211,10 @@ cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
   queue, with its own redrive policy. Never reuse the producer queue.
 - `AnalyticsEventConsumer__QueueUrl` and
   `AnalyticsEventConsumer__ProcessingEnabled` are deployment-owned settings.
-- Command queue, MongoDB, cutover, and digest-secret settings are also
+- Command queue, MongoDB, cutover, digest-secret and `AWS_EMF_*` settings are also
   deployment-owned. Local Compose settings do not configure CDP environments.
+  Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
+  Fluent-host endpoint derivation is malformed.
 
 ## Behaviour verification
 
@@ -135,7 +224,7 @@ Test that stored command evidence and logs do not disclose protected identifiers
 addresses, templates, or personalisation. Analytics event and entity IDs are
 logged as required by the analytics contract above.
 
-## Initial suppression mode
+## Initial deployment and cutover
 
 The default cutover is null. Consumption suppresses all valid commands
 without a Notify send while Waste Obligations retains direct delivery. Suppression
@@ -145,10 +234,13 @@ future cutover is configured. A non-null cutover requires explicit UTC and the
 same millisecond precision as command identity. Other configuration requirements
 remain in force.
 
-Use the producer dry run before choosing the identical future X in both services.
-Verify both deployments complete before X; after X use Notifications recovery
-and do not clear or change the cutover after X. ADR0002 records this accepted,
-forward-only handover. Local examples do not configure deployed values.
+After the producer dry run, configure Notifications with a future X first.
+Verify every active Notifications host has X and the post-cutover delivery
+implementation, and stop every old null-cutover consumer. Then configure Waste
+Obligations with the identical X and verify its rollout completes before X.
+After X, use Notifications recovery and do not clear or change the cutover.
+ADR0002 records this accepted, forward-only handover. Local examples do not
+configure deployed values.
 
 Critical migration completion is reported by the `MongoMigrationCompletion`
 entry in `/health/all` and gates `/health` for every host.
@@ -171,5 +263,4 @@ deployment deadline. Metrics and startup logging remain available for diagnosis.
 
 Suppression recorded with an unset cutover remains terminal after configuration,
 including an action at or after the new boundary. Delete matching replays without
-changing the record. Fresh post-cutover commands remain undeleted in this
-foundation slice; later Notify delivery owns them.
+changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.
