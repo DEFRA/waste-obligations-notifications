@@ -116,3 +116,11 @@ The user removed the administration enablement switch on 2026-10-02. Native FIFO
 replay remains unverified; this is an evidence gap rather than an endpoint-registration
 gate. Always-registered Basic/OAuth admin protection and the approved gateway trust
 contract apply to every route.
+
+The user approved an authenticated body-free verification-command route on
+2026-10-02. It confirms fresh permanent suppression before enqueueing a fixed
+synthetic command on the configured DLQ. Active processing is required. Normal
+redrive and consumption delete the terminal duplicate without Notify or evidence
+changes. This supplies an operator probe for inspect/replay/redrive while native
+AWS proof is unavailable. It does not prove successful discard or authorise
+agent testing of shared queues or cloud provisioning.

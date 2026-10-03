@@ -204,6 +204,12 @@ The command architecture is described in
 [ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the
 cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
 
+## Command-DLQ verification command
+
+`POST /admin/notification-commands/dlq/verification-command` shares the Admin ACL and startup boundary. It accepts no payload, including framed/chunked bodies, and returns 409 when sending is paused. Generate a fresh prefixed key with schema 1, action time 2000-01-01 UTC, type `admin-verification`, recipient `verification@example.invalid`, an all-zero template ID and empty personalisation. Validate and normalise the command before any effect. Confirm fresh permanent suppression before publishing one FIFO message to the configured DLQ, using the key for deduplication and the canonical recipient lane. One dependency deadline covers both effects; failures expose fixed 503 details. Rejected, cancelled or late suppression never publishes. Publication failure leaves suppression evidence intact. Return only the generated key and SQS message ID after timely confirmed publication.
+
+Successful redrive is followed by ordinary consumer processing: matching terminal evidence suppresses Notify and the consumer deletes the source message without changing the record. This holds for null or earlier cutover values. Creation confirms queuing rather than completed processing. Inspection selects one next-visible message, so verify the generated identity before acting. Suppressed probes cannot be discarded; successful native discard remains separately unverified. Local replay uses the labelled controlled API adapter and does not prove native FIFO replay.
+
 ## Command-DLQ inspection
 
 Administration is always registered independently of sending.

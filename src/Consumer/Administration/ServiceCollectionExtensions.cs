@@ -55,6 +55,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<CommandDlqInspector>();
         services.AddSingleton<CommandDlqRedriver>();
         services.AddSingleton<CommandDlqDiscarder>();
+        services.AddSingleton<CommandDlqVerificationCommandCreator>();
 
         return services;
     }

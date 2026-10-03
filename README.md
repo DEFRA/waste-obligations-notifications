@@ -402,6 +402,8 @@ Native replay remains unverified. Follow the
 to record deployment evidence; local checks cannot supply native proof.
 The user approved always-registered authenticated administration despite this evidence gap.
 
+Authenticated `POST /admin/notification-commands/dlq/verification-command` accepts no body and requires active command processing. It creates a random `verification-` key with fixed synthetic fields, confirms matching permanent suppression in Mongo, then enqueues it on the configured DLQ. The response contains `idempotencyKey` and `messageId`; it confirms queuing, not processing. Store rejection or failure never publishes; publication failure leaves safe suppression evidence. Inspect and match the generated key before redriving. The normal consumer then processes it as a terminal duplicate, deletes it and makes no Notify call, with either a null cutover or a boundary before its fixed 2000-01-01 action time. This enables operator verification without recipient mail. It cannot verify successful discard because suppressed evidence is protected. Follow the runbook and retain the native proof gap until it is run against AWS.
+
 ## Code quality and delivery
 
 GitHub Actions runs Consumer tests, validates Compose, builds and scans the

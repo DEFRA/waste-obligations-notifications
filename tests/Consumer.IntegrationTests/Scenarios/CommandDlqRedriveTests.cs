@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Net;
+using System.Net.Http.Json;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
@@ -19,6 +20,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
 
@@ -277,6 +279,142 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             ExceptionDispatchInfo.Capture(testFailure).Throw();
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("1999-01-01T00:00:00Z", false)]
+    [InlineData(null, true)]
+    [InlineData("1999-01-01T00:00:00Z", true)]
+    public async Task WhenVerificationCommandIsRedriven_ShouldBeProcessedSuccessfullyWithoutNotifyOrEvidenceChanges(
+        string? cutover,
+        bool oauth
+    )
+    {
+        using var mongo = CreateMongoClient();
+        using var sqs = new ReplaySqsClient();
+        using var notify = new HttpClient { BaseAddress = new Uri("http://localhost:8086") };
+        var token = TestContext.Current.CancellationToken;
+        var databaseName = $"notifications_verification_{Guid.NewGuid():N}";
+        var sourceName = $"verification_source_{Guid.NewGuid():N}.fifo";
+        var dlqName = $"verification_dlq_{Guid.NewGuid():N}.fifo";
+        CreateQueueResponse? source = null;
+        CreateQueueResponse? dlq = null;
+        Exception? testFailure = null;
+        var failures = new List<Exception>();
+        try
+        {
+            source = await sqs.CreateQueueAsync(
+                new CreateQueueRequest
+                {
+                    QueueName = sourceName,
+                    Attributes = new() { ["FifoQueue"] = "true" },
+                },
+                token
+            );
+            dlq = await sqs.CreateQueueAsync(
+                new CreateQueueRequest
+                {
+                    QueueName = dlqName,
+                    Attributes = new() { ["FifoQueue"] = "true" },
+                },
+                token
+            );
+            sqs.DestinationUrl = source.QueueUrl;
+            var apiKey = await notify.GetStringAsync("/test/api-key", token);
+            await using var factory = new AdministrationApplicationFactory(
+                dlq.QueueUrl,
+                source.QueueUrl,
+                databaseName,
+                sqs,
+                mongo,
+                120,
+                oauth: oauth,
+                processing: true,
+                notifyApiKey: apiKey,
+                cutover: cutover
+            );
+            using var client = factory.CreateClient();
+            Assert.Equal(
+                cutover,
+                factory
+                    .Services.GetRequiredService<IOptions<NotificationCommandDeliveryOptions>>()
+                    .Value.EmailDeliveryCutoverUtc
+            );
+            await WaitForAsync(async () =>
+            {
+                using var health = await client.GetAsync("/health", token);
+                Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+            });
+            using var createRequest = Request("verification-command", oauth: oauth);
+            using var created = await client.SendAsync(createRequest, token);
+            Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+            var command = await created.Content.ReadFromJsonAsync<CommandDlqVerificationCommand>(token);
+            Assert.NotNull(command);
+            var records = mongo.GetDatabase(databaseName).GetCollection<BsonDocument>("NotificationDeliveryRecord");
+            var before = await records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token);
+            Assert.Equal(8, before.ElementCount);
+            Assert.Equal("delivery-suppressed", before["outcome"].AsString);
+            Assert.Equal(1, await Count(sqs, dlq.QueueUrl, token));
+            using var inspectRequest = Request("inspect", oauth: oauth);
+            using var inspected = await client.SendAsync(inspectRequest, token);
+            Assert.Equal(HttpStatusCode.OK, inspected.StatusCode);
+            using var inspection = JsonDocument.Parse(await inspected.Content.ReadAsStringAsync(token));
+            Assert.Equal(command.IdempotencyKey, inspection.RootElement.GetProperty("idempotencyKey").GetString());
+            Assert.Equal(
+                "delivery-suppressed",
+                inspection.RootElement.GetProperty("failureClassification").GetString()
+            );
+            var selectionToken = inspection.RootElement.GetProperty("selectionToken").GetString();
+            var selection = factory.Services.GetRequiredService<CommandDlqSelectionTokens>().Validate(selectionToken);
+            Assert.NotNull(selection);
+            Assert.Equal(command.MessageId, selection.MessageId);
+            using var redriveRequest = Request("redrive", selectionToken, oauth: oauth);
+            using var redriven = await client.SendAsync(redriveRequest, token);
+            Assert.Equal(HttpStatusCode.NoContent, redriven.StatusCode);
+            await WaitForAsync(async () =>
+            {
+                Assert.Equal(0, await Count(sqs, source.QueueUrl, token));
+                Assert.Equal(0, await Count(sqs, dlq.QueueUrl, token));
+            });
+            Assert.Equal(before, await records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
+            var publication = Assert.Single(sqs.RecoveryPublications);
+            Assert.Contains(
+                factory.Logs.Messages,
+                message =>
+                    message.Contains("terminal-duplicate", StringComparison.Ordinal)
+                    && message.Contains(publication.MessageId, StringComparison.Ordinal)
+            );
+            var digest = factory.Services.GetRequiredService<INotificationCommandDigest>();
+            var requests = await notify.GetFromJsonAsync<JsonElement[]>("/test/requests", token);
+            Assert.DoesNotContain(
+                requests!,
+                request =>
+                    request.GetProperty("reference").GetString() == digest.CreateNotifyReference(command.IdempotencyKey)
+            );
+        }
+        catch (Exception exception)
+        {
+            testFailure = exception;
+        }
+        finally
+        {
+            await Cleanup(
+                cleanup => RemoveQueue(sqs, sourceName, source?.QueueUrl, cleanup),
+                "verification source",
+                failures
+            );
+            await Cleanup(cleanup => RemoveQueue(sqs, dlqName, dlq?.QueueUrl, cleanup), "verification DLQ", failures);
+            await Cleanup(cleanup => mongo.DropDatabaseAsync(databaseName, cleanup), "verification database", failures);
+        }
+        if (failures.Count > 0)
+        {
+            if (testFailure is not null)
+                failures.Insert(0, testFailure);
+            throw new AggregateException("Owned verification resources could not all be cleaned up.", failures);
+        }
+        if (testFailure is not null)
+            ExceptionDispatchInfo.Capture(testFailure).Throw();
+    }
+
     private static NotificationCommand Command(string key, string recipient) =>
         new(
             1,
@@ -358,8 +496,8 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             new AmazonSQSConfig { ServiceURL = "http://localhost:4566", AuthenticationRegion = "eu-west-2" }
         )
     {
-        private readonly Dictionary<string, ReceiveMessageResponse> _selections = new();
-        private readonly Dictionary<string, int?> _visibilityTimeouts = new();
+        private readonly ConcurrentDictionary<string, (ReceiveMessageResponse Response, int? Visibility)> _selections =
+            new();
         public string? DestinationUrl { get; set; }
         public bool FailNextDelete { get; set; }
         public bool FailNextSendAfterPublication { get; set; }
@@ -377,23 +515,22 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 && _selections.TryGetValue(request.ReceiveRequestAttemptId, out var selected)
             )
             {
-                Assert.Equal(_visibilityTimeouts[request.ReceiveRequestAttemptId], request.VisibilityTimeout);
+                Assert.Equal(selected.Visibility, request.VisibilityTimeout);
                 ReplayedAttemptId = request.ReceiveRequestAttemptId;
                 // This real visibility update supplies the visibility reset of the emulated atomic replay API.
                 await base.ChangeMessageVisibilityAsync(
                     request.QueueUrl,
-                    Assert.Single(selected.Messages).ReceiptHandle,
+                    Assert.Single(selected.Response.Messages).ReceiptHandle,
                     request.VisibilityTimeout ?? 120,
                     cancellationToken
                 );
 
-                return selected;
+                return selected.Response;
             }
             var response = await base.ReceiveMessageAsync(request, cancellationToken);
             if (request.ReceiveRequestAttemptId is not null && response.Messages is { Count: 1 })
             {
-                _selections.Add(request.ReceiveRequestAttemptId, response);
-                _visibilityTimeouts.Add(request.ReceiveRequestAttemptId, request.VisibilityTimeout);
+                _selections.TryAdd(request.ReceiveRequestAttemptId, (response, request.VisibilityTimeout));
                 SelectedReceipt = response.Messages[0].ReceiptHandle;
             }
 
@@ -426,7 +563,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         {
             if (
                 _selections.Values.Any(selection =>
-                    selection.Messages.Any(message => message.ReceiptHandle == request.ReceiptHandle)
+                    selection.Response.Messages.Any(message => message.ReceiptHandle == request.ReceiptHandle)
                 )
             )
             {
@@ -440,13 +577,14 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             var response = await base.DeleteMessageAsync(request, cancellationToken);
             foreach (
                 var key in _selections
-                    .Where(entry => entry.Value.Messages.Any(message => message.ReceiptHandle == request.ReceiptHandle))
+                    .Where(entry =>
+                        entry.Value.Response.Messages.Any(message => message.ReceiptHandle == request.ReceiptHandle)
+                    )
                     .Select(entry => entry.Key)
                     .ToArray()
             )
             {
-                _selections.Remove(key);
-                _visibilityTimeouts.Remove(key);
+                _selections.TryRemove(key, out _);
             }
 
             return response;
@@ -495,7 +633,10 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         ReplaySqsClient sqs,
         IMongoClient mongo,
         int lifetime,
-        bool oauth = false
+        bool oauth = false,
+        bool processing = false,
+        string? notifyApiKey = null,
+        string? cutover = null
     ) : WebApplicationFactory<Program>
     {
         public ReplaySqsClient Sqs { get; } = sqs;
@@ -504,6 +645,17 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
+            if (processing && cutover is null)
+                builder.ConfigureAppConfiguration(
+                    (_, configuration) =>
+                        configuration.AddJsonStream(
+                            new MemoryStream(
+                                Encoding.UTF8.GetBytes(
+                                    "{\"NotificationCommandDelivery\":{\"EmailDeliveryCutoverUtc\":null}}"
+                                )
+                            )
+                        )
+                );
             builder.ConfigureTestServices(services =>
             {
                 // Use the genuine isolated Mongo client: the SDK's AWS mechanism registration is process-global.
@@ -527,21 +679,26 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                         ["AWS_EMF_ENABLED"] = "false",
                         ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
                         ["AnalyticsEventConsumer:QueueUrl"] = AnalyticsEventsQueueUrl,
-                        ["NotificationCommandDelivery:ProcessingEnabled"] = "false",
+                        ["NotificationCommandDelivery:ProcessingEnabled"] = processing.ToString(),
                         ["NotificationCommandDelivery:QueueUrl"] = commandQueue,
                         ["NotificationCommandDelivery:EvidenceDigestSecret"] = "local-inspection-evidence-secret",
                         ["NotificationCommandDelivery:RecipientLaneSecret"] = "local-inspection-lane-secret",
-                        ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "set-automatically-when-deployed",
-                        ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = "0",
-                        ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = "0",
+                        ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = processing
+                            ? cutover
+                            : "set-automatically-when-deployed",
+                        ["NotificationCommandDelivery:NotifyTimeoutSeconds"] = processing ? "60" : "0",
+                        ["NotificationCommandDelivery:WaitTimeSeconds"] = "1",
+                        ["NotificationCommandDelivery:ReceiveTimeoutSeconds"] = processing ? "30" : "0",
                         ["CommandDlqAdministration:QueueUrl"] = dlq,
                         ["CommandDlqAdministration:SelectionLifetimeSeconds"] = lifetime.ToString(
                             System.Globalization.CultureInfo.InvariantCulture
                         ),
                         ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                         ["Mongo:DatabaseName"] = databaseName,
-                        ["Notify:ApiKey"] = "set-automatically-when-deployed",
-                        ["Notify:BaseAddress"] = "set-automatically-when-deployed",
+                        ["Notify:ApiKey"] = notifyApiKey ?? "set-automatically-when-deployed",
+                        ["Notify:BaseAddress"] = processing
+                            ? "http://localhost:8086"
+                            : "set-automatically-when-deployed",
                         ["Acl:Clients:admin:Type"] = oauth ? "OAuth" : "ApiKey",
                         ["Acl:Clients:admin:Secret"] = oauth ? null : Secret,
                         ["Acl:Clients:admin:Scopes:0"] = "admin",
