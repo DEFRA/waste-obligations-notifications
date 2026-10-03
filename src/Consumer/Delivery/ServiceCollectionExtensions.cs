@@ -20,6 +20,10 @@ public static class ServiceCollectionExtensions
             .Bind(configuration.GetRequiredSection(NotificationCommandDeliveryOptions.SectionName))
             .ValidateDataAnnotations()
             .Validate(
+                options => options.HasFifoQueueUrl,
+                "Notification command QueueUrl must be a configured FIFO queue URL"
+            )
+            .Validate(
                 options =>
                     options.DiagnosticNotificationTypes is not null
                     && options.DiagnosticNotificationTypes.All(NotificationCommandDeliveryOptions.IsDiagnosticLabel),
@@ -30,20 +34,16 @@ public static class ServiceCollectionExtensions
                 "Notification command receive timeout must exceed the long-poll wait"
             )
             .Validate(
-                options =>
-                    !options.ProcessingEnabled
-                    || NotificationCommandDeliveryOptions.IsSecretConfigured(options.EvidenceDigestSecret),
-                "EvidenceDigestSecret must be configured when notification command processing is enabled"
+                options => NotificationCommandDeliveryOptions.IsSecretConfigured(options.EvidenceDigestSecret),
+                "EvidenceDigestSecret must be configured"
             )
             .Validate(
-                options =>
-                    !options.ProcessingEnabled
-                    || NotificationCommandDeliveryOptions.IsSecretConfigured(options.RecipientLaneSecret),
-                "RecipientLaneSecret must be configured when notification command processing is enabled"
+                options => NotificationCommandDeliveryOptions.IsSecretConfigured(options.RecipientLaneSecret),
+                "RecipientLaneSecret must be configured"
             )
             .Validate(
-                options => !options.ProcessingEnabled || options.TryReadCutover(out _),
-                "EmailDeliveryCutoverUtc must be null or include an explicit UTC offset when notification command processing is enabled"
+                options => options.TryReadCutover(out _),
+                "EmailDeliveryCutoverUtc must be null or include an explicit UTC offset"
             )
             .ValidateOnStart();
 

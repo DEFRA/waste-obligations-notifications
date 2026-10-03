@@ -10,8 +10,6 @@ public sealed record NotificationCommandDeliveryOptions
     [Required]
     public required string QueueUrl { get; init; }
 
-    public bool ProcessingEnabled { get; init; }
-
     public string? EmailDeliveryCutoverUtc { get; init; }
 
     [Required]
@@ -54,6 +52,11 @@ public sealed record NotificationCommandDeliveryOptions
 
         return true;
     }
+
+    internal bool HasFifoQueueUrl =>
+        Uri.TryCreate(QueueUrl, UriKind.Absolute, out var uri)
+        && uri.Scheme is "http" or "https"
+        && uri.AbsolutePath.EndsWith(".fifo", StringComparison.Ordinal);
 
     internal static bool IsSecretConfigured(string? secret) =>
         !string.IsNullOrWhiteSpace(secret) && !secret.StartsWith("set-automatically", StringComparison.Ordinal);

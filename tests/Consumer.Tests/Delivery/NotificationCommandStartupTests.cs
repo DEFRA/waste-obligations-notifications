@@ -19,6 +19,10 @@ public sealed class NotificationCommandStartupTests
     private const string LaneSecret = "private-test-lane-secret";
 
     [Theory]
+    [InlineData("QueueUrl", "set-automatically-when-deployed")]
+    [InlineData("QueueUrl", "http://localhost:4566/not-fifo")]
+    [InlineData("QueueUrl", "ftp://localhost/commands.fifo")]
+    [InlineData("QueueUrl", "private-invalid-queue")]
     [InlineData("EvidenceDigestSecret", "set-automatically-by-deployment-evidence-secret")]
     [InlineData("RecipientLaneSecret", "set-automatically-by-deployment-lane-secret")]
     [InlineData("EvidenceDigestSecret", " ")]
@@ -31,7 +35,7 @@ public sealed class NotificationCommandStartupTests
     [InlineData("EmailDeliveryCutoverUtc", "00:00Z")]
     [InlineData("EmailDeliveryCutoverUtc", "")]
     [InlineData("EmailDeliveryCutoverUtc", " ")]
-    public async Task WhenEnabledWithInvalidConfiguration_ShouldFailStartupBeforeReceivingAndNotExposeValues(
+    public async Task WhenConfigurationInvalid_ShouldFailStartupBeforeReceivingAndNotExposeValues(
         string field,
         string invalidValue
     )
@@ -41,7 +45,6 @@ public sealed class NotificationCommandStartupTests
         using var host = CreateHost(
             sqs,
             logger,
-            true,
             new Dictionary<string, string?> { [$"NotificationCommandDelivery:{field}"] = invalidValue }
         );
 
@@ -64,7 +67,7 @@ public sealed class NotificationCommandStartupTests
     [InlineData("2100-01-01T00:00:00Z")]
     [InlineData("2100-01-01T00:00:00+00:00")]
     [InlineData("2100-01-01T00:00:00-00:00")]
-    public async Task WhenEnabledWithConfiguredSecretsAndUtcCutover_ShouldStartAndReceive(string? cutover)
+    public async Task WhenSecretsAndUtcCutoverConfigured_ShouldStartAndReceive(string? cutover)
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqs = Substitute.For<IAmazonSQS>();
@@ -79,7 +82,6 @@ public sealed class NotificationCommandStartupTests
         using var host = CreateHost(
             sqs,
             Substitute.For<ILogger>(),
-            true,
             new Dictionary<string, string?> { ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover }
         );
 
@@ -92,7 +94,7 @@ public sealed class NotificationCommandStartupTests
     }
 
     [Fact]
-    public async Task WhenEnabledWithJsonNullCutover_ShouldOverrideConfiguredValueAndReceive()
+    public async Task WhenJsonNullCutoverConfigured_ShouldOverrideConfiguredValueAndReceive()
     {
         var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqs = Substitute.For<IAmazonSQS>();
@@ -104,7 +106,7 @@ public sealed class NotificationCommandStartupTests
 
                 return new ReceiveMessageResponse();
             });
-        using var host = CreateHost(sqs, Substitute.For<ILogger>(), true, jsonNullCutover: true);
+        using var host = CreateHost(sqs, Substitute.For<ILogger>(), jsonNullCutover: true);
 
         await host.StartAsync(TestContext.Current.CancellationToken);
         host.Services.GetRequiredService<ApplicationStartup>().MarkStarted();
@@ -119,39 +121,39 @@ public sealed class NotificationCommandStartupTests
     }
 
     [Fact]
-    public async Task WhenDisabledWithDeploymentPlaceholders_ShouldStartWithoutReceiving()
+    public async Task WhenRetiredProcessingFlagIsFalse_ShouldStillReceiveAfterStartup()
     {
-        const string placeholder = "set-automatically-when-deployed";
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqs = Substitute.For<IAmazonSQS>();
+        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                received.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+
+                return new ReceiveMessageResponse();
+            });
         using var host = CreateHost(
             sqs,
             Substitute.For<ILogger>(),
-            false,
-            new Dictionary<string, string?>
-            {
-                ["NotificationCommandDelivery:EvidenceDigestSecret"] = placeholder,
-                ["NotificationCommandDelivery:RecipientLaneSecret"] = placeholder,
-                ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = placeholder,
-            }
+            new Dictionary<string, string?> { ["NotificationCommandDelivery:ProcessingEnabled"] = "false" }
         );
-
         await host.StartAsync(TestContext.Current.CancellationToken);
+        host.Services.GetRequiredService<ApplicationStartup>().MarkStarted();
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await host.StopAsync(TestContext.Current.CancellationToken);
-
-        await sqs.DidNotReceive().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+        await sqs.Received(1).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
     }
 
     private static IHost CreateHost(
         IAmazonSQS sqs,
         ILogger logger,
-        bool processingEnabled,
         Dictionary<string, string?>? overrides = null,
         bool jsonNullCutover = false
     )
     {
         var values = new Dictionary<string, string?>
         {
-            ["NotificationCommandDelivery:ProcessingEnabled"] = processingEnabled.ToString(),
             ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
             ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",
             ["NotificationCommandDelivery:EvidenceDigestSecret"] = EvidenceSecret,

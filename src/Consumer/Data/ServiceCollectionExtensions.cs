@@ -1,4 +1,3 @@
-using Defra.WasteObligations.Consumer.Delivery;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Conventions;
@@ -67,10 +66,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<MongoMigrationCompletion>();
         services.AddSingleton<IMongoMigrationLeaseService, MongoMigrationLeaseService>();
         services.AddSingleton<IMongoMigrationRunner, MongoMigrationRunner>();
-        if (configuration.GetValue<bool>($"{NotificationCommandDeliveryOptions.SectionName}:ProcessingEnabled"))
-        {
-            services.AddHostedService<MongoMigrationService>();
-        }
+        services.AddHostedService<MongoMigrationService>();
 
         return services;
     }

@@ -37,7 +37,7 @@ restore a command's original recipient-lane position.
   again after success or an empty response; its poll interval is backoff only
   after errors. The command receive timeout must exceed its long-poll wait and
   bounds that receive without changing the shared SQS client's configuration.
-  A disabled consumer logs once and awaits cancellation.
+  A disabled analytics consumer logs once and awaits cancellation.
 - Apply the logging restrictions in [coding standards](../CODING_STANDARDS.md).
 
 ## Notification commands and data protection
@@ -51,10 +51,11 @@ specified in the [producer contract](notification-command-producer-contract.md).
   payloads, or persist event data.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
-- Allow an unset cutover; validate any supplied UTC cutover and configured evidence and recipient-lane secrets
-  at startup when command processing is enabled. Invalid configuration must
-  not consume commands; disabled processing permits deployment placeholders.
-  Digest creation also rejects unconfigured secrets independently of processing.
+- Consume commands unconditionally after successful startup readiness. Null
+  cutover permanently suppresses them; it does not pause consumption. Validate
+  the configured FIFO queue, digest secrets and any supplied UTC cutover at
+  startup. Invalid values and deployment placeholders prevent startup and queue
+  effects. Digest creation independently rejects unconfigured secrets.
 - Use the idempotency key as the FIFO message-deduplication ID and a
   non-reversible per-recipient digest as the FIFO message-group ID.
   Validate the key before publishing or consuming: it must contain 1–128
@@ -62,8 +63,7 @@ specified in the [producer contract](notification-command-producer-contract.md).
   [SQS SendMessage](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html#API_SendMessage_RequestParameters).
   Reject invalid keys without changing them; never trim, truncate or replace
   the key to fit the queue constraints.
-- Run versioned Mongo migrations under a renewable exclusive lease when command
-  processing is enabled. Critical migrations gate `/health`; migration 001 is
+- Run versioned Mongo migrations under a renewable exclusive lease on every host. Critical migrations gate `/health`; migration 001 is
   critical because its full unique notification-key index enforces idempotency.
   Require the build to complete before recording history or readiness; catalog
   presence alone is insufficient. Reject incompatible existing definitions without
@@ -137,7 +137,7 @@ logged as required by the analytics contract above.
 
 ## Initial suppression mode
 
-The default cutover is null. Enabled processing suppresses all valid commands
+The default cutover is null. Consumption suppresses all valid commands
 without a Notify send while Waste Obligations retains direct delivery. Suppression
 must be durable before deletion; malformed commands, conflicts and persistence
 failures retain the message. Existing suppressed evidence is terminal when a
@@ -147,11 +147,11 @@ remain in force.
 
 Use the producer dry run before choosing the identical future X in both services.
 Verify both deployments complete before X; after X use Notifications recovery
-and do not clear or move the cutover backward. ADR0002 records this accepted,
+and do not clear or change the cutover after X. ADR0002 records this accepted,
 forward-only handover. Local examples do not configure deployed values.
 
 Critical migration completion is reported by the `MongoMigrationCompletion`
-entry in `/health/all` and gates `/health` while command processing is enabled.
+entry in `/health/all` and gates `/health` for every host.
 Migration 001 is flagged `Critical = true`; migrations default to non-critical.
 An absent or invalid critical prerequisite returns 503, including when another
 host owns the lease or every host exhausts its attempts. Already-applied critical

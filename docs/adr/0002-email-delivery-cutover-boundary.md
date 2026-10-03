@@ -39,8 +39,7 @@ delivery boundary. Parse both values with the same ISO timestamp parser and
 truncate to whole milliseconds, matching MongoDB storage precision. Ignore
 sub-millisecond precision in command serialisation and immutable evidence as well
 so a Mongo roundtrip preserves command identity. The producer's inverse cutover
-decision must use the same precision. Validate the cutover at startup when command
-processing is enabled.
+decision must use the same precision. Validate the cutover at startup on every host.
 
 ## Consequences
 
@@ -55,8 +54,7 @@ Do not configure Waste Obligations first. If it stops sending at X while a
 Notifications consumer still uses null, both paths suppress the action. That
 suppression is permanent; redrive cannot restore delivery for the same command.
 A deployment setting alone does not prove every running host has adopted it.
-Once X passes, the handover is forward-only: do not clear or move the cutover
-backward to restore direct sending. There is no fallback to Waste Obligations
+Once X passes, the handover is forward-only: do not clear or change the cutover. There is no fallback to Waste Obligations
 after X; use Notifications delivery/recovery to resolve failures.
 
 Both services must be deployed and configured with the identical future value

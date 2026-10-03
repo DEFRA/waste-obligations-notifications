@@ -16,7 +16,7 @@ try
     builder.ConfigureLoggingAndTracing();
     builder.Services.AddProblemDetails();
     builder.Services.AddAuthorization();
-    builder.Services.AddHealth(builder.Configuration);
+    builder.Services.AddHealth();
     builder.Services.AddAnalyticsEventConsumer(builder.Configuration);
     builder.Services.AddNotificationCommandDelivery(builder.Configuration);
 
@@ -27,8 +27,7 @@ try
         .Value;
     var cutoverValid = delivery.TryReadCutover(out var cutover);
     app.Logger.LogInformation(
-        "Notification command processing {ProcessingEnabled}; email delivery cutover {EmailDeliveryCutoverUtc}; cutover valid {CutoverValid}",
-        delivery.ProcessingEnabled,
+        "Email delivery cutover {EmailDeliveryCutoverUtc}; cutover valid {CutoverValid}",
         cutover,
         cutoverValid
     );

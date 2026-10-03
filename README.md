@@ -69,16 +69,14 @@ service-owned `AnalyticsEventConsumer__QueueUrl`. The deployed queue must be a
 separate subscription from the producer queue and must have the CDP dead-letter
 queue convention configured.
 
-`NotificationCommandDelivery` is deployment-owned. Before enabling it, CDP must
-provide its FIFO queue URL, optional cutover timestamp,
-and distinct evidence-digest and recipient-lane secrets. Do not put those secrets
-in source control or logs.
-Enabled command processing permits a null cutover and validates any supplied
-explicit UTC timestamp and both digest
-secrets at startup. Blank or deployment-placeholder secrets prevent startup
-before commands are consumed. Disabled command processing permits the shipped
-deployment placeholders so analytics-only hosts can start. Digest creation also
-rejects unconfigured secrets when the publisher is used independently.
+`NotificationCommandDelivery` is deployment-owned. Every host consumes commands
+after successful startup readiness; there is no command-processing enablement
+flag. Before deployment, provide the FIFO queue URL, optional cutover, distinct
+evidence-digest and recipient-lane secrets, and Mongo connectivity/permissions.
+Queue and secret placeholders prevent startup. Null cutover permanently
+suppresses commands; it does not pause consumption. Keep secrets outside source
+control and logs. Digest creation also rejects unconfigured secrets when the
+publisher is used independently.
 Cutover configuration and serialized `actionOccurredAtUtc` values must include
 `Z` or a numeric zero offset (`+00:00` or `-00:00`). Offset-free timestamps are
 rejected regardless of host timezone; nonzero offsets are rejected without
@@ -102,7 +100,7 @@ command settings leave analytics polling and the shared SQS client unchanged.
 CDP can override them through the `NotificationCommandDelivery` section;
 local Compose values do not configure deployed environments.
 
-When command processing is enabled, Mongo migrations use the same versioned engine and renewable exclusive lease as
+Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.
 A critical index must have completed building, not merely appear in the catalog.
@@ -167,9 +165,9 @@ The client identifies itself as `waste-obligiations-notifications-consumer` and 
 reads for delivery evidence, even if the URI specifies another read preference.
 
 Local Compose uses unauthenticated standalone Mongo and cannot verify CDP IAM or
-TLS. Before enabling command processing in CDP, verify authentication, certificate
+TLS. Before deploying to CDP, verify authentication, certificate
 loading, database permissions, migration completion and `/health/all`. Mongo
-migrations and health checks remain conditional on command processing being enabled.
+migrations and critical health checks run for every host.
 
 ## Code quality and delivery
 
@@ -208,15 +206,15 @@ identical X and verify its rollout completes before X. Waste Obligations must
 not stop sending while any Notifications consumer still uses null: both paths
 would permanently suppress the affected commands. Notifications sends actions at or after
 X once ticket02 is present; Waste Obligations sends only actions before X. The
-handover is forward-only after X; do not clear the cutover to restore direct sends.
-Each host logs its parsed cutover and processing flag at startup.
+handover is forward-only after X; do not clear or change the cutover after X.
+Each host logs its parsed cutover at startup.
 `/health/all` reports `EmailDeliveryCutover` with the normalized UTC value or null,
-processing flag, validity and fixed mode. Compare every active host, not only
+validity and fixed suppression/boundary mode. Compare every active host, not only
 saved configuration. This diagnostic does not gate `/health`; null is valid.
 See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
 
 Critical migration completion is reported by the `MongoMigrationCompletion`
-entry in `/health/all` and gates `/health` while command processing is enabled.
+entry in `/health/all` and gates `/health` for every host.
 Migration 001 is flagged `Critical = true`; migrations default to non-critical.
 An absent or invalid critical prerequisite returns 503, including when another
 host owns the lease or every host exhausts its attempts. Already-applied critical

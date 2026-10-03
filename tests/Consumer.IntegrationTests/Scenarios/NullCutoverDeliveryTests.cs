@@ -41,7 +41,6 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
             startup.MarkStarted();
             var settings = new NotificationCommandDeliveryOptions
             {
-                ProcessingEnabled = true,
                 QueueUrl = queue.QueueUrl,
                 EvidenceDigestSecret = "test-null-cutover-evidence-secret",
                 RecipientLaneSecret = "test-null-cutover-lane-secret",

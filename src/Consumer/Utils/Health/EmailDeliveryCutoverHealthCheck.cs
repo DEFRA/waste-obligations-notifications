@@ -14,11 +14,10 @@ public sealed class EmailDeliveryCutoverHealthCheck(IOptions<NotificationCommand
     {
         var delivery = options.Value;
         var valid = delivery.TryReadCutover(out var cutover);
-        var mode = (valid, delivery.ProcessingEnabled, cutover) switch
+        var mode = (valid, cutover) switch
         {
-            (false, _, _) => "invalid-unused",
-            (_, false, _) => "paused",
-            (_, _, null) => "suppress-all",
+            (false, _) => "invalid",
+            (_, null) => "suppress-all",
             _ => "boundary",
         };
 
@@ -26,7 +25,6 @@ public sealed class EmailDeliveryCutoverHealthCheck(IOptions<NotificationCommand
             HealthCheckResult.Healthy(
                 data: new Dictionary<string, object>
                 {
-                    ["processingEnabled"] = delivery.ProcessingEnabled,
                     ["emailDeliveryCutoverUtc"] = cutover?.ToString("O", CultureInfo.InvariantCulture)!,
                     ["cutoverValid"] = valid,
                     ["mode"] = mode,
