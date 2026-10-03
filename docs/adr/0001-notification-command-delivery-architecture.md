@@ -18,6 +18,9 @@ would not protect an intended email after its limited deduplication window.
 
 ## Decision
 
+The [producer contract](../notification-command-producer-contract.md) pins the
+wire and FIFO rules; it does not prescribe declaration recipient/template policy.
+
 Notifications will consume versioned notification commands from a dedicated,
 service-owned SQS FIFO queue. Upstream producers use a shared command publisher
 to assign the command's idempotency key as the SQS deduplication ID and a

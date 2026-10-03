@@ -42,6 +42,10 @@ restore a command's original recipient-lane position.
 
 ## Notification commands and data protection
 
+Producer wire fields, timestamp precision and exact FIFO lane calculation are
+specified in the [producer contract](notification-command-producer-contract.md).
+
+
 - Keep notification delivery separate from the analytics-event path. Analytics
   consumption does not deliver notifications, mutate business data, transform
   payloads, or persist event data.
