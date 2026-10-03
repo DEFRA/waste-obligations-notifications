@@ -19,6 +19,10 @@ public static class ServiceCollectionExtensions
 
         var healthChecks = services
             .AddHealthChecks()
+            .AddCheck<EmailDeliveryCutoverHealthCheck>(
+                "EmailDeliveryCutover",
+                tags: [WebApplicationExtensions.Extended]
+            )
             .Add(
                 new HealthCheckRegistration(
                     "AnalyticsEventQueue",

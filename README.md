@@ -195,6 +195,10 @@ not stop sending while any Notifications consumer still uses null: both paths
 would permanently suppress the affected commands. Notifications sends actions at or after
 X once ticket02 is present; Waste Obligations sends only actions before X. The
 handover is forward-only after X; do not clear the cutover to restore direct sends.
+Each host logs its parsed cutover and processing flag at startup.
+`/health/all` reports `EmailDeliveryCutover` with the normalized UTC value or null,
+processing flag, validity and fixed mode. Compare every active host, not only
+saved configuration. This diagnostic does not gate `/health`; null is valid.
 See [ADR0002](docs/adr/0002-email-delivery-cutover-boundary.md).
 
 Critical migration completion is reported by the `MongoMigrationCompletion`

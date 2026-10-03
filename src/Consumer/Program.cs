@@ -22,6 +22,17 @@ try
 
     var app = builder.Build();
 
+    var delivery = app
+        .Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<NotificationCommandDeliveryOptions>>()
+        .Value;
+    var cutoverValid = delivery.TryReadCutover(out var cutover);
+    app.Logger.LogInformation(
+        "Notification command processing {ProcessingEnabled}; email delivery cutover {EmailDeliveryCutoverUtc}; cutover valid {CutoverValid}",
+        delivery.ProcessingEnabled,
+        cutover,
+        cutoverValid
+    );
+
     app.UseHeaderPropagation();
     app.UseAuthorization();
     app.MapHealth();
