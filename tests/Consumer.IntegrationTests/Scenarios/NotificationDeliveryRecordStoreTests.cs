@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Events;
 
 namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
@@ -15,8 +17,20 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
     [Fact]
     public async Task WhenSuppressionIsRetried_ShouldPreserveEvidenceAndRejectConflicts()
     {
-        using var client = CreateMongoClient();
         var databaseName = $"notifications_store_test_{Guid.NewGuid():N}";
+        var writes = new ConcurrentQueue<BsonDocument>();
+        var settings = MongoClientSettings.FromConnectionString("mongodb://localhost:27017");
+        settings.ClusterConfigurator = builder =>
+            builder.Subscribe<CommandStartedEvent>(started =>
+            {
+                if (
+                    started.DatabaseNamespace.DatabaseName == databaseName
+                    && started.CommandName is "insert" or "update"
+                    && started.Command[started.CommandName] == "NotificationDeliveryRecord"
+                )
+                    writes.Enqueue(started.Command.DeepClone().AsBsonDocument);
+            });
+        using var client = new MongoClient(settings);
         var database = client.GetDatabase(databaseName);
         var readiness = new MongoMigrationCompletion();
         using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
@@ -66,7 +80,40 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                     .GetCollection<BsonDocument>("NotificationDeliveryRecord")
                     .CountDocumentsAsync(new BsonDocument(), cancellationToken: cancellationToken)
             );
-            Assert.Equal(SuppressionClaimResult.Recorded, await store.RecordSuppression(command, cancellationToken));
+            var before = await database.RunCommandAsync<BsonDocument>(
+                new BsonDocument("hello", 1),
+                cancellationToken: cancellationToken
+            );
+            var claims = await Task.WhenAll(
+                Enumerable.Range(0, 4).Select(_ => store.RecordSuppression(command, cancellationToken))
+            );
+            Assert.Single(claims, result => result == SuppressionClaimResult.Recorded);
+            Assert.Equal(3, claims.Count(result => result == SuppressionClaimResult.TerminalDuplicate));
+            var after = await database.RunCommandAsync<BsonDocument>(
+                new BsonDocument("hello", 1),
+                cancellationToken: cancellationToken
+            );
+            Assert.NotEmpty(writes);
+            Assert.All(
+                writes,
+                write =>
+                {
+                    var update = Assert.Single(write["updates"].AsBsonArray).AsBsonDocument["u"].AsBsonDocument;
+                    Assert.True(update["$currentDate"]["recordedAtUtc"].AsBoolean);
+                    Assert.False(update["$setOnInsert"].AsBsonDocument.Contains("recordedAtUtc"));
+                }
+            );
+            var original = await database
+                .GetCollection<BsonDocument>("NotificationDeliveryRecord")
+                .Find(new BsonDocument())
+                .SingleAsync(cancellationToken);
+            Assert.Equal(8, original.ElementCount);
+            Assert.Equal(BsonType.DateTime, original["recordedAtUtc"].BsonType);
+            Assert.InRange(
+                original["recordedAtUtc"].AsBsonDateTime.MillisecondsSinceEpoch,
+                before["localTime"].AsBsonDateTime.MillisecondsSinceEpoch,
+                after["localTime"].AsBsonDateTime.MillisecondsSinceEpoch
+            );
             Assert.Equal(
                 SuppressionClaimResult.TerminalDuplicate,
                 await store.GetSuppression(command, cancellationToken)
@@ -96,6 +143,13 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 .Find(Builders<NotificationDeliveryRecord>.Filter.Empty)
                 .ToListAsync(cancellationToken);
             var record = Assert.Single(records);
+            Assert.Equal(
+                original,
+                await database
+                    .GetCollection<BsonDocument>("NotificationDeliveryRecord")
+                    .Find(new BsonDocument())
+                    .SingleAsync(cancellationToken)
+            );
             Assert.Equal(digest.CreateImmutableFieldsDigest(command), record.ImmutableFields);
             Assert.Equal("delivery-suppressed", record.Outcome);
             Assert.Equal(new DateTime(2026, 9, 28, 0, 0, 0, 123, DateTimeKind.Utc), record.ActionOccurredAtUtc);

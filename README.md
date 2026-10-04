@@ -196,7 +196,8 @@ procedure is provided. Keep both values in deployment-owned secret storage.
 
 `NotificationCommandDelivery:EmailDeliveryCutoverUtc` defaults to null. With
 otherwise valid configuration, processing can run in suppression mode while
-Waste Obligations sends every action. Suppression is durable before queue deletion;
+Waste Obligations sends every action. MongoDB supplies suppression timestamps;
+retries preserve the original evidence. Suppression is durable before queue deletion;
 malformed or conflicting commands still retry. Suppressed evidence remains terminal
 and is never backfilled into a send after configuration changes. Empty strings,
 whitespace, deployment placeholders and non-UTC values are invalid supplied cutovers.
