@@ -195,20 +195,23 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     {
         var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
-        var record = new NotificationDeliveryRecord
-        {
-            NotificationKey = notificationKey,
-            ImmutableFields = immutableFields,
-            Recipient = _digest.CreateRecipientDigest(command.EmailAddress),
-            NotificationType = command.NotificationType,
-            ActionOccurredAtUtc = MongoDateTime.TruncateToMilliseconds(command.ActionOccurredAtUtc).UtcDateTime,
-            Outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue(),
-            RecordedAtUtc = DateTime.UtcNow,
-        };
+        var update = Builders<NotificationDeliveryRecord>
+            .Update.SetOnInsert(record => record.NotificationKey, notificationKey)
+            .SetOnInsert(record => record.ImmutableFields, immutableFields)
+            .SetOnInsert(record => record.Recipient, _digest.CreateRecipientDigest(command.EmailAddress))
+            .SetOnInsert(record => record.NotificationType, command.NotificationType)
+            .SetOnInsert(
+                record => record.ActionOccurredAtUtc,
+                MongoDateTime.TruncateToMilliseconds(command.ActionOccurredAtUtc).UtcDateTime
+            )
+            .SetOnInsert(record => record.Outcome, NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue())
+            .CurrentDate(record => record.RecordedAtUtc);
 
         try
         {
-            await _records.InsertOneAsync(record, cancellationToken: cancellationToken);
+            // A fresh ID forces insertion; the unique notification key protects existing evidence.
+            var filter = Builders<NotificationDeliveryRecord>.Filter.Eq(record => record.Id, ObjectId.GenerateNewId());
+            await _records.UpdateOneAsync(filter, update, new UpdateOptions { IsUpsert = true }, cancellationToken);
 
             return SuppressionClaimResult.Recorded;
         }
