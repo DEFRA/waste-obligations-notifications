@@ -13,8 +13,8 @@ Waste Obligations already has a Mongo migration engine and lease process.
 
 ## Decision
 
-Use the same AdaskoTheBeAsT.MongoDbMigrations engine, renewable Mongo lease,
-retry policy and attempt timeouts as Waste Obligations. Run migrations in a
+Use the AdaskoTheBeAsT.MongoDbMigrations engine used by Waste Obligations, with a
+renewable Mongo lease and the retry and timeout policies below. Run migrations in a
 background service on every host. Migration 001 creates
 `notificationKey_unique` on `NotificationDeliveryRecord` and retains an
 existing matching index.
