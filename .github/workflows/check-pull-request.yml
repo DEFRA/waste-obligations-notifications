@@ -76,6 +76,9 @@ jobs:
     needs: pr-validator
     if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: ci-report-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     permissions:
       actions: read
       pull-requests: write
@@ -121,6 +124,11 @@ jobs:
           }
 
           trivy_summary() {
+            if [ "$TRIVY" = "failure" ]; then
+              printf '❌ Scan failed'
+              return
+            fi
+
             if [ ! -f TestResults/trivy.json ]; then
               printf '⚪ Not run'
               return
@@ -132,7 +140,7 @@ jobs:
             if [ "$critical" = "0" ] && [ "$high" = "0" ]; then
               printf '✅ 0 Critical, 0 High'
             else
-              printf '❌ %s Critical, %s High' "$critical" "$high"
+              printf '⚠️ %s Critical, %s High (advisory)' "$critical" "$high"
             fi
           }
 
@@ -147,20 +155,40 @@ jobs:
             printf '| Docker image | %s |\n' "$(step_summary "$DOCKER_BUILD")"
             printf '| Trivy (Critical/High) | %s |\n' "$(trivy_summary)"
             echo
-            printf '_PR validation: %s. Reports are retained as a workflow artifact for seven days._\n' "$(step_summary "$PR_VALIDATOR")"
+            printf '_PR validation: %s._\n' "$(step_summary "$PR_VALIDATOR")"
+            echo
+            printf '[Workflow run and downloadable reports](%s/%s/actions/runs/%s). Reports are retained for seven days.\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+
+            if [ -f TestResults/trivy.json ] && jq -e 'any(.Results[]?.Vulnerabilities[]?; .Severity == "CRITICAL" or .Severity == "HIGH")' TestResults/trivy.json > /dev/null; then
+              echo
+              echo '### Trivy findings'
+              echo
+              echo 'Trivy findings are advisory; a successful scan does not fail validation when vulnerabilities are found.'
+              echo
+              echo '| Vulnerability | Package | Installed | Fixed | Severity |'
+              echo '| --- | --- | --- | --- | --- |'
+              jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | "| [\(.VulnerabilityID)](\(.PrimaryURL)) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "Not available") | \(.Severity) |"' TestResults/trivy.json
+            fi
           } > ci-report.md
-      - name: Update pull request comment
+      - name: Replace pull request comment
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          comment_id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- ci-report -->"))) | .id' | head -n 1)
-
-          if [ -n "$comment_id" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --raw-field body="$(<ci-report.md)" > /dev/null
-          else
-            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --raw-field body="$(<ci-report.md)" > /dev/null
+          current_head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)
+          if [ "$current_head" != "$HEAD_SHA" ]; then
+            echo "Skipping CI report for a superseded commit."
+            exit 0
           fi
+
+          comment_ids=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- ci-report -->"))) | .id')
+
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --raw-field body="$(<ci-report.md)" > /dev/null
+
+          for comment_id in $comment_ids; do
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" > /dev/null
+          done
 
   sonarcloud-scan:
     name: CDP SonarCloud Scan

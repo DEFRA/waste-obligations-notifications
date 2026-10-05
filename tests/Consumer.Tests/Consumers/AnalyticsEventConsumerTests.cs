@@ -3,6 +3,7 @@ using System.Text;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Consumers;
+using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -151,8 +152,17 @@ public class AnalyticsEventConsumerTests
                     PollIntervalSeconds = 1,
                 }
             ),
-            logger ?? new RecordingLogger<AnalyticsEventConsumer>()
+            logger ?? new RecordingLogger<AnalyticsEventConsumer>(),
+            StartedApplication()
         );
+
+    private static ApplicationStartup StartedApplication()
+    {
+        var startup = new ApplicationStartup();
+        startup.MarkStarted();
+
+        return startup;
+    }
 
     private static Func<CallInfo, Task<ReceiveMessageResponse>> MessageThenWait(Message message)
     {
