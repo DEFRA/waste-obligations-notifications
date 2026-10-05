@@ -32,6 +32,8 @@ and disposes each operation's request and response. Personalisation retains its
 JSON values through SDK serialization; only minimal acceptance evidence leaves
 the client boundary. The SDK's synchronous wait runs off the consumer caller,
 and dependency exceptions are replaced with fixed safe failures.
+Notify connections have a two-minute pooled lifetime, so the retained client
+resolves DNS again when opening replacement connections.
 
 New suppression records retain their original eight-field shape, omitting absent
 lease and Notify fields. Claims and accepted records retain their additional

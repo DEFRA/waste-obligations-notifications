@@ -117,7 +117,9 @@ specified in the [producer contract](notification-command-producer-contract.md).
   lease expiry. Accepted evidence includes the opaque versioned HMAC Notify reference,
   template ID/version, Notify notification ID, correlation digests, and timestamps.
 - Make one Notify request per claim with no HTTP retry or redirect. Normalize the
-  recipient for the request. Require `201 Created` and consistent minimal
+  recipient for the request. Give pooled connections a two-minute lifetime so
+  the retained client refreshes DNS when opening replacement connections.
+  Require `201 Created` and consistent minimal
   acceptance evidence; malformed success is indeterminate and remains retryable.
   Never log dependency exception text or full responses, which may contain PII.
   The pinned `GovukNotify` client owns email authentication, serialization and
