@@ -1,8 +1,9 @@
 namespace Defra.WasteObligations.Consumer.Delivery;
 
-public enum SuppressionClaimResult
+public enum DeliveryClaimResult
 {
-    Recorded,
+    Unavailable,
+    Claimed,
     TerminalDuplicate,
     Conflict,
     ActiveClaim,

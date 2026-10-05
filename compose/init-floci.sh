@@ -46,7 +46,7 @@ command_dead_letter_queue_arn="$(
 command_queue_url="$(
     aws sqs create-queue \
         --queue-name "$command_queue_name" \
-        --attributes FifoQueue=true,ContentBasedDeduplication=false,VisibilityTimeout=30 \
+        --attributes FifoQueue=true,ContentBasedDeduplication=false,VisibilityTimeout=120 \
         --query QueueUrl \
         --output text
 )"

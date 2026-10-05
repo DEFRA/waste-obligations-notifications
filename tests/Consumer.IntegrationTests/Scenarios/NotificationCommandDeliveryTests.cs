@@ -32,20 +32,32 @@ public sealed class NotificationCommandDeliveryTests : IntegrationTestBase
         var records = mongoClient
             .GetDatabase("waste-obligations-notifications")
             .GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        var filter = NotificationKeyFilter(IdempotencyKey);
 
         await WaitForAsync(async () =>
         {
-            var record = await records
-                .Find(new BsonDocument())
-                .FirstOrDefaultAsync(TestContext.Current.CancellationToken);
+            var record = await records.Find(filter).FirstOrDefaultAsync(TestContext.Current.CancellationToken);
 
             Assert.NotNull(record);
         });
 
-        var storedRecord = await records.Find(new BsonDocument()).FirstAsync(TestContext.Current.CancellationToken);
+        var storedRecord = await records.Find(filter).SingleAsync(TestContext.Current.CancellationToken);
         var storedJson = storedRecord.ToJson();
 
         Assert.Equal("delivery-suppressed", storedRecord["outcome"].AsString);
+        Assert.Equal(
+            [
+                "_id",
+                "actionOccurredAtUtc",
+                "immutableFields",
+                "notificationKey",
+                "notificationType",
+                "outcome",
+                "recipient",
+                "recordedAtUtc",
+            ],
+            storedRecord.Names.Order(StringComparer.Ordinal)
+        );
         Assert.DoesNotContain(EmailAddress, storedJson, StringComparison.Ordinal);
         Assert.DoesNotContain(IdempotencyKey, storedJson, StringComparison.Ordinal);
         Assert.DoesNotContain(Personalisation, storedJson, StringComparison.Ordinal);
@@ -110,7 +122,7 @@ public sealed class NotificationCommandDeliveryTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task WhenPreCutoverCommandConflicts_ShouldRedriveMessageAndKeepOriginalRecord()
+    public async Task WhenPreCutoverCommandConflicts_ShouldRetainMessageAndKeepOriginalRecord()
     {
         using var sqsClient = CreateSqsClient();
         using var mongoClient = CreateMongoClient();
@@ -126,48 +138,34 @@ public sealed class NotificationCommandDeliveryTests : IntegrationTestBase
             "conflicting-command-lane"
         );
         var originalRecord = await WaitForRecord(records, filter);
-        await sqsClient.SetQueueAttributesAsync(
-            new SetQueueAttributesRequest
-            {
-                QueueUrl = CommandQueueUrl,
-                Attributes = new Dictionary<string, string> { ["VisibilityTimeout"] = "1" },
-            },
-            TestContext.Current.CancellationToken
-        );
-
         try
         {
             var conflictingBody = CommandBody(ConflictingIdempotencyKey, "template-2");
             await SendCommand(sqsClient, conflictingBody, "conflicting-command-second", "conflicting-command-lane");
-
             await WaitForAsync(async () =>
             {
-                var response = await sqsClient.ReceiveMessageAsync(
-                    new ReceiveMessageRequest { QueueUrl = CommandDeadLetterQueueUrl, WaitTimeSeconds = 0 },
+                var attributes = await sqsClient.GetQueueAttributesAsync(
+                    new GetQueueAttributesRequest
+                    {
+                        QueueUrl = CommandQueueUrl,
+                        AttributeNames = ["ApproximateNumberOfMessagesNotVisible"],
+                    },
                     TestContext.Current.CancellationToken
                 );
-
-                var message = Assert.Single(response.Messages ?? []);
-                Assert.Equal(conflictingBody, message.Body);
+                Assert.Equal("1", attributes.Attributes["ApproximateNumberOfMessagesNotVisible"]);
             });
+
+            var storedRecords = await records.Find(filter).ToListAsync(TestContext.Current.CancellationToken);
+            var storedRecord = Assert.Single(storedRecords);
+
+            Assert.Equal(originalRecord["_id"].AsObjectId, storedRecord["_id"].AsObjectId);
+            Assert.Equal(originalRecord["immutableFields"].AsString, storedRecord["immutableFields"].AsString);
         }
         finally
         {
-            await sqsClient.SetQueueAttributesAsync(
-                new SetQueueAttributesRequest
-                {
-                    QueueUrl = CommandQueueUrl,
-                    Attributes = new Dictionary<string, string> { ["VisibilityTimeout"] = "30" },
-                },
-                TestContext.Current.CancellationToken
-            );
+            // This queue belongs to local Compose and tests run serially; remove the deliberately retained conflict.
+            await sqsClient.PurgeQueueAsync(CommandQueueUrl, CancellationToken.None);
         }
-
-        var storedRecords = await records.Find(filter).ToListAsync(TestContext.Current.CancellationToken);
-        var storedRecord = Assert.Single(storedRecords);
-
-        Assert.Equal(originalRecord["_id"].AsObjectId, storedRecord["_id"].AsObjectId);
-        Assert.Equal(originalRecord["immutableFields"].AsString, storedRecord["immutableFields"].AsString);
     }
 
     private static async Task SendCommand(

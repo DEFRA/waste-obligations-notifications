@@ -42,9 +42,12 @@ public class ConsumerWebApplicationFactory : WebApplicationFactory<Program>
             configuration.AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
+                    ["AWS_EMF_ENABLED"] = "false",
                     ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
+                    ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
+                    ["Notify:BaseAddress"] = "http://notify.local",
                     ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                     ["Mongo:DatabaseName"] = "startup-test",
                 }

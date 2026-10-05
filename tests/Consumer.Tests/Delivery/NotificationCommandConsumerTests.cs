@@ -1,6 +1,4 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -9,6 +7,7 @@ using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -18,13 +17,18 @@ using NSubstitute.Core;
 
 namespace Defra.WasteObligations.Consumer.Tests.Delivery;
 
-public class NotificationCommandConsumerTests
+public sealed class NotificationCommandConsumerTests : IDisposable
 {
     private const string CommandIdempotencyKey = "command-key-1";
     private const string EmailAddress = "recipient@example.com";
     private const string Personalisation = "secret personalisation";
     private const string QueueUrl = "http://localhost:4566/000000000000/commands.fifo";
     private const string ReceiptHandle = "receipt-handle-1";
+    private readonly ServiceProvider _metricServices = new ServiceCollection()
+        .AddNotificationCommandMetrics()
+        .BuildServiceProvider();
+
+    public void Dispose() => _metricServices.Dispose();
 
     [Theory]
     [InlineData("2026-09-28T10:00:00")]
@@ -42,6 +46,11 @@ public class NotificationCommandConsumerTests
         await subject.StartAsync(TestContext.Current.CancellationToken);
         await logger.WaitForMessage("Notification command consumption failed", TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("invalid-command (JsonException)", StringComparison.Ordinal)
+        );
 
         await recordStore
             .DidNotReceive()
@@ -83,16 +92,34 @@ public class NotificationCommandConsumerTests
             .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
             .Returns(new DeleteMessageResponse())
             .AndDoes(_ => deleted.TrySetResult());
-        using var subject = CreateSubject(sqsClient, recordStore, logger, cutover: cutover);
+        var notify = Substitute.For<INotifyEmailClient>();
+        notify
+            .Send(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new NotifyAcceptance("01234567-89ab-cdef-0123-456789abcdef", "reference", "template-1", 1));
+        recordStore
+            .Claim(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(DeliveryClaimResult.Claimed);
+        recordStore
+            .RecordAcceptance(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<NotifyAcceptance>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(true);
+        using var subject = CreateSubject(sqsClient, recordStore, logger, cutover: cutover, notify: notify);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
-        if (suppressed)
-            await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        else
-            await logger.WaitForMessage(
-                "Notification command consumption failed",
-                TestContext.Current.CancellationToken
-            );
+        await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
         await recordStore
@@ -101,9 +128,14 @@ public class NotificationCommandConsumerTests
                 Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
                 Arg.Any<CancellationToken>()
             );
-        await sqsClient
-            .Received(suppressed ? 1 : 0)
-            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+        await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+        await notify
+            .Received(suppressed ? 0 : 1)
+            .Send(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            );
     }
 
     [Theory]
@@ -307,7 +339,10 @@ public class NotificationCommandConsumerTests
 
         Assert.Single(logger.Messages);
         Assert.Empty(logger.Exceptions);
-        Assert.Contains("processing-timeout (TimeoutException)", Assert.Single(logger.Messages));
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("queue-error (TimeoutException)", StringComparison.Ordinal)
+        );
     }
 
     private static async Task<ReceiveMessageResponse> WaitForReceiveCancellation(CancellationToken cancellationToken)
@@ -395,157 +430,6 @@ public class NotificationCommandConsumerTests
             logger.Messages,
             message => message.Contains(CommandIdempotencyKey, StringComparison.Ordinal)
         );
-    }
-
-    [Theory]
-    [InlineData("synthetic-type@example.com", "other")]
-    [InlineData("declaration-submitted", "declaration-submitted")]
-    public async Task Start_WhenNotificationTypeIsReceived_ShouldEmitOnlyConfiguredDiagnosticLabels(
-        string notificationType,
-        string expectedLabel
-    )
-    {
-        var tags = new ConcurrentBag<string>();
-        using var listener = new MeterListener();
-        listener.InstrumentPublished = (instrument, meterListener) =>
-        {
-            if (instrument.Meter.Name == "Defra.WasteObligations.Notifications.Commands")
-                meterListener.EnableMeasurementEvents(instrument);
-        };
-        listener.SetMeasurementEventCallback<long>(
-            (_, _, measurements, _) =>
-            {
-                foreach (var tag in measurements)
-                    if (tag.Key == "notification.type")
-                        tags.Add(tag.Value?.ToString() ?? "");
-            }
-        );
-        listener.Start();
-        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var sqsClient = Substitute.For<IAmazonSQS>();
-        sqsClient
-            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
-            .Returns(
-                MessageThenWait(
-                    CreateMessage(
-                        CommandBody("2026-09-28T10:00:00Z")
-                            .Replace("declaration-submitted", notificationType, StringComparison.Ordinal)
-                    )
-                )
-            );
-        sqsClient
-            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
-            .Returns(new DeleteMessageResponse())
-            .AndDoes(_ => deleted.TrySetResult());
-        var logger = new RecordingLogger<NotificationCommandConsumer>();
-        using var subject = CreateSubject(
-            sqsClient,
-            Substitute.For<INotificationDeliveryRecordStore>(),
-            logger,
-            diagnosticTypes: ["declaration-submitted"]
-        );
-
-        await subject.StartAsync(TestContext.Current.CancellationToken);
-        await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        await subject.StopAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(2, tags.Count);
-        Assert.All(tags, label => Assert.Equal(expectedLabel, label));
-        if (expectedLabel == "other")
-            Assert.DoesNotContain(
-                logger.Messages,
-                message => message.Contains(notificationType, StringComparison.Ordinal)
-            );
-        Assert.Contains(logger.Messages, message => message.Contains($"for {expectedLabel}", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task Start_WhenStoreFailureContainsPrivateData_ShouldLogSafeCauseWithoutDeleting()
-    {
-        var sqsClient = Substitute.For<IAmazonSQS>();
-        sqsClient
-            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
-            .Returns(MessageThenWait(CreateMessage(CommandBody("2026-09-28T10:00:00Z"))));
-        var store = Substitute.For<INotificationDeliveryRecordStore>();
-        store
-            .RecordSuppression(
-                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
-                Arg.Any<CancellationToken>()
-            )
-            .Returns(
-                Task.FromException<SuppressionClaimResult>(
-                    new InvalidOperationException(EmailAddress + Personalisation)
-                )
-            );
-        var logger = new RecordingLogger<NotificationCommandConsumer>();
-        using var subject = CreateSubject(sqsClient, store, logger);
-
-        await subject.StartAsync(TestContext.Current.CancellationToken);
-        await logger.WaitForMessage("Notification command consumption failed", TestContext.Current.CancellationToken);
-        await subject.StopAsync(TestContext.Current.CancellationToken);
-
-        Assert.Empty(logger.Exceptions);
-        Assert.Contains("store-error (InvalidOperationException)", Assert.Single(logger.Messages));
-        Assert.DoesNotContain(
-            logger.Messages,
-            message =>
-                message.Contains(EmailAddress, StringComparison.Ordinal)
-                || message.Contains(Personalisation, StringComparison.Ordinal)
-        );
-        await sqsClient
-            .DidNotReceive()
-            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task Stop_WhenDependencyThrowsPrivateFailureAfterCancellation_ShouldNotExposeItThroughHostLogging()
-    {
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var sqsClient = Substitute.For<IAmazonSQS>();
-        sqsClient
-            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
-            .Returns(MessageThenWait(CreateMessage(CommandBody("2026-09-28T10:00:00Z"))));
-        var store = Substitute.For<INotificationDeliveryRecordStore>();
-        store
-            .RecordSuppression(
-                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
-                Arg.Any<CancellationToken>()
-            )
-            .Returns(FailAfterCancellation);
-
-        async Task<SuppressionClaimResult> FailAfterCancellation(CallInfo call)
-        {
-            using var registration = call.Arg<CancellationToken>().Register(() => cancelled.TrySetResult());
-            entered.TrySetResult();
-            await cancelled.Task;
-            throw new InvalidOperationException(EmailAddress + Personalisation);
-        }
-        var logger = new RecordingLogger<NotificationCommandConsumer>();
-        var subject = CreateSubject(sqsClient, store, logger);
-        var builder = Host.CreateApplicationBuilder();
-        builder.Logging.ClearProviders().AddProvider(new RecordingLoggerProvider(logger));
-        builder.Services.AddHostedService(_ => subject);
-        using var host = builder.Build();
-
-        await host.StartAsync(TestContext.Current.CancellationToken);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        await host.StopAsync(TestContext.Current.CancellationToken);
-
-        await subject
-            .ExecuteTask!.ContinueWith(_ => { }, CancellationToken.None)
-            .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        Assert.False(subject.ExecuteTask.IsFaulted);
-        Assert.Empty(logger.Exceptions);
-        Assert.DoesNotContain(
-            logger.Messages,
-            message =>
-                message.Contains(EmailAddress, StringComparison.Ordinal)
-                || message.Contains(Personalisation, StringComparison.Ordinal)
-        );
-        await sqsClient
-            .DidNotReceive()
-            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -674,7 +558,7 @@ public class NotificationCommandConsumerTests
     }
 
     [Fact]
-    public async Task Start_WhenCommandIsAtOrAfterCutover_ShouldNotDeleteMessage()
+    public async Task Start_WhenPostCutoverCommandCannotAcquireAClaim_ShouldNotDeleteMessage()
     {
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
@@ -692,7 +576,58 @@ public class NotificationCommandConsumerTests
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
-    private static NotificationCommandConsumer CreateSubject(
+    [Fact]
+    public async Task Stop_WhenDependencyThrowsPrivateFailureAfterCancellation_ShouldNotExposeItThroughHostLogging()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(MessageThenWait(CreateMessage(CommandBody("2026-09-28T10:00:00Z"))));
+        var store = Substitute.For<INotificationDeliveryRecordStore>();
+        store
+            .RecordSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(FailAfterCancellation);
+
+        async Task<SuppressionClaimResult> FailAfterCancellation(CallInfo call)
+        {
+            using var registration = call.Arg<CancellationToken>().Register(() => cancelled.TrySetResult());
+            entered.TrySetResult();
+            await cancelled.Task;
+            throw new InvalidOperationException(EmailAddress + Personalisation);
+        }
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        var subject = CreateSubject(sqsClient, store, logger);
+        var builder = Host.CreateApplicationBuilder();
+        builder.Logging.ClearProviders().AddProvider(new RecordingLoggerProvider(logger));
+        builder.Services.AddHostedService(_ => subject);
+        using var host = builder.Build();
+
+        await host.StartAsync(TestContext.Current.CancellationToken);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await host.StopAsync(TestContext.Current.CancellationToken);
+
+        await subject
+            .ExecuteTask!.ContinueWith(_ => { }, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.False(subject.ExecuteTask.IsFaulted);
+        Assert.Empty(logger.Exceptions);
+        Assert.DoesNotContain(
+            logger.Messages,
+            message =>
+                message.Contains(EmailAddress, StringComparison.Ordinal)
+                || message.Contains(Personalisation, StringComparison.Ordinal)
+        );
+        await sqsClient
+            .DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    private NotificationCommandConsumer CreateSubject(
         IAmazonSQS sqsClient,
         INotificationDeliveryRecordStore recordStore,
         ILogger<NotificationCommandConsumer>? logger = null,
@@ -700,7 +635,7 @@ public class NotificationCommandConsumerTests
         int pollIntervalSeconds = 1,
         int receiveTimeoutSeconds = 30,
         string? cutover = "2026-09-29T00:00:00Z",
-        string[]? diagnosticTypes = null
+        INotifyEmailClient? notify = null
     ) =>
         new(
             sqsClient,
@@ -714,13 +649,24 @@ public class NotificationCommandConsumerTests
                     WaitTimeSeconds = 0,
                     PollIntervalSeconds = pollIntervalSeconds,
                     ReceiveTimeoutSeconds = receiveTimeoutSeconds,
-                    DiagnosticNotificationTypes = diagnosticTypes ?? [],
                 }
             ),
             CreateRecordStoreFactory(recordStore),
             readiness ?? CompletedReadiness(),
-            new NotificationCommandMetrics(),
-            logger ?? new RecordingLogger<NotificationCommandConsumer>()
+            _metricServices.GetRequiredService<INotificationCommandMetrics>(),
+            logger ?? new RecordingLogger<NotificationCommandConsumer>(),
+            notify ?? Substitute.For<INotifyEmailClient>(),
+            new NotificationCommandDigest(
+                Options.Create(
+                    new NotificationCommandDeliveryOptions
+                    {
+                        QueueUrl = QueueUrl,
+                        EmailDeliveryCutoverUtc = cutover,
+                        EvidenceDigestSecret = "test-evidence-secret",
+                        RecipientLaneSecret = "test-lane-secret",
+                    }
+                )
+            )
         );
 
     private static ApplicationStartup CompletedReadiness()
@@ -807,56 +753,6 @@ public class NotificationCommandConsumerTests
         return Convert.ToBase64String(output.ToArray());
     }
 
-    [Theory]
-    [InlineData(null, false)]
-    [InlineData(SuppressionClaimResult.Conflict, false)]
-    [InlineData(SuppressionClaimResult.TerminalDuplicate, true)]
-    public async Task Start_WhenPostCutoverCommandHasSuppressionEvidence_ShouldDeleteOnlyMatchingTerminalDuplicate(
-        SuppressionClaimResult? existing,
-        bool deleted
-    )
-    {
-        var sqs = Substitute.For<IAmazonSQS>();
-        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
-            .Returns(MessageThenWait(CreateMessage(CommandBody("2101-01-01T00:00:00Z"))));
-        var deletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        sqs.DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
-            .Returns(new DeleteMessageResponse())
-            .AndDoes(_ => deletion.TrySetResult());
-        var store = Substitute.For<INotificationDeliveryRecordStore>();
-        store
-            .GetSuppression(
-                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
-                Arg.Any<CancellationToken>()
-            )
-            .Returns(existing);
-        var logger = new RecordingLogger<NotificationCommandConsumer>();
-        using var subject = CreateSubject(sqs, store, logger, cutover: "2100-01-01T00:00:00Z");
-        try
-        {
-            await subject.StartAsync(TestContext.Current.CancellationToken);
-            if (deleted)
-                await deletion.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-            else
-                await logger.WaitForMessage(
-                    "Notification command consumption failed",
-                    TestContext.Current.CancellationToken
-                );
-        }
-        finally
-        {
-            await subject.StopAsync(TestContext.Current.CancellationToken);
-        }
-
-        await store
-            .DidNotReceive()
-            .RecordSuppression(
-                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
-                Arg.Any<CancellationToken>()
-            );
-        await sqs.Received(deleted ? 1 : 0).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
-    }
-
     private sealed class RecordingLoggerProvider(ILogger logger) : ILoggerProvider
     {
         public ILogger CreateLogger(string categoryName) => logger;
@@ -899,7 +795,7 @@ public class NotificationCommandConsumerTests
             {
                 lock (_messages)
                 {
-                    if (_messages.Any(message => message.Contains(expected, StringComparison.Ordinal)))
+                    if (_messages.Any(message => message.StartsWith(expected, StringComparison.Ordinal)))
                     {
                         return;
                     }

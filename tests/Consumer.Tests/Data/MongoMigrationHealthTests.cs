@@ -103,6 +103,8 @@ public sealed class MongoMigrationHealthTests
                 ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
                 ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                 ["Mongo:DatabaseName"] = "health-test",
+                ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
+                ["AWS_EMF_ENABLED"] = "false",
             }
         );
         builder.Services.AddAnalyticsEventConsumer(builder.Configuration);
