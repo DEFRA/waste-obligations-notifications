@@ -8,6 +8,32 @@ namespace Defra.WasteObligations.Consumer.Tests.Delivery;
 
 public sealed class ServiceCollectionExtensionsTests
 {
+    [Fact]
+    public void WhenNotifyClientIsRetained_ShouldRenewConnectionsWithoutFollowingRedirects()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
+                    ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
+                }
+            )
+            .Build();
+        var services = new ServiceCollection();
+        services.AddNotificationCommandDelivery(configuration);
+        using var provider = services.BuildServiceProvider();
+        var handler = provider
+            .GetRequiredService<IHttpMessageHandlerFactory>()
+            .CreateHandler(nameof(INotifyEmailClient));
+        while (handler is DelegatingHandler delegatingHandler)
+            handler = delegatingHandler.InnerHandler!;
+
+        var socketsHandler = Assert.IsType<SocketsHttpHandler>(handler);
+        Assert.Equal(TimeSpan.FromMinutes(2), socketsHandler.PooledConnectionLifetime);
+        Assert.False(socketsHandler.AllowAutoRedirect);
+    }
+
     [Theory]
     [InlineData(20, 30, true)]
     [InlineData(20, 20, false)]

@@ -82,7 +82,14 @@ public static class ServiceCollectionExtensions
                     client.Timeout = Timeout.InfiniteTimeSpan;
                 }
             )
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+            .ConfigurePrimaryHttpMessageHandler(() =>
+                new SocketsHttpHandler
+                {
+                    AllowAutoRedirect = false,
+                    // The hosted consumer retains this client, so recycle connections to refresh DNS.
+                    PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+                }
+            )
             .RemoveAllLoggers();
 
         services.AddAWSService<IAmazonSQS>();
