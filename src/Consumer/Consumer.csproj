@@ -9,9 +9,9 @@
   <ItemGroup>
     <PackageReference Include="AdaskoTheBeAsT.MongoDbMigrations" Version="3.0.0" />
     <PackageReference Include="Amazon.CloudWatch.EMF" Version="2.2.0" />
-    <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="4.0.101.4" />
-    <PackageReference Include="AWSSDK.SecurityToken" Version="4.0.101" />
-    <PackageReference Include="AWSSDK.SQS" Version="4.0.100.14" />
+    <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="4.0.102.1" />
+    <PackageReference Include="AWSSDK.SecurityToken" Version="4.0.101.1" />
+    <PackageReference Include="AWSSDK.SQS" Version="4.0.100.15" />
     <PackageReference Include="Elastic.CommonSchema.Serilog" Version="9.0.0" />
     <PackageReference Include="Elastic.Serilog.Enrichers.Web" Version="9.0.0" />
     <PackageReference Include="GovukNotify" Version="8.1.0" />
