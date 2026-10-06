@@ -17,6 +17,135 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
 {
     [Fact]
+    public async Task WhenInspectingDeliveryEvidence_ShouldClassifyRealStateWithoutChangingRecordsOrProjectingNotifyDetails()
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_inspect_state_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var readiness = new MongoMigrationCompletion();
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var token = TestContext.Current.CancellationToken;
+        var digest = new NotificationCommandDigest(
+            Options.Create(
+                new NotificationCommandDeliveryOptions
+                {
+                    QueueUrl = "local",
+                    EmailDeliveryCutoverUtc = "2026-10-01T00:00:00Z",
+                    EvidenceDigestSecret = "test-inspection-evidence",
+                    RecipientLaneSecret = "test-inspection-lane",
+                }
+            )
+        );
+        var store = new MongoNotificationDeliveryRecordStore(
+            client,
+            Options.Create(
+                new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = databaseName }
+            ),
+            digest
+        );
+        var command = new NotificationCommand(
+            1,
+            "private-inspection-key",
+            new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero),
+            "submitted",
+            "private-recipient@example.com",
+            "private-template",
+            JsonSerializer.SerializeToElement(new { body = "private-body" })
+        );
+        var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        var filter = new BsonDocument("notificationKey", digest.CreateIdempotencyKeyDigest(command.IdempotencyKey));
+        try
+        {
+            await new MongoMigrationRunner(database, loggerFactory.CreateLogger<MongoMigrationRunner>(), readiness).Run(
+                token
+            );
+            Assert.Equal(new NotificationDeliveryState("unrecorded", null, null), await store.Inspect(command, token));
+            Assert.Equal(
+                SuppressionClaimResult.Recorded,
+                await store.RecordSuppression(command with { IdempotencyKey = "suppressed-inspection-key" }, token)
+            );
+            Assert.Equal(
+                "delivery-suppressed",
+                (
+                    await store.Inspect(command with { IdempotencyKey = "suppressed-inspection-key" }, token)
+                ).Classification
+            );
+            Assert.Equal(DeliveryClaimResult.Claimed, await store.Claim(command, "inspection-owner", 120, token));
+            var activeRecord = await records.Find(filter).SingleAsync(token);
+            var active = await store.Inspect(command, token);
+            Assert.Equal("active-claim", active.Classification);
+            Assert.Equal(new DateTimeOffset(activeRecord["recordedAtUtc"].ToUniversalTime()), active.RecordedAtUtc);
+            Assert.Equal(
+                new DateTimeOffset(activeRecord["leaseExpiresAtUtc"].ToUniversalTime()),
+                active.LeaseExpiresAtUtc
+            );
+            Assert.Equal(activeRecord, await records.Find(filter).SingleAsync(token));
+            Assert.Equal(
+                "immutable-conflict",
+                (await store.Inspect(command with { TemplateId = "changed-private-template" }, token)).Classification
+            );
+            await records.UpdateOneAsync(
+                filter,
+                new BsonDocument("$set", new BsonDocument("leaseExpiresAtUtc", DateTime.UnixEpoch)),
+                cancellationToken: token
+            );
+            Assert.Equal("expired-claim", (await store.Inspect(command, token)).Classification);
+            Assert.Equal(DeliveryClaimResult.Claimed, await store.Claim(command, "new-inspection-owner", 120, token));
+            Assert.True(
+                await store.RecordAcceptance(
+                    command,
+                    "new-inspection-owner",
+                    new NotifyAcceptance(
+                        "11111111-1111-1111-1111-111111111111",
+                        digest.CreateNotifyReference(command.IdempotencyKey),
+                        command.TemplateId,
+                        3
+                    ),
+                    token
+                )
+            );
+            var acceptedRecord = await records.Find(filter).SingleAsync(token);
+            var accepted = await store.Inspect(command, token);
+            Assert.Equal("delivery-accepted", accepted.Classification);
+            Assert.Equal(new DateTimeOffset(acceptedRecord["recordedAtUtc"].ToUniversalTime()), accepted.RecordedAtUtc);
+            Assert.Null(accepted.LeaseExpiresAtUtc);
+            Assert.Equal(acceptedRecord, await records.Find(filter).SingleAsync(token));
+            const string privateOutcome = "private-outcome-recipient@example.com";
+            await records.UpdateOneAsync(
+                filter,
+                new BsonDocument("$set", new BsonDocument("outcome", privateOutcome)),
+                cancellationToken: token
+            );
+            var unknownRecord = await records.Find(filter).SingleAsync(token);
+            var unknown = await store.Inspect(command, token);
+            Assert.Equal("unknown-delivery-state", unknown.Classification);
+            Assert.Equal(new DateTimeOffset(unknownRecord["recordedAtUtc"].ToUniversalTime()), unknown.RecordedAtUtc);
+            Assert.Null(unknown.LeaseExpiresAtUtc);
+            Assert.Equal(unknownRecord, await records.Find(filter).SingleAsync(token));
+            foreach (
+                var value in new[]
+                {
+                    privateOutcome,
+                    command.IdempotencyKey,
+                    command.EmailAddress,
+                    command.TemplateId,
+                    "private-body",
+                    "11111111-1111-1111-1111-111111111111",
+                }
+            )
+            {
+                Assert.DoesNotContain(value, JsonSerializer.Serialize(accepted), StringComparison.Ordinal);
+                Assert.DoesNotContain(value, JsonSerializer.Serialize(unknown), StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await client.DropDatabaseAsync(databaseName, cleanup.Token);
+        }
+    }
+
+    [Fact]
     public async Task WhenSuppressionIsRetried_ShouldPreserveBaselineCompatibleEvidenceAndRejectConflicts()
     {
         var databaseName = $"notifications_store_test_{Guid.NewGuid():N}";

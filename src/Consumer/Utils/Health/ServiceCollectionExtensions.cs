@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using Amazon.SQS;
+using Defra.WasteObligations.Consumer.Administration;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
@@ -61,6 +62,18 @@ public static class ServiceCollectionExtensions
                     serviceProvider => new MongoHealthCheck(
                         serviceProvider.GetRequiredService<MongoDB.Driver.IMongoClient>(),
                         serviceProvider.GetRequiredService<IOptions<MongoDbOptions>>().Value.DatabaseName
+                    ),
+                    HealthStatus.Unhealthy,
+                    tags: [WebApplicationExtensions.Extended],
+                    timeout: TimeSpan.FromSeconds(10)
+                )
+            )
+            .Add(
+                new HealthCheckRegistration(
+                    "NotificationCommandDeadLetterQueue",
+                    serviceProvider => new SqsHealthCheck(
+                        serviceProvider.GetRequiredService<IAmazonSQS>(),
+                        serviceProvider.GetRequiredService<IOptions<CommandDlqAdministrationOptions>>().Value.QueueUrl
                     ),
                     HealthStatus.Unhealthy,
                     tags: [WebApplicationExtensions.Extended],

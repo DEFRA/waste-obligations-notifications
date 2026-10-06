@@ -29,6 +29,7 @@ public static class ServiceCollectionExtensions
             .Validate(
                 options =>
                     options.DiagnosticNotificationTypes is not null
+                    && options.DiagnosticNotificationTypes.Length <= 32
                     && options.DiagnosticNotificationTypes.All(NotificationCommandDeliveryOptions.IsDiagnosticLabel),
                 "DiagnosticNotificationTypes must contain only bounded lowercase ASCII category labels"
             )

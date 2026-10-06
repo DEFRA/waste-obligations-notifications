@@ -1,4 +1,4 @@
-﻿{
+{
   "status": "Healthy",
   "results": {
     "EmailDeliveryCutover": {
@@ -23,6 +23,10 @@
     "NotificationDeliveryRecordStore": {
       "status": "Healthy",
       "description": "Connected to MongoDB database: waste-obligations-notifications"
+    },
+    "NotificationCommandDeadLetterQueue": {
+      "status": "Healthy",
+      "description": "Connected to AWS queue: http://localhost:4566/000000000000/waste_obligations_notifications_commands_dlq.fifo"
     },
     "Notify": {
       "status": "Healthy",

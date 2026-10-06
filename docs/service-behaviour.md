@@ -15,8 +15,8 @@ records pre-cutover commands as `delivery-suppressed` and
 sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
-cutover. Analytics does not yet create notification commands, and there is no
-administrator DLQ management surface. Redrive does not restore a command's
+cutover. Analytics does not yet create notification commands. Configured Basic or OAuth
+administrators can inspect, redrive or discard one command-DLQ message. Redrive does not restore a command's
 original recipient-lane position.
 
 ## Consumers and message handling
@@ -71,7 +71,8 @@ specified in the [producer contract](notification-command-producer-contract.md).
   dropping them. Matching completed hidden indexes satisfy the prerequisite.
   Confirm applied critical history and the latest critical schema once at
   startup. Both consumers await the first successful anonymous health response
-  through a shared hosting boundary. Stores have no completion dependency.
+  through a shared hosting boundary. Admin HTTP requests return 503 until the shared startup boundary is released.
+  Stores and administration services have no completion dependency.
   This does not detect later manual schema changes. Completion by another host can satisfy this check, including
   after the local host exhausts its migration attempts. A lease-renewal failure
   cancels the engine; only after it stops can the host release and reacquire
@@ -207,6 +208,137 @@ The command architecture is described in
 [ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the
 cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
 
+## Command-DLQ verification command
+
+`POST /admin/notification-commands/dlq/verification-command` shares the Admin ACL and startup boundary. It accepts no payload, including framed/chunked bodies. Generate a fresh prefixed key with schema 1, action time 2000-01-01 UTC, type `admin-verification`, recipient `verification@example.invalid`, an all-zero template ID and empty personalisation. Validate and normalise the command before any effect. Confirm fresh permanent suppression before publishing one FIFO message to the configured DLQ, using the key for deduplication and the canonical recipient lane. One dependency deadline covers both effects; failures expose fixed 503 details. Rejected, cancelled or late suppression never publishes. Publication failure leaves suppression evidence intact. Return only the generated key and SQS message ID after timely confirmed publication.
+
+Successful redrive is followed by ordinary consumer processing: matching terminal evidence suppresses Notify and the consumer deletes the source message without changing the record. This holds for null or earlier cutover values. Creation confirms queuing rather than completed processing. Inspection selects one next-visible message, so verify the generated identity before acting. Suppressed probes cannot be discarded; successful native discard remains separately unverified. Local replay uses the labelled controlled API adapter and does not prove native FIFO replay.
+
+## Command-DLQ inspection
+
+Administration is always registered independently of sending.
+`POST /admin/notification-commands/dlq/inspect` requires authenticated
+Basic or Bearer credentials from the Waste Obligations `Acl.Clients` shape with
+an ACL `admin` scope. Basic requires an ApiKey client and its secret; Bearer
+requires exactly one `client_id` identifying an OAuth client. Unknown clients,
+wrong client types, incorrect/malformed credentials, invalid lifetimes and
+read/write-only clients cannot reach queue or record operations. Token-provided
+scope or role claims cannot grant privileges; only configured ACL scopes apply. Validate
+all configured ACL entries, distinct command/DLQ FIFO URLs and digest secrets at
+startup. An empty ACL or one with no admin scope permits startup and denies all
+administrator calls.
+See [ADR 0004](adr/0004-command-dlq-inspection.md).
+
+Bearer follows the explicitly approved Waste Obligations gateway trust contract:
+the private CDP gateway validates Cognito signatures, issuer and audience. The
+service parses tokens and validates lifetime with the framework's default
+five-minute clock skew, but does not verify signature, issuer or audience.
+Gateway authentication must protect every administrator route. Direct backend
+callers can assert an ACL client identity; deployment-owned network controls
+must establish that trust boundary. Private routing alone does not establish
+gateway validation.
+Another CDP service reaching the backend could forge an unexpired token for a
+known OAuth administrator client ID and permanently abandon delivery. Client IDs
+are not secrets. This consequence belongs to the explicitly approved gateway-only
+contract and requires deployment-owned access controls for administrator access.
+
+Every host consumes commands and starts the same Mongo migrations, including
+with null cutover. Null permanently suppresses delivery; it does not pause consumption. Its HTTP boundary returns 503 until the first successful anonymous
+`/health` response completes, before receiving one next-visible
+FIFO DLQ message. Receive uses a fresh attempt ID, zero wait and visibility
+covering the bounded selection lifetime. Inspection changes that message's
+visibility and receive count but never deletes, publishes, abandons or overwrites
+delivery evidence. An empty queue returns no content. Failures expose fixed
+safe messages and leave the message available for later visibility-timeout retry.
+
+The response retains a valid command's exact raw idempotency key and notification
+type, even when these contain private-bearing text. This approved exception is
+limited to those two authenticated response fields. Other fields contain only
+business/SQS/evidence timestamps, receive count, recipient digest, fixed parsing
+or delivery-state classification and a signed selection token. Historical errors
+are not persisted and no placeholder failure-details field is returned. Do not expose recipient-address,
+personalisation, template, rendered-content or Notify-response fields. Malformed
+or unsupported commands expose no partially extracted command fields and no
+usable selection. Logs retain the safe diagnostic-label rules above.
+
+The shared-secret, versioned HMAC selection contains only FIFO receive-attempt
+ID, opaque SQS message ID, HMAC queue binding, absolute UTC expiry, immutable
+evidence digest and original receive visibility timeout. Format `v2` replays
+the original timeout across hosts with different local settings. Old `v1`
+selections require fresh inspection. Replay resets visibility and may leave the
+message hidden after token expiry; it never extends authorization to act.
+It contains neither raw command identity nor body/receipt
+content, works across correctly configured hosts and is not persisted. Preserve the evidence secret across hosts and deployments while evidence, selections or replayable commands exist. It also derives Notify references and redrive deduplication IDs through distinct HMAC domains. Key rotation is unsupported; changing it can invalidate selections and duplicate detection. Expiry
+is anchored before receive, is strictly within AWS's five-minute attempt window,
+and is not extended by a delayed response. Pass bounded cancellation to queue
+and storage calls and reject late confirmations. Redrive uses this selection
+contract; discard uses the same authenticated selection body.
+
+`POST /admin/notification-commands/dlq/redrive` accepts the selection token in its
+JSON body and requires the same Basic/Bearer Admin policy. Invalid or expired tokens
+return a fixed bad-request result before receiving. Replay uses the signed FIFO
+receive-attempt ID, one message and zero wait. Missing, changed or malformed
+selected commands return a fixed conflict without publishing or deleting. The
+whole operation shares one bounded dependency
+deadline capped by the selection's remaining lifetime; late confirmations cannot
+start the next effect.
+
+Publish the exact source body and message attributes, including `Content-Encoding`,
+with the canonical recipient lane. Use a versioned, domain-separated HMAC of
+source DLQ URL and SQS message ID as transport deduplication identity. It remains
+stable across hosts/retries and differs from the producer command-key identity,
+so a consumed original copy's five-minute SQS deduplication memory cannot swallow
+recovery. Keep the command idempotency key unchanged. Recovery joins current lane
+order and does not rewrite delivery evidence or apply discard restrictions;
+normal consumption still checks conflicts, active claims and terminal outcomes.
+
+Only confirmed publication permits deletion of the replayed selected receipt.
+Failed, timed-out or late publication leaves the source even if a destination
+copy exists. Failed deletion retains publication; a repeat uses the same recovery
+transport identity. Outside SQS's deduplication window, another copy remains
+subject to durable command identity. Redrive responses and logs contain fixed
+safe results, no raw command fields, receipt, selection token or dependency
+exception text. No additional HTTP retries or Notify reconciliation are added.
+
+`POST /admin/notification-commands/dlq/discard` applies the same authenticated,
+bounded replay and command verification. Invalid, expired, changed or malformed
+selections cannot create evidence or delete. Atomically record abandonment before
+selected deletion. New records retain only the original eight minimal fields;
+notification/recipient/immutable fields are keyed digests, notification type is
+the exact command type consistent with accepted/suppressed records, and timestamps/outcome record
+abandonment. The immutable digest still covers the original type and delivery
+identity. Never store raw key, recipient, personalisation or template in new
+abandonment evidence. The notification type can contain private-bearing text;
+the safe diagnostic projection still applies to logs and metrics.
+Existing abandoned records retain their stored label without backfill or history
+rewrite; their original type may no longer be recoverable.
+
+A per-key unique index and Mongo server-time pipeline permit a new record or a
+matching expired pending claim. Active claims, immutable conflicts, accepted or
+suppressed records and unknown states return conflict without changing history
+or deleting. An expired transition clears obsolete owner/lease fields and
+preserves record identity; matching abandonment allows idempotent removal.
+Claim recovery and acceptance cannot win the same atomic transition as
+abandonment. Future consumer duplicates are acknowledged without Notify.
+
+The entire discard operation shares its dependency timeout, capped by selection
+expiry. Failed or late abandonment confirmation leaves the source even if the
+write completed. Failed deletion retains durable abandonment, allowing a repeat
+on another host. Abandonment prevents future attempts and does not establish
+whether an earlier indeterminate Notify request succeeded. Responses/logs remain
+fixed and safe; the raw inspection identity exception does not extend to discard
+responses. Only notification type is stored raw, matching other delivery outcomes.
+
+Floci lacks native receive-attempt replay. Local tests explicitly supply that
+one API behavior with a test-only adapter while real FIFO queues verify
+publication, deduplication, deletion and isolation, and real Mongo verifies
+readiness and unchanged evidence. Native AWS replay remains a deployment
+validation requirement.
+
+Command queue/DLQ/Mongo and Notify extended health run on every host, including
+with null cutover. Critical migrations gate `/health`; both consumers and
+administration start after its first successful anonymous response completes.
+
 ## Deployment ownership
 
 - The analytics queue must be a separate SNS subscription from the producer
@@ -217,6 +349,9 @@ cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
   deployment-owned. Local Compose settings do not configure CDP environments.
   Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
   Fluent-host endpoint derivation is malformed.
+- Administration DLQ URL, selection/timeout settings, Basic/OAuth client
+  credentials/scopes and operator routing are deployment-owned. Compose defaults
+  do not configure CDP access.
 
 ## Behaviour verification
 
@@ -231,7 +366,10 @@ logged as required by the analytics contract above.
 The default cutover is null. Consumption suppresses all valid commands
 without a Notify send while Waste Obligations retains direct delivery. Suppression
 must be durable before deletion; malformed commands, conflicts and persistence
-failures retain the message. Existing suppressed evidence is terminal when a
+failures retain the message. Administration cannot clear malformed commands or
+immutable conflicts; configured queue retention or deployment-owned controlled
+removal is required. This service supplies no verified removal tool for those
+messages. Existing suppressed evidence is terminal when a
 future cutover is configured. A non-null cutover requires explicit UTC and the
 same millisecond precision as command identity. Other configuration requirements
 remain in force.
