@@ -14,7 +14,7 @@
     <PackageReference Include="AWSSDK.SQS" Version="4.0.100.14" />
     <PackageReference Include="Elastic.CommonSchema.Serilog" Version="9.0.0" />
     <PackageReference Include="Elastic.Serilog.Enrichers.Web" Version="9.0.0" />
-    <PackageReference Include="GovukNotify" Version="8.1.0" />
+    <PackageReference Include="GovukNotify" Version="8.2.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
     <PackageReference Include="Microsoft.AspNetCore.HeaderPropagation" Version="10.0.12" />
     <PackageReference Include="MongoDB.Driver.Authentication.AWS" Version="3.9.0" />
