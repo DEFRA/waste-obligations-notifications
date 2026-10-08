@@ -844,11 +844,10 @@ public sealed class CommandDlqRedriveTests
         );
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(
-            new[] { "unavailable", "redriven" },
-            body.RootElement.GetProperty("messages")
-                .EnumerateArray()
-                .Select(entry => entry.GetProperty("outcome").GetString())
+        Assert.Collection(
+            body.RootElement.GetProperty("messages").EnumerateArray(),
+            entry => Assert.Equal("unavailable", entry.GetProperty("outcome").GetString()),
+            entry => Assert.Equal("redriven", entry.GetProperty("outcome").GetString())
         );
         var deleted = factory
             .Sqs.ReceivedCalls()
