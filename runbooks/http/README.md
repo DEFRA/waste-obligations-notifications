@@ -4,6 +4,12 @@ Use Rider's HTTP Client or the
 [httpYac extension for VS Code](https://marketplace.visualstudio.com/items?itemName=anweber.vscode-httpyac)
 on Windows, macOS or Linux. These files stay outside the .NET solution.
 
+For local Compose, run `docker compose up --build -d --wait` and select `docker`.
+It uses `http://localhost:8085` and the local Basic-auth client; no private settings
+or OAuth token endpoint are needed.
+
+For deployed environments:
+
 1. Copy `http-client.private.env.json.example` to `http-client.private.env.json`
    beside the requests. Git ignores the copy.
 2. Fill in the host, token URL, client ID and client secret for your environment.

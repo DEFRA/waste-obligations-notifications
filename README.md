@@ -68,7 +68,8 @@ configured receive attempts are exhausted.
 ## HTTP requests
 
 Run [health and command-DLQ requests](runbooks/http/README.md) in Rider or VS Code
-with private settings per environment.
+with private settings per deployed environment. Select `docker` to use the local
+Compose service and its development Basic-auth client.
 
 ## Prerequisites
 

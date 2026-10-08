@@ -1,17 +1,17 @@
 ### Check approximate DLQ counts and latest redrive task
 # @no-log
 GET {{host}}/admin/notification-commands/dlq/status
-Authorization: Bearer {{$auth.token("service")}}
+Authorization: {{authorization}}
 
 ### Create a verification command
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/verification-command
-Authorization: Bearer {{$auth.token("service")}}
+Authorization: {{authorization}}
 
 ### Inspect and select up to ten commands
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/inspect
-Authorization: Bearer {{$auth.token("service")}}
+Authorization: {{authorization}}
 
 > {%
 var messages = (response.body && response.body.messages) || [];
@@ -23,7 +23,7 @@ client.global.set("selectionToken", tokens[0] || "");
 ### Redrive the inspected commands
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/redrive
-Authorization: Bearer {{$auth.token("service")}}
+Authorization: {{authorization}}
 Content-Type: application/json
 
 {
@@ -33,12 +33,12 @@ Content-Type: application/json
 ### Redrive the entire DLQ using AWS
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/redrive-all
-Authorization: Bearer {{$auth.token("service")}}
+Authorization: {{authorization}}
 
 ### Discard the first selected command
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/discard
-Authorization: Bearer {{$auth.token("service")}}
+Authorization: {{authorization}}
 Content-Type: application/json
 
 {

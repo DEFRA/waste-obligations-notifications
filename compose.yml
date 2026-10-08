@@ -81,6 +81,9 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://+:8085
       AWS_ENDPOINT_URL: http://floci:4566
+      Acl__Clients__docker__Type: ApiKey
+      Acl__Clients__docker__Secret: development-only-http-runbook-secret
+      Acl__Clients__docker__Scopes__0: admin
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
       interval: 5s
