@@ -28,6 +28,8 @@ public sealed class CommandDlqInspectionTests
     private const string Identity = "private-recipient@example.com";
     private const string PrivateContent = "private-personalisation-template-notify";
     private const string Receipt = "private-receipt-handle";
+    private const string DlqArn = "arn:aws:sqs:eu-west-2:000000000000:commands-dlq.fifo";
+    private const string CommandArn = "arn:aws:sqs:eu-west-2:000000000000:commands.fifo";
 
     [Theory]
     [InlineData("missing", 401)]
@@ -65,12 +67,16 @@ public sealed class CommandDlqInspectionTests
     [InlineData("inspect")]
     [InlineData("redrive")]
     [InlineData("discard")]
+    [InlineData("redrive-all")]
+    [InlineData("status")]
     public async Task WhenAclIsEmpty_ShouldStartAndDenyEveryAdminRouteWithoutEffects(string action)
     {
         await using var factory = new InspectionApplicationFactory(emptyAcl: true);
         using var client = factory.CreateClient();
         using var request = Request("admin");
         request.RequestUri = new Uri($"/admin/notification-commands/dlq/{action}", UriKind.Relative);
+        if (action == "status")
+            request.Method = HttpMethod.Get;
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         using var health = await client.GetAsync("/health", TestContext.Current.CancellationToken);
 
@@ -129,7 +135,7 @@ public sealed class CommandDlqInspectionTests
     }
 
     [Fact]
-    public async Task WhenAdminInspectsValidPrivateBearingIdentity_ShouldReturnOnlyApprovedMetadataAndContentFreeSelection()
+    public async Task WhenAdminInspectsValidCommand_ShouldReturnEmailInputsAndContentFreeSelection()
     {
         await using var factory = new InspectionApplicationFactory();
         using var client = factory.CreateClient();
@@ -140,35 +146,53 @@ public sealed class CommandDlqInspectionTests
         using var body = JsonDocument.Parse(text);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(Identity, body.RootElement.GetProperty("idempotencyKey").GetString());
-        Assert.Equal(Identity, body.RootElement.GetProperty("notificationType").GetString());
-        Assert.Equal("unrecorded", body.RootElement.GetProperty("failureClassification").GetString());
-        Assert.False(body.RootElement.TryGetProperty("failureDetails", out _));
-        Assert.Equal(3, body.RootElement.GetProperty("receiveCount").GetInt32());
-        Assert.Equal("2026-10-01T00:00:00+00:00", body.RootElement.GetProperty("actionOccurredAtUtc").GetString());
-        Assert.Equal("2026-10-01T00:00:00+00:00", body.RootElement.GetProperty("sentAtUtc").GetString());
-        Assert.StartsWith("v1:", body.RootElement.GetProperty("recipientDigest").GetString());
+        Assert.Equal(Identity, body.RootElement.GetProperty("messages")[0].GetProperty("idempotencyKey").GetString());
+        Assert.Equal(Identity, body.RootElement.GetProperty("messages")[0].GetProperty("notificationType").GetString());
+        Assert.Equal(
+            "unrecorded",
+            body.RootElement.GetProperty("messages")[0].GetProperty("failureClassification").GetString()
+        );
+        Assert.False(body.RootElement.GetProperty("messages")[0].TryGetProperty("failureDetails", out _));
+        Assert.Equal(3, body.RootElement.GetProperty("messages")[0].GetProperty("receiveCount").GetInt32());
+        Assert.Equal(
+            "2026-10-01T00:00:00+00:00",
+            body.RootElement.GetProperty("messages")[0].GetProperty("actionOccurredAtUtc").GetString()
+        );
+        Assert.Equal(
+            "2026-10-01T00:00:00+00:00",
+            body.RootElement.GetProperty("messages")[0].GetProperty("sentAtUtc").GetString()
+        );
+        Assert.StartsWith(
+            "v1:",
+            body.RootElement.GetProperty("messages")[0].GetProperty("recipientDigest").GetString()
+        );
         Assert.Equal(
             [
                 "actionOccurredAtUtc",
+                "emailAddress",
                 "failureClassification",
                 "idempotencyKey",
                 "leaseExpiresAtUtc",
+                "messageId",
                 "notificationType",
+                "personalisation",
                 "receiveCount",
                 "recipientDigest",
                 "recordedAtUtc",
+                "schemaVersion",
                 "selectionToken",
                 "sentAtUtc",
+                "templateId",
             ],
-            body.RootElement.EnumerateObject().Select(property => property.Name).Order()
+            body.RootElement.GetProperty("messages")[0].EnumerateObject().Select(property => property.Name).Order()
         );
-        var token = body.RootElement.GetProperty("selectionToken").GetString()!;
+        var token = body.RootElement.GetProperty("messages")[0].GetProperty("selectionToken").GetString()!;
         using var payload = JsonDocument.Parse(DecodePayload(token));
         Assert.Equal(
             [
                 "expiresAtUtc",
                 "immutableFieldsDigest",
+                "maxNumberOfMessages",
                 "messageId",
                 "queueBinding",
                 "receiveRequestAttemptId",
@@ -178,18 +202,21 @@ public sealed class CommandDlqInspectionTests
         );
         Assert.Equal("opaque-message-id", payload.RootElement.GetProperty("messageId").GetString());
         AssertPrivacy(factory, payload.RootElement.GetRawText());
-        Assert.DoesNotContain(PrivateContent, text, StringComparison.Ordinal);
-        Assert.DoesNotContain(Receipt, text, StringComparison.Ordinal);
-        Assert.All(
-            body.RootElement.EnumerateObject()
-                .Where(property => property.Name is not "idempotencyKey" and not "notificationType"),
-            property => Assert.DoesNotContain(Identity, property.Value.GetRawText(), StringComparison.Ordinal)
+        Assert.Equal(Identity, body.RootElement.GetProperty("messages")[0].GetProperty("emailAddress").GetString());
+        Assert.Equal(PrivateContent, body.RootElement.GetProperty("messages")[0].GetProperty("templateId").GetString());
+        Assert.Equal(
+            PrivateContent,
+            body.RootElement.GetProperty("messages")[0]
+                .GetProperty("personalisation")
+                .GetProperty("content")
+                .GetString()
         );
+        Assert.DoesNotContain(Receipt, text, StringComparison.Ordinal);
         await factory
             .Sqs.Received(1)
             .ReceiveMessageAsync(
                 Arg.Is<ReceiveMessageRequest>(receive =>
-                    receive.MaxNumberOfMessages == 1
+                    receive.MaxNumberOfMessages == 10
                     && receive.WaitTimeSeconds == 0
                     && receive.VisibilityTimeout == 120
                     && receive.MessageSystemAttributeNames.Contains("ApproximateReceiveCount")
@@ -240,7 +267,7 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
             "invalid-or-unsupported-command",
-            body.RootElement.GetProperty("failureClassification").GetString()
+            body.RootElement.GetProperty("messages")[0].GetProperty("failureClassification").GetString()
         );
         foreach (
             var name in new[]
@@ -252,11 +279,62 @@ public sealed class CommandDlqInspectionTests
                 "recordedAtUtc",
                 "leaseExpiresAtUtc",
                 "selectionToken",
+                "emailAddress",
+                "templateId",
+                "personalisation",
+                "schemaVersion",
             }
         )
-            Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty(name).ValueKind);
+            Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("messages")[0].GetProperty(name).ValueKind);
         Assert.Empty(factory.Store.ReceivedCalls());
         AssertPrivacy(factory, text);
+    }
+
+    [Fact]
+    public async Task WhenBatchContainsMalformedCommand_ShouldSelectOnlyValidCommandsWithoutMutations()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var first = Message();
+        var invalid = Message();
+        invalid.MessageId = "malformed-message";
+        invalid.Body = "invalid-json";
+        var third = Message();
+        third.MessageId = "third-message";
+        factory
+            .Sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new ReceiveMessageResponse { HttpStatusCode = HttpStatusCode.OK, Messages = [first, invalid, third] }
+            );
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var messages = body.RootElement.GetProperty("messages");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(3, messages.GetArrayLength());
+        Assert.Equal("invalid-or-unsupported-command", messages[1].GetProperty("failureClassification").GetString());
+        Assert.Equal(JsonValueKind.Null, messages[1].GetProperty("selectionToken").ValueKind);
+        Assert.Equal(JsonValueKind.Null, messages[1].GetProperty("emailAddress").ValueKind);
+        Assert.Equal(JsonValueKind.Null, messages[1].GetProperty("personalisation").ValueKind);
+        var selections =
+            factory.Services.GetRequiredService<Defra.WasteObligations.Consumer.Administration.CommandDlqSelectionTokens>();
+        var firstSelection = selections.Validate(messages[0].GetProperty("selectionToken").GetString());
+        var thirdSelection = selections.Validate(messages[2].GetProperty("selectionToken").GetString());
+        Assert.NotNull(firstSelection);
+        Assert.NotNull(thirdSelection);
+        Assert.Equal(firstSelection.ReceiveRequestAttemptId, thirdSelection.ReceiveRequestAttemptId);
+        Assert.Equal(firstSelection.ExpiresAtUtc, thirdSelection.ExpiresAtUtc);
+        Assert.Equal(2, factory.Store.ReceivedCalls().Count());
+        Assert.All(
+            factory.Store.ReceivedCalls(),
+            call => Assert.Equal(nameof(INotificationDeliveryRecordStore.Inspect), call.GetMethodInfo().Name)
+        );
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        AssertPrivacy(factory, DecodePayload(messages[0].GetProperty("selectionToken").GetString()!));
     }
 
     [Fact]
@@ -442,13 +520,507 @@ public sealed class CommandDlqInspectionTests
             await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
         );
         using var selection = JsonDocument.Parse(
-            DecodePayload(body.RootElement.GetProperty("selectionToken").GetString()!)
+            DecodePayload(body.RootElement.GetProperty("messages")[0].GetProperty("selectionToken").GetString()!)
         );
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.True(
             selection.RootElement.GetProperty("expiresAtUtc").GetDateTimeOffset() <= receiveStarted.AddSeconds(120)
         );
+    }
+
+    [Fact]
+    public async Task WhenAdminChecksStatus_ShouldReturnApproximateCountsWithoutReceivingMessages()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(CountResponse());
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(10, body.RootElement.GetProperty("approximateVisibleMessages").GetInt64());
+        Assert.Equal(4, body.RootElement.GetProperty("approximateInFlightMessages").GetInt64());
+        Assert.Equal(2, body.RootElement.GetProperty("approximateDelayedMessages").GetInt64());
+        Assert.Equal(16, body.RootElement.GetProperty("approximateTotalMessages").GetInt64());
+        var calls = factory.Sqs.ReceivedCalls().ToArray();
+        Assert.Equal(
+            new[] { nameof(IAmazonSQS.GetQueueAttributesAsync), nameof(IAmazonSQS.ListMessageMoveTasksAsync) },
+            calls.Select(call => call.GetMethodInfo().Name)
+        );
+        var call = calls[0];
+        var attributes = Assert.IsType<GetQueueAttributesRequest>(call.GetArguments()[0]);
+        Assert.Equal("http://sqs.local/commands-dlq.fifo", attributes.QueueUrl);
+        Assert.Contains("ApproximateNumberOfMessagesNotVisible", attributes.AttributeNames);
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        AssertPrivacy(factory, body.RootElement.GetRawText());
+    }
+
+    [Theory]
+    [InlineData("missing", HttpStatusCode.Unauthorized)]
+    [InlineData("read", HttpStatusCode.Forbidden)]
+    public async Task WhenStatusCallerIsNotAdmin_ShouldDenyBeforeQueueAccess(string condition, HttpStatusCode status)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = StatusRequest(condition);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(status, response.StatusCode);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("private-invalid-count")]
+    [InlineData("-1")]
+    public async Task WhenQueueCountIsMissingOrInvalid_ShouldReturnSafeFailure(string? value)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var attributes = CountResponse();
+        if (value is null)
+            attributes.Attributes.Remove("ApproximateNumberOfMessages");
+        else
+            attributes.Attributes["ApproximateNumberOfMessages"] = value;
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(attributes);
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ status failed.", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-invalid-count", body, StringComparison.Ordinal);
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        AssertPrivacy(factory, body);
+    }
+
+    [Fact]
+    public async Task WhenStatusDependencyConfirmsAfterDeadline_ShouldRejectLateCounts()
+    {
+        await using var factory = new InspectionApplicationFactory(
+            new() { ["CommandDlqAdministration:DependencyTimeoutSeconds"] = "1" }
+        );
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async _ =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
+                return CountResponse();
+            });
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        AssertPrivacy(factory, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task WhenAdminRedrivesAll_ShouldStartAwsTaskForConfiguredQueuesWithoutReceivingContent()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        ConfigureQueueIdentities(factory);
+        factory
+            .Sqs.StartMessageMoveTaskAsync(Arg.Any<StartMessageMoveTaskRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new StartMessageMoveTaskResponse
+                {
+                    HttpStatusCode = HttpStatusCode.OK,
+                    TaskHandle = "opaque-task-handle",
+                }
+            );
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal("/admin/notification-commands/dlq/status", response.Headers.Location?.OriginalString);
+        Assert.Equal("opaque-task-handle", body.RootElement.GetProperty("taskHandle").GetString());
+        var calls = factory.Sqs.ReceivedCalls().ToArray();
+        Assert.Equal(
+            new[]
+            {
+                nameof(IAmazonSQS.GetQueueAttributesAsync),
+                nameof(IAmazonSQS.GetQueueAttributesAsync),
+                nameof(IAmazonSQS.StartMessageMoveTaskAsync),
+            },
+            calls.Select(call => call.GetMethodInfo().Name)
+        );
+        var task = Assert.IsType<StartMessageMoveTaskRequest>(calls[2].GetArguments()[0]);
+        Assert.Equal(DlqArn, task.SourceArn);
+        Assert.Equal(CommandArn, task.DestinationArn);
+        Assert.Null(task.MaxNumberOfMessagesPerSecond);
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        AssertPrivacy(factory, body.RootElement.GetRawText());
+    }
+
+    [Theory]
+    [InlineData("missing", HttpStatusCode.Unauthorized)]
+    [InlineData("read", HttpStatusCode.Forbidden)]
+    public async Task WhenWholeQueueRedriveCallerIsNotAdmin_ShouldDenyBeforeQueueAccess(
+        string condition,
+        HttpStatusCode status
+    )
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest(condition);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(status, response.StatusCode);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task WhenWholeQueueRedriveHasBody_ShouldRejectBeforeStartingTask()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+        request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData("failure")]
+    [InlineData("unconfirmed")]
+    [InlineData("same-queue")]
+    public async Task WhenWholeQueueRedriveCannotBeConfirmed_ShouldReturnSafeFailure(string condition)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        ConfigureQueueIdentities(factory, condition == "same-queue");
+        factory
+            .Sqs.StartMessageMoveTaskAsync(Arg.Any<StartMessageMoveTaskRequest>(), Arg.Any<CancellationToken>())
+            .Returns<Task<StartMessageMoveTaskResponse>>(_ =>
+                condition == "failure"
+                    ? throw new InvalidOperationException($"{Identity} {PrivateContent} {Receipt}")
+                    : Task.FromResult(new StartMessageMoveTaskResponse { HttpStatusCode = HttpStatusCode.OK })
+            );
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ whole-queue redrive failed.", text, StringComparison.Ordinal);
+        AssertPrivacy(factory, text);
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        if (condition == "same-queue")
+            Assert.Equal(2, factory.Sqs.ReceivedCalls().Count());
+    }
+
+    [Theory]
+    [InlineData("RUNNING")]
+    [InlineData("COMPLETED")]
+    [InlineData("FAILED")]
+    public async Task WhenStatusIncludesLatestTask_ShouldReturnProgressWithoutAwsFailureDetails(string status)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(CountResponse());
+        factory
+            .Sqs.ListMessageMoveTasksAsync(Arg.Any<ListMessageMoveTasksRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new ListMessageMoveTasksResponse
+                {
+                    HttpStatusCode = HttpStatusCode.OK,
+                    Results =
+                    [
+                        new ListMessageMoveTasksResultEntry
+                        {
+                            Status = status,
+                            ApproximateNumberOfMessagesMoved = 25,
+                            ApproximateNumberOfMessagesToMove = 100,
+                            FailureReason = PrivateContent,
+                            SourceArn = DlqArn,
+                            DestinationArn = CommandArn,
+                            StartedTimestamp = 1790812800000,
+                        },
+                    ],
+                }
+            );
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var task = body.RootElement.GetProperty("redriveTask");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(status, task.GetProperty("status").GetString());
+        Assert.Equal(25, task.GetProperty("approximateMessagesMoved").GetInt64());
+        Assert.Equal(100, task.GetProperty("approximateMessagesToMove").GetInt64());
+        Assert.Equal("2026-10-01T00:00:00+00:00", task.GetProperty("startedAtUtc").GetString());
+        Assert.False(task.TryGetProperty("failureReason", out _));
+        var call = factory
+            .Sqs.ReceivedCalls()
+            .Single(call => call.GetMethodInfo().Name == nameof(IAmazonSQS.ListMessageMoveTasksAsync));
+        var listing = Assert.IsType<ListMessageMoveTasksRequest>(call.GetArguments()[0]);
+        Assert.Equal(DlqArn, listing.SourceArn);
+        Assert.Equal(1, listing.MaxResults);
+        AssertPrivacy(factory, body.RootElement.GetRawText());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenWholeQueueDependencyConfirmsAfterDeadline_ShouldRejectLateEffects(bool taskStarted)
+    {
+        await using var factory = new InspectionApplicationFactory(
+            new() { ["CommandDlqAdministration:DependencyTimeoutSeconds"] = "1" }
+        );
+        ConfigureQueueIdentities(factory);
+        if (!taskStarted)
+            factory
+                .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+                .Returns(async _ =>
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
+
+                    return new GetQueueAttributesResponse
+                    {
+                        HttpStatusCode = HttpStatusCode.OK,
+                        Attributes = new() { ["QueueArn"] = DlqArn },
+                    };
+                });
+        factory
+            .Sqs.StartMessageMoveTaskAsync(Arg.Any<StartMessageMoveTaskRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async _ =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
+
+                return new StartMessageMoveTaskResponse
+                {
+                    HttpStatusCode = HttpStatusCode.OK,
+                    TaskHandle = "late-task-handle",
+                };
+            });
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.DoesNotContain("late-task-handle", text, StringComparison.Ordinal);
+        Assert.Equal(
+            taskStarted ? 1 : 0,
+            factory
+                .Sqs.ReceivedCalls()
+                .Count(call => call.GetMethodInfo().Name == nameof(IAmazonSQS.StartMessageMoveTaskAsync))
+        );
+        AssertPrivacy(factory, text);
+    }
+
+    [Fact]
+    public async Task WhenTaskListingFails_ShouldReturnSafeFailureWithoutAwsDetails()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(CountResponse());
+        factory
+            .Sqs.ListMessageMoveTasksAsync(Arg.Any<ListMessageMoveTasksRequest>(), Arg.Any<CancellationToken>())
+            .Returns<Task<ListMessageMoveTasksResponse>>(_ =>
+                throw new InvalidOperationException($"{Identity} {PrivateContent} {Receipt}")
+            );
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ status failed.", text, StringComparison.Ordinal);
+        AssertPrivacy(factory, text);
+    }
+
+    private static HttpRequestMessage RedriveAllRequest(string condition)
+    {
+        var request = Request(condition);
+        request.RequestUri = new Uri("/admin/notification-commands/dlq/redrive-all", UriKind.Relative);
+
+        return request;
+    }
+
+    [Theory]
+    [InlineData("attributes")]
+    [InlineData("tasks")]
+    [InlineData("task-status")]
+    public async Task WhenStatusCannotBeConfirmed_ShouldReturnSafeFailureWithoutReceivingContent(string condition)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var attributes = CountResponse();
+        if (condition == "attributes")
+            attributes.HttpStatusCode = HttpStatusCode.BadGateway;
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(attributes);
+        factory
+            .Sqs.ListMessageMoveTasksAsync(Arg.Any<ListMessageMoveTasksRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new ListMessageMoveTasksResponse
+                {
+                    HttpStatusCode = condition == "tasks" ? HttpStatusCode.BadGateway : HttpStatusCode.OK,
+                    Results =
+                    [
+                        new ListMessageMoveTasksResultEntry
+                        {
+                            Status = condition == "task-status" ? PrivateContent : "RUNNING",
+                            ApproximateNumberOfMessagesMoved = 0,
+                            ApproximateNumberOfMessagesToMove = 10,
+                        },
+                    ],
+                }
+            );
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ status failed.", body, StringComparison.Ordinal);
+        Assert.Equal(condition == "attributes" ? 1 : 2, factory.Sqs.ReceivedCalls().Count());
+        AssertPrivacy(factory, body);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenQueueIdentityCannotBeConfirmed_ShouldNotStartWholeQueueRedrive(bool missingArn)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new GetQueueAttributesResponse
+                {
+                    HttpStatusCode = missingArn ? HttpStatusCode.OK : HttpStatusCode.BadGateway,
+                    Attributes = missingArn ? [] : new() { ["QueueArn"] = DlqArn },
+                }
+            );
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ whole-queue redrive failed.", body, StringComparison.Ordinal);
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        AssertPrivacy(factory, body);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenCallerCancelsQueueOperation_ShouldCancelActualDependencyWithoutStartingTask(bool redriveAll)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken dependencyToken = default;
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                dependencyToken = call.ArgAt<CancellationToken>(1);
+                entered.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, dependencyToken);
+                return CountResponse();
+            });
+        using var client = factory.CreateClient();
+        using var request = redriveAll ? RedriveAllRequest("admin") : StatusRequest("admin");
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var pending = client.SendAsync(request, source.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        await source.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
+        Assert.True(dependencyToken.IsCancellationRequested);
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task WhenInspectionReplayContainsDuplicateIdentities_ShouldNotIssueSelectionsOrReadStorage()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new ReceiveMessageResponse { HttpStatusCode = HttpStatusCode.OK, Messages = [Message(), Message()] }
+            );
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        AssertPrivacy(factory, body);
+    }
+
+    private static void ConfigureQueueIdentities(InspectionApplicationFactory factory, bool sameQueue = false)
+    {
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call => new GetQueueAttributesResponse
+            {
+                HttpStatusCode = HttpStatusCode.OK,
+                Attributes = new()
+                {
+                    ["QueueArn"] =
+                        sameQueue
+                        || call.Arg<GetQueueAttributesRequest>()
+                            .QueueUrl.EndsWith("commands-dlq.fifo", StringComparison.Ordinal)
+                            ? DlqArn
+                            : CommandArn,
+                },
+            });
+    }
+
+    private static GetQueueAttributesResponse CountResponse() =>
+        new()
+        {
+            HttpStatusCode = HttpStatusCode.OK,
+            Attributes = new()
+            {
+                ["QueueArn"] = DlqArn,
+                ["ApproximateNumberOfMessages"] = "10",
+                ["ApproximateNumberOfMessagesNotVisible"] = "4",
+                ["ApproximateNumberOfMessagesDelayed"] = "2",
+            },
+        };
+
+    private static HttpRequestMessage StatusRequest(string condition)
+    {
+        var request = Request(condition);
+        request.Method = HttpMethod.Get;
+        request.RequestUri = new Uri("/admin/notification-commands/dlq/status", UriKind.Relative);
+
+        return request;
     }
 
     private static void AssertPrivacy(InspectionApplicationFactory factory, string text)
@@ -540,6 +1112,8 @@ public sealed class CommandDlqInspectionTests
         private static IAmazonSQS CreateSqs()
         {
             var sqs = Substitute.For<IAmazonSQS>();
+            sqs.ListMessageMoveTasksAsync(Arg.Any<ListMessageMoveTasksRequest>(), Arg.Any<CancellationToken>())
+                .Returns(new ListMessageMoveTasksResponse { HttpStatusCode = HttpStatusCode.OK, Results = [] });
             sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
                 .Returns(new ReceiveMessageResponse { HttpStatusCode = HttpStatusCode.OK, Messages = [Message()] });
 

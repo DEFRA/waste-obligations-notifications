@@ -4,8 +4,7 @@ Status: Accepted
 
 ## Context
 
-Operators need to inspect failed notification commands without exposing message
-content or altering delivery evidence. Every host consumes commands after startup
+Operators need to inspect failed notification commands with authenticated access to email inputs, without altering delivery evidence. Every host consumes commands after startup
 readiness; null cutover permanently suppresses them. The approved administration contract uses Waste Obligations' Basic/OAuth ACL
 and administrator endpoint structure.
 
@@ -35,21 +34,22 @@ Start/check Mongo migrations on every host, including with null cutover. Require
 valid command/DLQ queues, digest secrets, Mongo and Notify settings and complete
 sending budgets at startup. Critical migrations gate `/health`. The admin HTTP boundary
 returns 503 until its first successful anonymous response completes. Inspection
-then receives one visible FIFO
-DLQ message. It does not publish, delete or modify delivery evidence. A bounded
+then receives up to ten visible FIFO
+DLQ messages in one request. It does not publish, delete or modify delivery evidence. A bounded
 dependency timeout rejects cancelled or late results.
 
-Return only minimal metadata. The user explicitly approved exact raw idempotency
-key and notification type in authenticated responses, including private-bearing
-spellings. This exception does not extend to logs, metrics, tokens or other
-message fields. Invalid commands expose neither partial identity nor a usable
-selection. Historical dependency errors remain unavailable, so the response
-contains current classification without a constant failure-details placeholder.
+Authenticated inspection returns a `messages` array containing valid commands' email
+inputs, including recipient, template ID and personalisation, with SQS metadata and
+current delivery classification. The user approved this operator-view expansion on
+2026-10-08. Command content remains excluded from logs, metrics, tokens and Mongo
+evidence. Invalid commands expose no partially extracted command fields or usable
+selection. Historical dependency errors remain unavailable.
 
 Sign a content-free selection with the existing evidence secret and a distinct
-HMAC domain. Format `v2` contains receive-attempt ID, opaque SQS message ID, HMAC
+HMAC domain. Single-message format `v2` contains receive-attempt ID, opaque SQS message ID, HMAC
 queue binding, absolute UTC expiry, immutable-field digest and original receive
-visibility timeout. Replay uses the signed original timeout across hosts rather
+visibility timeout. Batch format `v3` also signs the original maximum receive size.
+Both formats remain valid. Replay uses the signed size and the signed original timeout across hosts rather
 than deriving a different value from remaining lifetime. Reject old `v1` tokens
 and require fresh inspection. Replay can reset visibility beyond token expiry,
 but the signed expiry still prevents further effects. Anchor expiry
@@ -68,6 +68,13 @@ the selected receipt. Bound the entire operation by dependency timeout and
 selection expiry, rejecting late confirmations before further effects. Redrive
 never changes delivery evidence; normal consumption retains terminal, conflict
 and active-claim guards.
+
+Batch redrive accepts one to ten signed selections from the same inspection. Reject
+mixed batches and repeated message IDs before effects. Replay once, then verify and
+redrive each selected message with the same publication-before-deletion rule. Return
+per-message outcomes because the batch is not atomic. After any deletion, recovery
+of remaining messages requires fresh inspection once visibility expires. Discard
+continues to act on one selected message, replaying the original batch size.
 
 Discard repeats selection validation under one bounded deadline and records
 `delivery-abandoned` before deleting only the selected receipt. Use the unique
@@ -89,9 +96,21 @@ or template. Failed or late writes preserve the source; failed deletion retains
 abandonment for later completion. Future duplicates are suppressed without
 Notify.
 
+On 2026-10-08 the user approved whole-DLQ recovery through AWS's native message-move
+task. Resolve ARNs from the existing queue URLs, explicitly target the configured
+command queue, and leave transfer rate selection to AWS. Return 202 after confirmed
+creation, without reading command contents. The status endpoint combines approximate
+SQS counts with the latest task's bounded status and progress projection; it does
+not return dependency failure text. No extra application settings or recovery store
+are introduced. Existing inspection holds must expire before whole-queue recovery.
+Native movement leaves delivery evidence unchanged and normal consumption retains
+all terminal suppression and identity checks.
+
 ## Consequences
 
-Malformed commands and immutable conflicts cannot be cleared through these APIs.
+Malformed commands and immutable conflicts cannot be discarded through these APIs.
+Native whole-queue redrive can move them unchanged; normal consumption still rejects
+invalid commands or conflicts.
 They require configured queue retention or deployment-owned controlled removal;
 this decision supplies no verified removal tool. Preserve the evidence secret for
 durable identity, selection signing, Notify references and redrive deduplication.

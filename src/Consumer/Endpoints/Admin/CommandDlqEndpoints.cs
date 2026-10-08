@@ -13,6 +13,65 @@ public static class CommandDlqEndpoints
         builder.MapPost("/notification-commands/dlq/inspect", Inspect).ExcludeFromDescription();
         builder.MapPost("/notification-commands/dlq/redrive", Redrive).ExcludeFromDescription();
         builder.MapPost("/notification-commands/dlq/discard", Discard).ExcludeFromDescription();
+        builder.MapGet("/notification-commands/dlq/status", GetStatus).ExcludeFromDescription();
+        builder.MapPost("/notification-commands/dlq/redrive-all", RedriveAll).ExcludeFromDescription();
+    }
+
+    private static async Task<IResult> RedriveAll(
+        HttpRequest request,
+        CommandDlqQueueOperations operations,
+        CancellationToken cancellationToken
+    )
+    {
+        if (
+            request.HttpContext.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true
+            || request.ContentLength is > 0
+            || request.Headers.ContainsKey("Transfer-Encoding")
+        )
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                detail: "Whole-queue redrive accepts no request body."
+            );
+        try
+        {
+            return Results.Accepted(
+                "/admin/notification-commands/dlq/status",
+                await operations.RedriveAll(cancellationToken)
+            );
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                detail: "Command DLQ whole-queue redrive failed."
+            );
+        }
+    }
+
+    private static async Task<IResult> GetStatus(
+        CommandDlqQueueOperations operations,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            return Results.Ok(await operations.GetStatus(cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                detail: "Command DLQ status failed."
+            );
+        }
     }
 
     private static async Task<IResult> CreateVerificationCommand(
@@ -91,6 +150,22 @@ public static class CommandDlqEndpoints
     {
         try
         {
+            if (request.SelectionTokens is not null)
+            {
+                if (request.SelectionToken is not null)
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status400BadRequest,
+                        detail: "Specify one selection or a batch of selections."
+                    );
+                var batch = await redriver.RedriveBatch(request.SelectionTokens, cancellationToken);
+
+                return batch is null
+                    ? Results.Problem(
+                        statusCode: StatusCodes.Status400BadRequest,
+                        detail: "Command DLQ selections are invalid or expired."
+                    )
+                    : Results.Ok(new { messages = batch });
+            }
             var result = await redriver.Redrive(request.SelectionToken, cancellationToken);
 
             return result switch
@@ -125,7 +200,7 @@ public static class CommandDlqEndpoints
         {
             var inspection = await inspector.Inspect(cancellationToken);
 
-            return inspection is null ? Results.NoContent() : Results.Ok(inspection);
+            return inspection.Count == 0 ? Results.NoContent() : Results.Ok(new { messages = inspection });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

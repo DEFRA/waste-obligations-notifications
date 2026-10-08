@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Defra.WasteObligations.Consumer.Administration;
 
 public sealed record CommandDlqInspection(
@@ -10,5 +12,10 @@ public sealed record CommandDlqInspection(
     string? RecipientDigest,
     DateTimeOffset? RecordedAtUtc,
     DateTimeOffset? LeaseExpiresAtUtc,
-    string? SelectionToken
+    string? SelectionToken,
+    string MessageId,
+    int? SchemaVersion,
+    string? EmailAddress,
+    string? TemplateId,
+    JsonElement? Personalisation
 );

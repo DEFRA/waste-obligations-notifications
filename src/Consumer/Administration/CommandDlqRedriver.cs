@@ -40,7 +40,7 @@ public sealed class CommandDlqRedriver(
                 {
                     QueueUrl = administration.Value.QueueUrl,
                     ReceiveRequestAttemptId = selection.ReceiveRequestAttemptId,
-                    MaxNumberOfMessages = 1,
+                    MaxNumberOfMessages = selection.MaxNumberOfMessages ?? 1,
                     WaitTimeSeconds = 0,
                     VisibilityTimeout = selection.VisibilityTimeoutSeconds,
                     MessageAttributeNames = ["All"],
@@ -53,33 +53,7 @@ public sealed class CommandDlqRedriver(
             if (selected is null)
                 return CommandDlqRedriveResult.SelectionUnavailable;
             var (message, command) = selected.Value;
-            EnsureTimely(started, budget, selection, source.Token);
-            var sent = await sqs.SendMessageAsync(
-                new SendMessageRequest
-                {
-                    QueueUrl = delivery.Value.QueueUrl,
-                    MessageBody = message.Body,
-                    MessageAttributes = message.MessageAttributes ?? [],
-                    MessageGroupId = digest.CreateRecipientLane(command.EmailAddress),
-                    MessageDeduplicationId = CreateTransportDeduplicationId(message.MessageId),
-                },
-                source.Token
-            );
-            EnsureTimely(started, budget, selection, source.Token);
-            if (sent.HttpStatusCode != HttpStatusCode.OK || sent.MessageId is not { Length: > 0 and <= 100 })
-                throw new InvalidOperationException("Redriven command publication was not confirmed.");
-            var deleted = await sqs.DeleteMessageAsync(
-                new DeleteMessageRequest
-                {
-                    QueueUrl = administration.Value.QueueUrl,
-                    ReceiptHandle = message.ReceiptHandle,
-                },
-                source.Token
-            );
-            EnsureTimely(started, budget, selection, source.Token);
-            if (deleted.HttpStatusCode != HttpStatusCode.OK)
-                throw new InvalidOperationException("Redriven command removal was not confirmed.");
-            diagnostics.Redriven(command.NotificationType);
+            await PublishAndDelete(message, command, started, budget, selection, source.Token);
 
             return CommandDlqRedriveResult.Redriven;
         }
@@ -91,6 +65,146 @@ public sealed class CommandDlqRedriver(
         {
             throw RedriveFailure();
         }
+    }
+
+    public async Task<IReadOnlyList<CommandDlqMessageRedriveResult>?> RedriveBatch(
+        IReadOnlyList<string?> selectionTokens,
+        CancellationToken cancellationToken
+    )
+    {
+        var started = Stopwatch.GetTimestamp();
+        if (selectionTokens.Count is < 1 or > 10)
+            return null;
+        var batch = selectionTokens.Select(selections.Validate).ToArray();
+        if (batch.Any(selection => selection is null))
+            return null;
+        var first = batch[0]!;
+        if (
+            batch.Select(selection => selection!.MessageId).Distinct().Count() != batch.Length
+            || batch.Any(selection =>
+                selection!.ReceiveRequestAttemptId != first.ReceiveRequestAttemptId
+                || selection.ExpiresAtUtc != first.ExpiresAtUtc
+                || selection.VisibilityTimeoutSeconds != first.VisibilityTimeoutSeconds
+                || selection.MaxNumberOfMessages != first.MaxNumberOfMessages
+            )
+        )
+            return null;
+        var remaining = selections.RemainingLifetime(first);
+        var dependencyBudget = TimeSpan.FromSeconds(administration.Value.DependencyTimeoutSeconds);
+        var budget = remaining < dependencyBudget ? remaining : dependencyBudget;
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        try
+        {
+            EnsureTimely(started, budget, first, source.Token);
+            source.CancelAfter(budget - Stopwatch.GetElapsedTime(started));
+            var response = await sqs.ReceiveMessageAsync(
+                new ReceiveMessageRequest
+                {
+                    QueueUrl = administration.Value.QueueUrl,
+                    ReceiveRequestAttemptId = first.ReceiveRequestAttemptId,
+                    MaxNumberOfMessages = first.MaxNumberOfMessages ?? 1,
+                    WaitTimeSeconds = 0,
+                    VisibilityTimeout = first.VisibilityTimeoutSeconds,
+                    MessageAttributeNames = ["All"],
+                    MessageSystemAttributeNames = ["ApproximateReceiveCount", "SentTimestamp"],
+                },
+                source.Token
+            );
+            EnsureTimely(started, budget, first, source.Token);
+            if (
+                response.HttpStatusCode != HttpStatusCode.OK
+                || response.Messages?.Count > (first.MaxNumberOfMessages ?? 1)
+                || response.Messages?.Select(message => message.MessageId).Distinct().Count()
+                    != response.Messages?.Count
+            )
+                throw new InvalidOperationException("Command DLQ replay did not succeed.");
+            var results = new List<CommandDlqMessageRedriveResult>();
+            foreach (var selection in batch.OfType<CommandDlqSelection>())
+            {
+                results.Add(
+                    await RedriveSelection(response, selection, started, budget, source.Token, cancellationToken)
+                );
+            }
+
+            return results;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            throw RedriveFailure();
+        }
+    }
+
+    private async Task<CommandDlqMessageRedriveResult> RedriveSelection(
+        ReceiveMessageResponse response,
+        CommandDlqSelection selection,
+        long started,
+        TimeSpan budget,
+        CancellationToken token,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            var selected = ReadSelection(response, selection);
+            if (selected is null)
+                return new(selection.MessageId, "unavailable");
+            var (message, command) = selected.Value;
+            await PublishAndDelete(message, command, started, budget, selection, token);
+
+            return new(selection.MessageId, "redriven");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            diagnostics.RedriveFailed();
+
+            return new(selection.MessageId, "failed");
+        }
+    }
+
+    private async Task PublishAndDelete(
+        Message message,
+        NotificationCommand command,
+        long started,
+        TimeSpan budget,
+        CommandDlqSelection selection,
+        CancellationToken token
+    )
+    {
+        EnsureTimely(started, budget, selection, token);
+        var sent = await sqs.SendMessageAsync(
+            new SendMessageRequest
+            {
+                QueueUrl = delivery.Value.QueueUrl,
+                MessageBody = message.Body,
+                MessageAttributes = message.MessageAttributes ?? [],
+                MessageGroupId = digest.CreateRecipientLane(command.EmailAddress),
+                MessageDeduplicationId = CreateTransportDeduplicationId(message.MessageId),
+            },
+            token
+        );
+        EnsureTimely(started, budget, selection, token);
+        if (sent.HttpStatusCode != HttpStatusCode.OK || sent.MessageId is not { Length: > 0 and <= 100 })
+            throw new InvalidOperationException("Redriven command publication was not confirmed.");
+        var deleted = await sqs.DeleteMessageAsync(
+            new DeleteMessageRequest
+            {
+                QueueUrl = administration.Value.QueueUrl,
+                ReceiptHandle = message.ReceiptHandle,
+            },
+            token
+        );
+        EnsureTimely(started, budget, selection, token);
+        if (deleted.HttpStatusCode != HttpStatusCode.OK)
+            throw new InvalidOperationException("Redriven command removal was not confirmed.");
+        diagnostics.Redriven(command.NotificationType);
     }
 
     private void EnsureTimely(long started, TimeSpan budget, CommandDlqSelection selection, CancellationToken token)
@@ -121,9 +235,12 @@ public sealed class CommandDlqRedriver(
         CommandDlqSelection selection
     )
     {
-        if (response.HttpStatusCode != HttpStatusCode.OK || response.Messages is { Count: > 1 })
+        if (
+            response.HttpStatusCode != HttpStatusCode.OK
+            || response.Messages?.Count > (selection.MaxNumberOfMessages ?? 1)
+        )
             throw new InvalidOperationException("Command DLQ replay did not succeed.");
-        var message = response.Messages?.SingleOrDefault();
+        var message = response.Messages?.SingleOrDefault(message => message.MessageId == selection.MessageId);
         if (message is null || message.MessageId != selection.MessageId || string.IsNullOrEmpty(message.ReceiptHandle))
             return null;
         NotificationCommand command;

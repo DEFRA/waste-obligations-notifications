@@ -16,7 +16,7 @@ sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
 cutover. Analytics does not yet create notification commands. Configured Basic or OAuth
-administrators can inspect, redrive or discard one command-DLQ message. Redrive does not restore a command's
+administrators can inspect command-DLQ batches, redrive selected commands or discard one command-DLQ message. Redrive does not restore a command's
 original recipient-lane position.
 
 ## Consumers and message handling
@@ -212,7 +212,36 @@ cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
 
 `POST /admin/notification-commands/dlq/verification-command` shares the Admin ACL and startup boundary. It accepts no payload, including framed/chunked bodies. Generate a fresh prefixed key with schema 1, action time 2000-01-01 UTC, type `admin-verification`, recipient `verification@example.invalid`, an all-zero template ID and empty personalisation. Validate and normalise the command before any effect. Confirm fresh permanent suppression before publishing one FIFO message to the configured DLQ, using the key for deduplication and the canonical recipient lane. One dependency deadline covers both effects; failures expose fixed 503 details. Rejected, cancelled or late suppression never publishes. Publication failure leaves suppression evidence intact. Return only the generated key and SQS message ID after timely confirmed publication.
 
-Successful redrive is followed by ordinary consumer processing: matching terminal evidence suppresses Notify and the consumer deletes the source message without changing the record. This holds for null or earlier cutover values. Creation confirms queuing rather than completed processing. Inspection selects one next-visible message, so verify the generated identity before acting. Suppressed probes cannot be discarded; successful native discard remains separately unverified. Local replay uses the labelled controlled API adapter and does not prove native FIFO replay.
+Successful redrive is followed by ordinary consumer processing: matching terminal evidence suppresses Notify and the consumer deletes the source message without changing the record. This holds for null or earlier cutover values. Creation confirms queuing rather than completed processing. Inspection selects up to ten next-visible messages, so locate the generated identity in the returned batch before acting. Suppressed probes cannot be discarded; successful native discard remains separately unverified. Local replay uses the labelled controlled API adapter and does not prove native FIFO replay.
+
+## Command-DLQ status
+
+`GET /admin/notification-commands/dlq/status` uses the same Admin ACL and startup
+boundary. It reads SQS attributes and returns approximate visible, in-flight,
+delayed and total message counts, plus the latest AWS redrive task's status, start
+time and approximate progress. It never receives messages or changes visibility.
+Counts are eventually consistent; inspecting commands moves them into the in-flight
+count until their visibility expires or they are removed. Missing or invalid
+attributes and failed or late responses produce a fixed 503 result.
+
+## Whole command-DLQ redrive
+
+`POST /admin/notification-commands/dlq/redrive-all` uses the same Admin ACL and
+startup boundary and accepts no body. Resolve both configured queues' ARNs and
+start AWS `StartMessageMoveTask` with the DLQ as source and the command queue as
+explicit destination. AWS chooses the transfer rate. A confirmed task returns
+202 with its task handle and a Location pointing to the status endpoint; this
+confirms task creation rather than completion or email delivery. AWS owns the task
+and permits one active task per DLQ. No message content is read, transformed or
+persisted by this endpoint, including malformed commands.
+
+One dependency deadline covers ARN lookup and task creation. Failures and late
+confirmations return a fixed 503; creation may still have succeeded, so check
+status before retrying. AWS redrive operates on available messages. Let existing
+inspection visibility periods expire before whole-queue recovery. Normal command
+consumption still applies cutover, duplicate, conflict and claim rules; terminal
+suppression or abandonment is not undone. Deployed IAM must permit redrive and task
+listing as well as the source receive/delete and destination send operations.
 
 ## Command-DLQ inspection
 
@@ -244,27 +273,28 @@ contract and requires deployment-owned access controls for administrator access.
 
 Every host consumes commands and starts the same Mongo migrations, including
 with null cutover. Null permanently suppresses delivery; it does not pause consumption. Its HTTP boundary returns 503 until the first successful anonymous
-`/health` response completes, before receiving one next-visible
-FIFO DLQ message. Receive uses a fresh attempt ID, zero wait and visibility
-covering the bounded selection lifetime. Inspection changes that message's
-visibility and receive count but never deletes, publishes, abandons or overwrites
+`/health` response completes, before receiving up to ten next-visible
+FIFO DLQ messages in one request. Receive uses a fresh attempt ID, zero wait and visibility
+covering the bounded selection lifetime. Inspection changes those messages'
+visibility and receive counts but never deletes, publishes, abandons or overwrites
 delivery evidence. An empty queue returns no content. Failures expose fixed
 safe messages and leave the message available for later visibility-timeout retry.
 
-The response retains a valid command's exact raw idempotency key and notification
-type, even when these contain private-bearing text. This approved exception is
-limited to those two authenticated response fields. Other fields contain only
-business/SQS/evidence timestamps, receive count, recipient digest, fixed parsing
-or delivery-state classification and a signed selection token. Historical errors
-are not persisted and no placeholder failure-details field is returned. Do not expose recipient-address,
-personalisation, template, rendered-content or Notify-response fields. Malformed
-or unsupported commands expose no partially extracted command fields and no
-usable selection. Logs retain the safe diagnostic-label rules above.
+The response contains a `messages` array. Each valid entry exposes the original command's
+schema version, idempotency key, notification type, action timestamp, normalised
+recipient address, template ID and personalisation, plus SQS message ID, timestamps,
+receive count, current delivery classification, recipient digest and selection token.
+Command content is permitted only in authenticated inspection responses; it must
+not appear in logs, metrics, tokens or Mongo evidence. Rendered emails and Notify
+responses are not returned. Historical dependency errors are not persisted.
+Malformed or unsupported commands expose only SQS metadata and a fixed
+classification, with no partially extracted command fields or usable selection.
 
 The shared-secret, versioned HMAC selection contains only FIFO receive-attempt
 ID, opaque SQS message ID, HMAC queue binding, absolute UTC expiry, immutable
-evidence digest and original receive visibility timeout. Format `v2` replays
-the original timeout across hosts with different local settings. Old `v1`
+evidence digest and original receive visibility timeout. Batch format `v3` also
+binds the original maximum receive size. Single-message format `v2` remains valid. Replay uses
+the original size and timeout across hosts with different local settings. Old `v1`
 selections require fresh inspection. Replay resets visibility and may leave the
 message hidden after token expiry; it never extends authorization to act.
 It contains neither raw command identity nor body/receipt
@@ -277,7 +307,7 @@ contract; discard uses the same authenticated selection body.
 `POST /admin/notification-commands/dlq/redrive` accepts the selection token in its
 JSON body and requires the same Basic/Bearer Admin policy. Invalid or expired tokens
 return a fixed bad-request result before receiving. Replay uses the signed FIFO
-receive-attempt ID, one message and zero wait. Missing, changed or malformed
+receive-attempt ID, original maximum receive size and zero wait. Missing, changed or malformed
 selected commands return a fixed conflict without publishing or deleting. The
 whole operation shares one bounded dependency
 deadline capped by the selection's remaining lifetime; late confirmations cannot
@@ -299,6 +329,16 @@ transport identity. Outside SQS's deduplication window, another copy remains
 subject to durable command identity. Redrive responses and logs contain fixed
 safe results, no raw command fields, receipt, selection token or dependency
 exception text. No additional HTTP retries or Notify reconciliation are added.
+
+Redrive also accepts `{ "selectionTokens": ["..."] }` for one to ten distinct
+messages from the same inspection. Validate all tokens before queue effects and
+replay the receive attempt once. Each selected command is independently verified,
+published unchanged and deleted only after confirmed publication. Return a `messages`
+array of SQS message IDs and fixed `redriven`, `unavailable` or `failed` outcomes.
+A batch is not atomic; completed entries are retained when another entry fails.
+Reinspect remaining messages after visibility expires rather than replaying a batch
+whose messages have already been deleted. Mixed batches, duplicates, invalid or
+expired tokens are rejected before receiving. The single-token request remains supported.
 
 `POST /admin/notification-commands/dlq/discard` applies the same authenticated,
 bounded replay and command verification. Invalid, expired, changed or malformed

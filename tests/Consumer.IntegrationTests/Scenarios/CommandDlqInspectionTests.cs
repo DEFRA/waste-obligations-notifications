@@ -31,7 +31,7 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WhenAdminOnlyHostStarts_ShouldGateCriticalStartupAndInspectOnlyOneRealFifoMessage(bool oauth)
+    public async Task WhenAdminOnlyHostStarts_ShouldGateCriticalStartupAndInspectRealFifoBatch(bool oauth)
     {
         using var sqs = CreateSqsClient();
         using var mongo = CreateMongoClient();
@@ -110,20 +110,27 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
             using var response = await client.SendAsync(retry, token);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var selectedKey = body.RootElement.GetProperty("idempotencyKey").GetString();
-            Assert.Contains(selectedKey, new[] { first.IdempotencyKey, second.IdempotencyKey });
-            var selected = selectedKey == first.IdempotencyKey ? first : second;
-            var other = selectedKey == first.IdempotencyKey ? second : first;
-            Assert.Equal("unrecorded", body.RootElement.GetProperty("failureClassification").GetString());
-            Assert.Equal(1, body.RootElement.GetProperty("receiveCount").GetInt32());
-            Assert.NotEqual(JsonValueKind.Null, body.RootElement.GetProperty("sentAtUtc").ValueKind);
-            Assert.StartsWith("v1:", body.RootElement.GetProperty("recipientDigest").GetString());
+            var messages = body.RootElement.GetProperty("messages");
+            Assert.Equal(2, messages.GetArrayLength());
+            foreach (var entry in messages.EnumerateArray())
+            {
+                var selectedKey = entry.GetProperty("idempotencyKey").GetString();
+                Assert.Contains(selectedKey, new[] { first.IdempotencyKey, second.IdempotencyKey });
+                var selected = selectedKey == first.IdempotencyKey ? first : second;
+                Assert.Equal(selected.EmailAddress, entry.GetProperty("emailAddress").GetString());
+                Assert.Equal(selected.TemplateId, entry.GetProperty("templateId").GetString());
+                Assert.Equal("unrecorded", entry.GetProperty("failureClassification").GetString());
+                Assert.Equal(1, entry.GetProperty("receiveCount").GetInt32());
+                Assert.NotEqual(JsonValueKind.Null, entry.GetProperty("sentAtUtc").ValueKind);
+                Assert.StartsWith("v1:", entry.GetProperty("recipientDigest").GetString());
+                var selection = factory
+                    .Services.GetRequiredService<Administration.CommandDlqSelectionTokens>()
+                    .Validate(entry.GetProperty("selectionToken").GetString());
+                Assert.NotNull(selection);
+                Assert.Equal(selected == first ? firstSend.MessageId : secondSend.MessageId, selection.MessageId);
+                Assert.Equal(10, selection.MaxNumberOfMessages);
+            }
             Assert.Equal(1, factory.Sqs.ReceiveCount);
-            var selection = factory
-                .Services.GetRequiredService<Administration.CommandDlqSelectionTokens>()
-                .Validate(body.RootElement.GetProperty("selectionToken").GetString());
-            Assert.NotNull(selection);
-            Assert.Equal(selected == first ? firstSend.MessageId : secondSend.MessageId, selection.MessageId);
             Assert.Equal(
                 0,
                 await database
@@ -147,23 +154,8 @@ public sealed class CommandDlqInspectionTests : IntegrationTestBase
                 },
                 token
             );
-            Assert.Equal("1", attributes.Attributes["ApproximateNumberOfMessages"]);
-            Assert.Equal("1", attributes.Attributes["ApproximateNumberOfMessagesNotVisible"]);
-            var remaining = await sqs.ReceiveMessageAsync(
-                new ReceiveMessageRequest
-                {
-                    QueueUrl = queue.QueueUrl,
-                    MaxNumberOfMessages = 1,
-                    WaitTimeSeconds = 0,
-                    VisibilityTimeout = 1,
-                },
-                token
-            );
-            Assert.Equal(
-                other.IdempotencyKey,
-                NotificationCommandMessageReader.Read(Assert.Single(remaining.Messages)).IdempotencyKey
-            );
-
+            Assert.Equal("0", attributes.Attributes["ApproximateNumberOfMessages"]);
+            Assert.Equal("2", attributes.Attributes["ApproximateNumberOfMessagesNotVisible"]);
             using var extended = await client.GetAsync("/health/all", token);
             using var health = JsonDocument.Parse(await extended.Content.ReadAsStringAsync(token));
             Assert.Equal(HttpStatusCode.OK, extended.StatusCode);

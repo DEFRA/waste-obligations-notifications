@@ -143,8 +143,14 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             using var inspected = await firstClient.SendAsync(inspectionRequest, token);
             Assert.Equal(HttpStatusCode.OK, inspected.StatusCode);
             using var inspection = JsonDocument.Parse(await inspected.Content.ReadAsStringAsync(token));
-            Assert.Equal("active-claim", inspection.RootElement.GetProperty("failureClassification").GetString());
-            var selectionToken = inspection.RootElement.GetProperty("selectionToken").GetString();
+            Assert.Equal(
+                "active-claim",
+                inspection.RootElement.GetProperty("messages")[0].GetProperty("failureClassification").GetString()
+            );
+            var selectionToken = inspection
+                .RootElement.GetProperty("messages")[0]
+                .GetProperty("selectionToken")
+                .GetString();
             var selection = first.Services.GetRequiredService<CommandDlqSelectionTokens>().Validate(selectionToken);
             Assert.NotNull(selection);
             Assert.Equal(selected.MessageId, selection.MessageId);
@@ -358,12 +364,18 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             using var inspected = await client.SendAsync(inspectRequest, token);
             Assert.Equal(HttpStatusCode.OK, inspected.StatusCode);
             using var inspection = JsonDocument.Parse(await inspected.Content.ReadAsStringAsync(token));
-            Assert.Equal(command.IdempotencyKey, inspection.RootElement.GetProperty("idempotencyKey").GetString());
+            Assert.Equal(
+                command.IdempotencyKey,
+                inspection.RootElement.GetProperty("messages")[0].GetProperty("idempotencyKey").GetString()
+            );
             Assert.Equal(
                 "delivery-suppressed",
-                inspection.RootElement.GetProperty("failureClassification").GetString()
+                inspection.RootElement.GetProperty("messages")[0].GetProperty("failureClassification").GetString()
             );
-            var selectionToken = inspection.RootElement.GetProperty("selectionToken").GetString();
+            var selectionToken = inspection
+                .RootElement.GetProperty("messages")[0]
+                .GetProperty("selectionToken")
+                .GetString();
             var selection = factory.Services.GetRequiredService<CommandDlqSelectionTokens>().Validate(selectionToken);
             Assert.NotNull(selection);
             Assert.Equal(command.MessageId, selection.MessageId);
@@ -410,6 +422,184 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             if (testFailure is not null)
                 failures.Insert(0, testFailure);
             throw new AggregateException("Owned verification resources could not all be cleaned up.", failures);
+        }
+        if (testFailure is not null)
+            ExceptionDispatchInfo.Capture(testFailure).Throw();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenBatchIsRedriven_ShouldPreserveUnselectedMessagesAndRetainIndeterminateSources(bool failFirst)
+    {
+        using var sqs = new ReplaySqsClient();
+        using var mongo = CreateMongoClient();
+        var databaseName = $"notifications_batch_redrive_{Guid.NewGuid():N}";
+        var queueName = $"batch_redrive_dlq_{Guid.NewGuid():N}.fifo";
+        var destinationName = $"batch_redrive_destination_{Guid.NewGuid():N}.fifo";
+        CreateQueueResponse? queue = null;
+        CreateQueueResponse? destination = null;
+        var failures = new List<Exception>();
+        Exception? testFailure = null;
+        var token = TestContext.Current.CancellationToken;
+        try
+        {
+            queue = await sqs.CreateQueueAsync(
+                new CreateQueueRequest
+                {
+                    QueueName = queueName,
+                    Attributes = new() { ["FifoQueue"] = "true" },
+                },
+                token
+            );
+            destination = await sqs.CreateQueueAsync(
+                new CreateQueueRequest
+                {
+                    QueueName = destinationName,
+                    Attributes = new() { ["FifoQueue"] = "true" },
+                },
+                token
+            );
+            sqs.DestinationUrl = destination.QueueUrl;
+            await using var factory = new AdministrationApplicationFactory(
+                queue.QueueUrl,
+                destination.QueueUrl,
+                databaseName,
+                sqs,
+                mongo,
+                120
+            );
+            using var client = factory.CreateClient();
+            await WaitForAsync(async () =>
+            {
+                using var health = await client.GetAsync("/health", token);
+                Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+            });
+            var digest = factory.Services.GetRequiredService<INotificationCommandDigest>();
+            var commands = new[]
+            {
+                Command("first-key", "batch-recipient@example.invalid"),
+                Command("second-key", "batch-recipient@example.invalid"),
+            };
+            foreach (var command in commands)
+                await Publish(
+                    sqs,
+                    queue.QueueUrl,
+                    JsonSerializer.Serialize(command, s_jsonOptions),
+                    [],
+                    command.IdempotencyKey,
+                    digest.CreateRecipientLane(command.EmailAddress),
+                    token
+                );
+            using var inspectionRequest = Request("inspect");
+            using var inspected = await client.SendAsync(inspectionRequest, token);
+            Assert.Equal(HttpStatusCode.OK, inspected.StatusCode);
+            using var inspection = JsonDocument.Parse(await inspected.Content.ReadAsStringAsync(token));
+            var entries = inspection.RootElement.GetProperty("messages");
+            Assert.Equal(2, entries.GetArrayLength());
+            var selections = entries
+                .EnumerateArray()
+                .Select(entry => entry.GetProperty("selectionToken").GetString())
+                .ToArray();
+            var unrelated = Command("unselected-key", "unselected-recipient@example.invalid");
+            await Publish(
+                sqs,
+                queue.QueueUrl,
+                JsonSerializer.Serialize(unrelated, s_jsonOptions),
+                [],
+                unrelated.IdempotencyKey,
+                digest.CreateRecipientLane(unrelated.EmailAddress),
+                token
+            );
+            sqs.FailNextSendAfterPublication = failFirst;
+            using var request = Request("redrive");
+            request.Content = new StringContent(
+                JsonSerializer.Serialize(new { selectionTokens = selections }),
+                Encoding.UTF8,
+                "application/json"
+            );
+            using var redriven = await client.SendAsync(request, token);
+            using var result = JsonDocument.Parse(await redriven.Content.ReadAsStringAsync(token));
+
+            Assert.Equal(HttpStatusCode.OK, redriven.StatusCode);
+            Assert.Equal(
+                new[] { failFirst ? "failed" : "redriven", "redriven" },
+                result
+                    .RootElement.GetProperty("messages")
+                    .EnumerateArray()
+                    .Select(entry => entry.GetProperty("outcome").GetString())
+            );
+            Assert.Equal(failFirst ? 2 : 1, await Count(sqs, queue.QueueUrl, token));
+            if (failFirst)
+                await sqs.ChangeMessageVisibilityAsync(queue.QueueUrl, sqs.SelectedReceipt, 0, token);
+            var remaining = await sqs.ReceiveMessageAsync(
+                new ReceiveMessageRequest
+                {
+                    QueueUrl = queue.QueueUrl,
+                    MaxNumberOfMessages = 10,
+                    WaitTimeSeconds = 0,
+                },
+                token
+            );
+            var expectedRemaining = failFirst
+                ? new[] { commands[0].IdempotencyKey, unrelated.IdempotencyKey }
+                : new[] { unrelated.IdempotencyKey };
+            Assert.Equal(
+                expectedRemaining.Order(),
+                remaining
+                    .Messages.Select(message => NotificationCommandMessageReader.Read(message).IdempotencyKey)
+                    .Order()
+            );
+            Assert.Equal(2, await Count(sqs, destination.QueueUrl, token));
+            var moved = await sqs.ReceiveMessageAsync(
+                new ReceiveMessageRequest
+                {
+                    QueueUrl = destination.QueueUrl,
+                    MaxNumberOfMessages = 10,
+                    WaitTimeSeconds = 0,
+                    MessageSystemAttributeNames = ["MessageGroupId"],
+                },
+                token
+            );
+            Assert.Equal(
+                commands.Select(command => command.IdempotencyKey),
+                moved.Messages.Select(message => NotificationCommandMessageReader.Read(message).IdempotencyKey)
+            );
+            Assert.All(
+                moved.Messages,
+                message =>
+                    Assert.Equal(
+                        digest.CreateRecipientLane(commands[0].EmailAddress),
+                        message.Attributes["MessageGroupId"]
+                    )
+            );
+            Assert.Equal(
+                0,
+                await mongo
+                    .GetDatabase(databaseName)
+                    .GetCollection<BsonDocument>("NotificationDeliveryRecord")
+                    .CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty, cancellationToken: token)
+            );
+        }
+        catch (Exception exception)
+        {
+            testFailure = exception;
+        }
+        finally
+        {
+            await Cleanup(cleanup => RemoveQueue(sqs, queueName, queue?.QueueUrl, cleanup), "batch DLQ", failures);
+            await Cleanup(
+                cleanup => RemoveQueue(sqs, destinationName, destination?.QueueUrl, cleanup),
+                "batch command queue",
+                failures
+            );
+            await Cleanup(cleanup => mongo.DropDatabaseAsync(databaseName, cleanup), "batch database", failures);
+        }
+        if (failures.Count > 0)
+        {
+            if (testFailure is not null)
+                failures.Insert(0, testFailure);
+            throw new AggregateException("Owned batch resources could not all be cleaned up.", failures);
         }
         if (testFailure is not null)
             ExceptionDispatchInfo.Capture(testFailure).Throw();
@@ -496,8 +686,10 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             new AmazonSQSConfig { ServiceURL = "http://localhost:4566", AuthenticationRegion = "eu-west-2" }
         )
     {
-        private readonly ConcurrentDictionary<string, (ReceiveMessageResponse Response, int? Visibility)> _selections =
-            new();
+        private readonly ConcurrentDictionary<
+            string,
+            (ReceiveMessageResponse Response, int? Visibility, int? Maximum)
+        > _selections = new();
         public string? DestinationUrl { get; set; }
         public bool FailNextDelete { get; set; }
         public bool FailNextSendAfterPublication { get; set; }
@@ -517,20 +709,25 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
             {
                 Assert.Equal(selected.Visibility, request.VisibilityTimeout);
                 ReplayedAttemptId = request.ReceiveRequestAttemptId;
-                // This real visibility update supplies the visibility reset of the emulated atomic replay API.
-                await base.ChangeMessageVisibilityAsync(
-                    request.QueueUrl,
-                    Assert.Single(selected.Response.Messages).ReceiptHandle,
-                    request.VisibilityTimeout ?? 120,
-                    cancellationToken
-                );
+                Assert.Equal(selected.Maximum, request.MaxNumberOfMessages);
+                // These real updates supply the visibility reset of the emulated atomic replay API.
+                foreach (var message in selected.Response.Messages)
+                    await base.ChangeMessageVisibilityAsync(
+                        request.QueueUrl,
+                        message.ReceiptHandle,
+                        request.VisibilityTimeout ?? 120,
+                        cancellationToken
+                    );
 
                 return selected.Response;
             }
             var response = await base.ReceiveMessageAsync(request, cancellationToken);
-            if (request.ReceiveRequestAttemptId is not null && response.Messages is { Count: 1 })
+            if (request.ReceiveRequestAttemptId is not null && response.Messages is { Count: > 0 })
             {
-                _selections.TryAdd(request.ReceiveRequestAttemptId, (response, request.VisibilityTimeout));
+                _selections.TryAdd(
+                    request.ReceiveRequestAttemptId,
+                    (response, request.VisibilityTimeout, request.MaxNumberOfMessages)
+                );
                 SelectedReceipt = response.Messages[0].ReceiptHandle;
             }
 

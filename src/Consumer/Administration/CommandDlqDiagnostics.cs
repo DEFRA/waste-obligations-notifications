@@ -41,6 +41,12 @@ public sealed class CommandDlqDiagnostics(
 
     public void InspectionFailed() => logger.LogError("Command DLQ inspection failed.");
 
+    public void StatusFailed() => logger.LogError("Command DLQ status failed.");
+
+    public void RedriveAllStarted() => logger.LogInformation("Command DLQ whole-queue redrive task started.");
+
+    public void RedriveAllFailed() => logger.LogError("Command DLQ whole-queue redrive failed.");
+
     public void RedriveFailed() => logger.LogError("Command DLQ redrive failed.");
 
     public void DiscardFailed() => logger.LogError("Command DLQ discard failed.");
