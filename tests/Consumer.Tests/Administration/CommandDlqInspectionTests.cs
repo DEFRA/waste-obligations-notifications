@@ -860,6 +860,128 @@ public sealed class CommandDlqInspectionTests
         return request;
     }
 
+    [Theory]
+    [InlineData("attributes")]
+    [InlineData("tasks")]
+    [InlineData("task-status")]
+    public async Task WhenStatusCannotBeConfirmed_ShouldReturnSafeFailureWithoutReceivingContent(string condition)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var attributes = CountResponse();
+        if (condition == "attributes")
+            attributes.HttpStatusCode = HttpStatusCode.BadGateway;
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(attributes);
+        factory
+            .Sqs.ListMessageMoveTasksAsync(Arg.Any<ListMessageMoveTasksRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new ListMessageMoveTasksResponse
+                {
+                    HttpStatusCode = condition == "tasks" ? HttpStatusCode.BadGateway : HttpStatusCode.OK,
+                    Results =
+                    [
+                        new ListMessageMoveTasksResultEntry
+                        {
+                            Status = condition == "task-status" ? PrivateContent : "RUNNING",
+                            ApproximateNumberOfMessagesMoved = 0,
+                            ApproximateNumberOfMessagesToMove = 10,
+                        },
+                    ],
+                }
+            );
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ status failed.", body, StringComparison.Ordinal);
+        Assert.Equal(condition == "attributes" ? 1 : 2, factory.Sqs.ReceivedCalls().Count());
+        AssertPrivacy(factory, body);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenQueueIdentityCannotBeConfirmed_ShouldNotStartWholeQueueRedrive(bool missingArn)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new GetQueueAttributesResponse
+                {
+                    HttpStatusCode = missingArn ? HttpStatusCode.OK : HttpStatusCode.BadGateway,
+                    Attributes = missingArn ? [] : new() { ["QueueArn"] = DlqArn },
+                }
+            );
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ whole-queue redrive failed.", body, StringComparison.Ordinal);
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        AssertPrivacy(factory, body);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenCallerCancelsQueueOperation_ShouldCancelActualDependencyWithoutStartingTask(bool redriveAll)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken dependencyToken = default;
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                dependencyToken = call.ArgAt<CancellationToken>(1);
+                entered.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, dependencyToken);
+                return CountResponse();
+            });
+        using var client = factory.CreateClient();
+        using var request = redriveAll ? RedriveAllRequest("admin") : StatusRequest("admin");
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var pending = client.SendAsync(request, source.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        await source.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
+        Assert.True(dependencyToken.IsCancellationRequested);
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task WhenInspectionReplayContainsDuplicateIdentities_ShouldNotIssueSelectionsOrReadStorage()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new ReceiveMessageResponse { HttpStatusCode = HttpStatusCode.OK, Messages = [Message(), Message()] }
+            );
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        AssertPrivacy(factory, body);
+    }
+
     private static void ConfigureQueueIdentities(InspectionApplicationFactory factory, bool sameQueue = false)
     {
         factory

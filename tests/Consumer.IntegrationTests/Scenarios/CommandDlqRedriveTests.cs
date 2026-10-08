@@ -440,6 +440,7 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
         CreateQueueResponse? queue = null;
         CreateQueueResponse? destination = null;
         var failures = new List<Exception>();
+        Exception? testFailure = null;
         var token = TestContext.Current.CancellationToken;
         try
         {
@@ -580,6 +581,10 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                     .CountDocumentsAsync(FilterDefinition<BsonDocument>.Empty, cancellationToken: token)
             );
         }
+        catch (Exception exception)
+        {
+            testFailure = exception;
+        }
         finally
         {
             await Cleanup(cleanup => RemoveQueue(sqs, queueName, queue?.QueueUrl, cleanup), "batch DLQ", failures);
@@ -589,9 +594,15 @@ public sealed class CommandDlqRedriveTests : IntegrationTestBase
                 failures
             );
             await Cleanup(cleanup => mongo.DropDatabaseAsync(databaseName, cleanup), "batch database", failures);
-            if (failures.Count > 0)
-                throw new AggregateException("Owned batch resources could not all be cleaned up.", failures);
         }
+        if (failures.Count > 0)
+        {
+            if (testFailure is not null)
+                failures.Insert(0, testFailure);
+            throw new AggregateException("Owned batch resources could not all be cleaned up.", failures);
+        }
+        if (testFailure is not null)
+            ExceptionDispatchInfo.Capture(testFailure).Throw();
     }
 
     private static NotificationCommand Command(string key, string recipient) =>

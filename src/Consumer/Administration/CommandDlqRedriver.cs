@@ -121,27 +121,9 @@ public sealed class CommandDlqRedriver(
             var results = new List<CommandDlqMessageRedriveResult>();
             foreach (var selection in batch.OfType<CommandDlqSelection>())
             {
-                try
-                {
-                    var selected = ReadSelection(response, selection);
-                    if (selected is null)
-                    {
-                        results.Add(new(selection.MessageId, "unavailable"));
-                        continue;
-                    }
-                    var (message, command) = selected.Value;
-                    await PublishAndDelete(message, command, started, budget, selection, source.Token);
-                    results.Add(new(selection.MessageId, "redriven"));
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception)
-                {
-                    diagnostics.RedriveFailed();
-                    results.Add(new(selection.MessageId, "failed"));
-                }
+                results.Add(
+                    await RedriveSelection(response, selection, started, budget, source.Token, cancellationToken)
+                );
             }
 
             return results;
@@ -153,6 +135,37 @@ public sealed class CommandDlqRedriver(
         catch (Exception)
         {
             throw RedriveFailure();
+        }
+    }
+
+    private async Task<CommandDlqMessageRedriveResult> RedriveSelection(
+        ReceiveMessageResponse response,
+        CommandDlqSelection selection,
+        long started,
+        TimeSpan budget,
+        CancellationToken token,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            var selected = ReadSelection(response, selection);
+            if (selected is null)
+                return new(selection.MessageId, "unavailable");
+            var (message, command) = selected.Value;
+            await PublishAndDelete(message, command, started, budget, selection, token);
+
+            return new(selection.MessageId, "redriven");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            diagnostics.RedriveFailed();
+
+            return new(selection.MessageId, "failed");
         }
     }
 

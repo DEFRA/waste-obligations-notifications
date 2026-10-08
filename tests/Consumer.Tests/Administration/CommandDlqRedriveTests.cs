@@ -768,6 +768,153 @@ public sealed class CommandDlqRedriveTests
         await AssertPrivacy(factory, response, tokens[0]);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(11)]
+    public async Task WhenBatchSizeIsOutsideLimit_ShouldRejectBeforeReplay(int count)
+    {
+        await using var factory = new RedriveApplicationFactory();
+        using var client = factory.CreateClient();
+        var redriver = factory.Services.GetRequiredService<CommandDlqRedriver>();
+
+        var result = await redriver.RedriveBatch(new string?[count], TestContext.Current.CancellationToken);
+
+        Assert.Null(result);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData("status")]
+    [InlineData("duplicate")]
+    [InlineData("oversized")]
+    [InlineData("exception")]
+    public async Task WhenBatchReplayCannotBeTrusted_ShouldReturnSafeFailureWithoutPublication(string condition)
+    {
+        await using var factory = new RedriveApplicationFactory();
+        using var client = factory.CreateClient();
+        var tokens = BatchSelection(factory, Message());
+        var response = new ReceiveMessageResponse
+        {
+            HttpStatusCode = condition == "status" ? HttpStatusCode.BadGateway : HttpStatusCode.OK,
+            Messages = condition switch
+            {
+                "oversized" => Enumerable
+                    .Range(0, 11)
+                    .Select(index =>
+                    {
+                        var message = Message();
+                        message.MessageId = $"message-{index}";
+
+                        return message;
+                    })
+                    .ToList(),
+                "duplicate" => [Message(), Message()],
+                _ => [Message()],
+            },
+        };
+        factory
+            .Sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                condition == "exception"
+                    ? Task.FromException<ReceiveMessageResponse>(new InvalidOperationException(PrivateContent))
+                    : Task.FromResult(response)
+            );
+        using var request = BatchRequest(tokens);
+
+        using var result = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, result.StatusCode);
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        await AssertPrivacy(factory, result, tokens[0]);
+    }
+
+    [Fact]
+    public async Task WhenOneBatchSelectionIsUnavailable_ShouldContinueWithConfirmedSelectionOnly()
+    {
+        await using var factory = new RedriveApplicationFactory();
+        using var client = factory.CreateClient();
+        var missing = Message();
+        missing.MessageId = "missing-message";
+        var tokens = BatchSelection(factory, missing, Message());
+        using var request = BatchRequest(tokens);
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(
+            new[] { "unavailable", "redriven" },
+            body.RootElement.GetProperty("messages")
+                .EnumerateArray()
+                .Select(entry => entry.GetProperty("outcome").GetString())
+        );
+        var deleted = factory
+            .Sqs.ReceivedCalls()
+            .Where(call => call.GetMethodInfo().Name == nameof(IAmazonSQS.DeleteMessageAsync));
+        Assert.Equal(
+            Receipt,
+            Assert.IsType<DeleteMessageRequest>(Assert.Single(deleted).GetArguments()[0]).ReceiptHandle
+        );
+        await AssertPrivacy(factory, response, tokens[0]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenCallerCancelsBatch_ShouldCancelDependencyWithoutDeletingOrStartingNextSelection(
+        bool publishing
+    )
+    {
+        await using var factory = new RedriveApplicationFactory();
+        using var client = factory.CreateClient();
+        var second = Message();
+        second.MessageId = "second-message";
+        var tokens = BatchSelection(factory, Message(), second);
+        factory
+            .Sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ReceiveMessageResponse { HttpStatusCode = HttpStatusCode.OK, Messages = [Message(), second] });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken dependencyToken = default;
+        async Task Wait(CancellationToken token)
+        {
+            dependencyToken = token;
+            entered.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        }
+        if (publishing)
+            factory
+                .Sqs.SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>())
+                .Returns(async call =>
+                {
+                    await Wait(call.ArgAt<CancellationToken>(1));
+                    return new SendMessageResponse();
+                });
+        else
+            factory
+                .Sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+                .Returns(async call =>
+                {
+                    await Wait(call.ArgAt<CancellationToken>(1));
+                    return new ReceiveMessageResponse();
+                });
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        using var request = BatchRequest(tokens);
+        var pending = client.SendAsync(request, source.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        await source.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
+        Assert.True(dependencyToken.IsCancellationRequested);
+        Assert.Equal(publishing ? 2 : 1, factory.Sqs.ReceivedCalls().Count());
+        Assert.DoesNotContain(
+            factory.Logs.Messages,
+            log => log.Contains("Command DLQ redrive failed.", StringComparison.Ordinal)
+        );
+    }
+
     private static string[] BatchSelection(RedriveApplicationFactory factory, params Message[] messages)
     {
         var expires = DateTimeOffset.UtcNow.AddSeconds(100);
