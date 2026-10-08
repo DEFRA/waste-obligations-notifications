@@ -59,6 +59,11 @@ content encodings are not deleted. The service-owned SQS queue's CDP redrive
 configuration routes them to its convention-led dead-letter queue after the
 configured receive attempts are exhausted.
 
+## HTTP requests
+
+Run [health and command-DLQ requests](runbooks/http/README.md) in Rider or VS Code
+with private settings per environment.
+
 ## Prerequisites
 
 - .NET 10 SDK

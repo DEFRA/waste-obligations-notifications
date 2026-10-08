@@ -1,0 +1,9 @@
+### Readiness
+# @no-log
+GET {{host}}/health
+Authorization: Bearer {{$auth.token("service")}}
+
+### All health checks
+# @no-log
+GET {{host}}/health/all
+Authorization: Bearer {{$auth.token("service")}}

@@ -1,0 +1,31 @@
+### Create a verification command
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/verification-command
+Authorization: Bearer {{$auth.token("service")}}
+
+### Inspect and select a command
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/inspect
+Authorization: Bearer {{$auth.token("service")}}
+
+> {% client.global.set("selectionToken", (response.body && response.body.selectionToken) || ""); %}
+
+### Redrive the inspected command
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/redrive
+Authorization: Bearer {{$auth.token("service")}}
+Content-Type: application/json
+
+{
+  "selectionToken": "{{selectionToken}}"
+}
+
+### Discard the inspected command
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/discard
+Authorization: Bearer {{$auth.token("service")}}
+Content-Type: application/json
+
+{
+  "selectionToken": "{{selectionToken}}"
+}

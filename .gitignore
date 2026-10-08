@@ -266,6 +266,10 @@ __pycache__/
 .DS_Store
 
 library.db
+
+# Private HTTP-client settings and request state
+http-client.private.env.json
+.httpyac/
 .envrc
 # Verify
 *.received.*

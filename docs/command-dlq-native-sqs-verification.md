@@ -4,6 +4,9 @@ Administration endpoints are always registered and protected by the Basic/OAuth 
 
 ## Synthetic verification through the deployed service
 
+Use the [HTTP requests](../runbooks/http/command-dlq.http) with the
+[private environment setup](../runbooks/http/README.md).
+
 An authorised operator can use the always-registered body-free verification-command endpoint on the configured DLQ. It records permanent suppression before enqueueing; Notify cannot be called for the matching command. This is an operator action after deployment, not permission for an agent to call shared queues or provision cloud resources.
 
 1. Confirm `/health` succeeds and the admin ACL grants access through the approved gateway/Basic contract. POST `/admin/notification-commands/dlq/verification-command` with no payload. Save its generated `idempotencyKey` and `messageId` privately. A 503 does not confirm queuing and may leave safe suppression evidence.
