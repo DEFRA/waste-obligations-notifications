@@ -3,24 +3,29 @@
 POST {{host}}/admin/notification-commands/dlq/verification-command
 Authorization: Bearer {{$auth.token("service")}}
 
-### Inspect and select a command
+### Inspect and select up to ten commands
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/inspect
 Authorization: Bearer {{$auth.token("service")}}
 
-> {% client.global.set("selectionToken", (response.body && response.body.selectionToken) || ""); %}
+> {%
+var messages = (response.body && response.body.messages) || [];
+var tokens = messages.map(function (message) { return message.selectionToken; }).filter(Boolean);
+client.global.set("selectionTokens", JSON.stringify(tokens));
+client.global.set("selectionToken", tokens[0] || "");
+%}
 
-### Redrive the inspected command
+### Redrive the inspected commands
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/redrive
 Authorization: Bearer {{$auth.token("service")}}
 Content-Type: application/json
 
 {
-  "selectionToken": "{{selectionToken}}"
+  "selectionTokens": {{selectionTokens}}
 }
 
-### Discard the inspected command
+### Discard the first selected command
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/discard
 Authorization: Bearer {{$auth.token("service")}}

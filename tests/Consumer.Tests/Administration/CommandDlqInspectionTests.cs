@@ -129,7 +129,7 @@ public sealed class CommandDlqInspectionTests
     }
 
     [Fact]
-    public async Task WhenAdminInspectsValidPrivateBearingIdentity_ShouldReturnOnlyApprovedMetadataAndContentFreeSelection()
+    public async Task WhenAdminInspectsValidCommand_ShouldReturnEmailInputsAndContentFreeSelection()
     {
         await using var factory = new InspectionApplicationFactory();
         using var client = factory.CreateClient();
@@ -140,35 +140,53 @@ public sealed class CommandDlqInspectionTests
         using var body = JsonDocument.Parse(text);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(Identity, body.RootElement.GetProperty("idempotencyKey").GetString());
-        Assert.Equal(Identity, body.RootElement.GetProperty("notificationType").GetString());
-        Assert.Equal("unrecorded", body.RootElement.GetProperty("failureClassification").GetString());
-        Assert.False(body.RootElement.TryGetProperty("failureDetails", out _));
-        Assert.Equal(3, body.RootElement.GetProperty("receiveCount").GetInt32());
-        Assert.Equal("2026-10-01T00:00:00+00:00", body.RootElement.GetProperty("actionOccurredAtUtc").GetString());
-        Assert.Equal("2026-10-01T00:00:00+00:00", body.RootElement.GetProperty("sentAtUtc").GetString());
-        Assert.StartsWith("v1:", body.RootElement.GetProperty("recipientDigest").GetString());
+        Assert.Equal(Identity, body.RootElement.GetProperty("messages")[0].GetProperty("idempotencyKey").GetString());
+        Assert.Equal(Identity, body.RootElement.GetProperty("messages")[0].GetProperty("notificationType").GetString());
+        Assert.Equal(
+            "unrecorded",
+            body.RootElement.GetProperty("messages")[0].GetProperty("failureClassification").GetString()
+        );
+        Assert.False(body.RootElement.GetProperty("messages")[0].TryGetProperty("failureDetails", out _));
+        Assert.Equal(3, body.RootElement.GetProperty("messages")[0].GetProperty("receiveCount").GetInt32());
+        Assert.Equal(
+            "2026-10-01T00:00:00+00:00",
+            body.RootElement.GetProperty("messages")[0].GetProperty("actionOccurredAtUtc").GetString()
+        );
+        Assert.Equal(
+            "2026-10-01T00:00:00+00:00",
+            body.RootElement.GetProperty("messages")[0].GetProperty("sentAtUtc").GetString()
+        );
+        Assert.StartsWith(
+            "v1:",
+            body.RootElement.GetProperty("messages")[0].GetProperty("recipientDigest").GetString()
+        );
         Assert.Equal(
             [
                 "actionOccurredAtUtc",
+                "emailAddress",
                 "failureClassification",
                 "idempotencyKey",
                 "leaseExpiresAtUtc",
+                "messageId",
                 "notificationType",
+                "personalisation",
                 "receiveCount",
                 "recipientDigest",
                 "recordedAtUtc",
+                "schemaVersion",
                 "selectionToken",
                 "sentAtUtc",
+                "templateId",
             ],
-            body.RootElement.EnumerateObject().Select(property => property.Name).Order()
+            body.RootElement.GetProperty("messages")[0].EnumerateObject().Select(property => property.Name).Order()
         );
-        var token = body.RootElement.GetProperty("selectionToken").GetString()!;
+        var token = body.RootElement.GetProperty("messages")[0].GetProperty("selectionToken").GetString()!;
         using var payload = JsonDocument.Parse(DecodePayload(token));
         Assert.Equal(
             [
                 "expiresAtUtc",
                 "immutableFieldsDigest",
+                "maxNumberOfMessages",
                 "messageId",
                 "queueBinding",
                 "receiveRequestAttemptId",
@@ -178,18 +196,21 @@ public sealed class CommandDlqInspectionTests
         );
         Assert.Equal("opaque-message-id", payload.RootElement.GetProperty("messageId").GetString());
         AssertPrivacy(factory, payload.RootElement.GetRawText());
-        Assert.DoesNotContain(PrivateContent, text, StringComparison.Ordinal);
-        Assert.DoesNotContain(Receipt, text, StringComparison.Ordinal);
-        Assert.All(
-            body.RootElement.EnumerateObject()
-                .Where(property => property.Name is not "idempotencyKey" and not "notificationType"),
-            property => Assert.DoesNotContain(Identity, property.Value.GetRawText(), StringComparison.Ordinal)
+        Assert.Equal(Identity, body.RootElement.GetProperty("messages")[0].GetProperty("emailAddress").GetString());
+        Assert.Equal(PrivateContent, body.RootElement.GetProperty("messages")[0].GetProperty("templateId").GetString());
+        Assert.Equal(
+            PrivateContent,
+            body.RootElement.GetProperty("messages")[0]
+                .GetProperty("personalisation")
+                .GetProperty("content")
+                .GetString()
         );
+        Assert.DoesNotContain(Receipt, text, StringComparison.Ordinal);
         await factory
             .Sqs.Received(1)
             .ReceiveMessageAsync(
                 Arg.Is<ReceiveMessageRequest>(receive =>
-                    receive.MaxNumberOfMessages == 1
+                    receive.MaxNumberOfMessages == 10
                     && receive.WaitTimeSeconds == 0
                     && receive.VisibilityTimeout == 120
                     && receive.MessageSystemAttributeNames.Contains("ApproximateReceiveCount")
@@ -240,7 +261,7 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(
             "invalid-or-unsupported-command",
-            body.RootElement.GetProperty("failureClassification").GetString()
+            body.RootElement.GetProperty("messages")[0].GetProperty("failureClassification").GetString()
         );
         foreach (
             var name in new[]
@@ -252,11 +273,62 @@ public sealed class CommandDlqInspectionTests
                 "recordedAtUtc",
                 "leaseExpiresAtUtc",
                 "selectionToken",
+                "emailAddress",
+                "templateId",
+                "personalisation",
+                "schemaVersion",
             }
         )
-            Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty(name).ValueKind);
+            Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("messages")[0].GetProperty(name).ValueKind);
         Assert.Empty(factory.Store.ReceivedCalls());
         AssertPrivacy(factory, text);
+    }
+
+    [Fact]
+    public async Task WhenBatchContainsMalformedCommand_ShouldSelectOnlyValidCommandsWithoutMutations()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var first = Message();
+        var invalid = Message();
+        invalid.MessageId = "malformed-message";
+        invalid.Body = "invalid-json";
+        var third = Message();
+        third.MessageId = "third-message";
+        factory
+            .Sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new ReceiveMessageResponse { HttpStatusCode = HttpStatusCode.OK, Messages = [first, invalid, third] }
+            );
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var messages = body.RootElement.GetProperty("messages");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(3, messages.GetArrayLength());
+        Assert.Equal("invalid-or-unsupported-command", messages[1].GetProperty("failureClassification").GetString());
+        Assert.Equal(JsonValueKind.Null, messages[1].GetProperty("selectionToken").ValueKind);
+        Assert.Equal(JsonValueKind.Null, messages[1].GetProperty("emailAddress").ValueKind);
+        Assert.Equal(JsonValueKind.Null, messages[1].GetProperty("personalisation").ValueKind);
+        var selections =
+            factory.Services.GetRequiredService<Defra.WasteObligations.Consumer.Administration.CommandDlqSelectionTokens>();
+        var firstSelection = selections.Validate(messages[0].GetProperty("selectionToken").GetString());
+        var thirdSelection = selections.Validate(messages[2].GetProperty("selectionToken").GetString());
+        Assert.NotNull(firstSelection);
+        Assert.NotNull(thirdSelection);
+        Assert.Equal(firstSelection.ReceiveRequestAttemptId, thirdSelection.ReceiveRequestAttemptId);
+        Assert.Equal(firstSelection.ExpiresAtUtc, thirdSelection.ExpiresAtUtc);
+        Assert.Equal(2, factory.Store.ReceivedCalls().Count());
+        Assert.All(
+            factory.Store.ReceivedCalls(),
+            call => Assert.Equal(nameof(INotificationDeliveryRecordStore.Inspect), call.GetMethodInfo().Name)
+        );
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        AssertPrivacy(factory, DecodePayload(messages[0].GetProperty("selectionToken").GetString()!));
     }
 
     [Fact]
@@ -442,7 +514,7 @@ public sealed class CommandDlqInspectionTests
             await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
         );
         using var selection = JsonDocument.Parse(
-            DecodePayload(body.RootElement.GetProperty("selectionToken").GetString()!)
+            DecodePayload(body.RootElement.GetProperty("messages")[0].GetProperty("selectionToken").GetString()!)
         );
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

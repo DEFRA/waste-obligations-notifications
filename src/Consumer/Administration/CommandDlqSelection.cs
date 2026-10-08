@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Defra.WasteObligations.Consumer.Administration;
 
 public sealed record CommandDlqSelection(
@@ -6,5 +8,6 @@ public sealed record CommandDlqSelection(
     string QueueBinding,
     DateTimeOffset ExpiresAtUtc,
     string ImmutableFieldsDigest,
-    int VisibilityTimeoutSeconds
+    int VisibilityTimeoutSeconds,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MaxNumberOfMessages = null
 );

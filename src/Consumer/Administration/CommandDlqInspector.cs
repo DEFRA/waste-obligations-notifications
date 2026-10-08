@@ -18,7 +18,7 @@ public sealed class CommandDlqInspector(
     CommandDlqDiagnostics diagnostics
 )
 {
-    public async Task<CommandDlqInspection?> Inspect(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<CommandDlqInspection>> Inspect(CancellationToken cancellationToken)
     {
         var started = Stopwatch.GetTimestamp();
         using var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -34,7 +34,7 @@ public sealed class CommandDlqInspector(
                 new ReceiveMessageRequest
                 {
                     QueueUrl = administration.Value.QueueUrl,
-                    MaxNumberOfMessages = 1,
+                    MaxNumberOfMessages = 10,
                     WaitTimeSeconds = 0,
                     VisibilityTimeout = administration.Value.SelectionLifetimeSeconds,
                     ReceiveRequestAttemptId = attemptId,
@@ -44,59 +44,82 @@ public sealed class CommandDlqInspector(
                 source.Token
             );
             EnsureTimely(started, source.Token);
-            if (response.HttpStatusCode != HttpStatusCode.OK || response.Messages is { Count: > 1 })
+            if (response.HttpStatusCode != HttpStatusCode.OK || response.Messages is { Count: > 10 })
                 throw new InvalidOperationException("Command DLQ receive did not succeed.");
-            var message = response.Messages?.SingleOrDefault();
-            if (message is null)
-                return null;
-            if (message.MessageId is not { Length: > 0 and <= 100 })
-                throw new InvalidOperationException("Command DLQ message identity is invalid.");
-            var command = ReadCommand(message);
-            EnsureTimely(started, source.Token);
-            if (command is null)
+            var messages = response.Messages ?? [];
+            if (messages.Select(message => message.MessageId).Distinct().Count() != messages.Count)
+                throw new InvalidOperationException("Command DLQ message identities are invalid.");
+            var inspections = new List<CommandDlqInspection>();
+            foreach (var message in messages)
             {
-                diagnostics.InvalidCommand();
+                if (message.MessageId is not { Length: > 0 and <= 100 })
+                    throw new InvalidOperationException("Command DLQ message identity is invalid.");
+                var command = ReadCommand(message);
+                EnsureTimely(started, source.Token);
+                if (command is null)
+                {
+                    diagnostics.InvalidCommand();
 
-                return new(
-                    null,
-                    null,
-                    null,
-                    SentAt(message),
-                    ReceiveCount(message),
-                    "invalid-or-unsupported-command",
-                    null,
-                    null,
-                    null,
-                    null
+                    inspections.Add(
+                        new(
+                            null,
+                            null,
+                            null,
+                            SentAt(message),
+                            ReceiveCount(message),
+                            "invalid-or-unsupported-command",
+                            null,
+                            null,
+                            null,
+                            null,
+                            message.MessageId,
+                            null,
+                            null,
+                            null,
+                            null
+                        )
+                    );
+                    continue;
+                }
+                var state = await storeFactory.GetRecordStore().Inspect(command, source.Token);
+                EnsureTimely(started, source.Token);
+                if (
+                    Stopwatch.GetElapsedTime(selectionStarted)
+                    >= TimeSpan.FromSeconds(administration.Value.SelectionLifetimeSeconds)
+                )
+                    throw new TimeoutException("Command DLQ selection expired.");
+                var token = selections.Create(
+                    attemptId,
+                    message.MessageId,
+                    expiresAtUtc,
+                    digest.CreateImmutableFieldsDigest(command),
+                    10
+                );
+                diagnostics.Inspected(state.Classification, command.NotificationType);
+
+                inspections.Add(
+                    new(
+                        command.IdempotencyKey,
+                        command.NotificationType,
+                        command.ActionOccurredAtUtc,
+                        SentAt(message),
+                        ReceiveCount(message),
+                        state.Classification,
+                        digest.CreateRecipientDigest(command.EmailAddress),
+                        state.RecordedAtUtc,
+                        state.LeaseExpiresAtUtc,
+                        token,
+                        message.MessageId,
+                        command.SchemaVersion,
+                        command.EmailAddress,
+                        command.TemplateId,
+                        command.Personalisation
+                    )
                 );
             }
-            var state = await storeFactory.GetRecordStore().Inspect(command, source.Token);
             EnsureTimely(started, source.Token);
-            if (
-                Stopwatch.GetElapsedTime(selectionStarted)
-                >= TimeSpan.FromSeconds(administration.Value.SelectionLifetimeSeconds)
-            )
-                throw new TimeoutException("Command DLQ selection expired.");
-            var token = selections.Create(
-                attemptId,
-                message.MessageId,
-                expiresAtUtc,
-                digest.CreateImmutableFieldsDigest(command)
-            );
-            diagnostics.Inspected(state.Classification, command.NotificationType);
 
-            return new(
-                command.IdempotencyKey,
-                command.NotificationType,
-                command.ActionOccurredAtUtc,
-                SentAt(message),
-                ReceiveCount(message),
-                state.Classification,
-                digest.CreateRecipientDigest(command.EmailAddress),
-                state.RecordedAtUtc,
-                state.LeaseExpiresAtUtc,
-                token
-            );
+            return inspections;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

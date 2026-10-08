@@ -19,10 +19,10 @@ send. Conflicts, active claims, failed sends and incomplete persistence remain o
 SQS for visibility-timeout retry and queue redrive. A redriven command does not
 regain its original recipient-lane position.
 
-Configured Basic or OAuth administrators can inspect one next-visible command-DLQ message
+Configured Basic or OAuth administrators can inspect up to ten next-visible command-DLQ messages
 through `POST /admin/notification-commands/dlq/inspect`. Administration is always
-registered; an empty ACL denies access. Inspection returns minimal metadata and a signed expiring selection;
-`POST /admin/notification-commands/dlq/redrive` accepts that selection in a JSON
+registered; an empty ACL denies access. Inspection returns email inputs and a signed expiring selection for each command;
+`POST /admin/notification-commands/dlq/redrive` accepts one selection or a batch of selections in a JSON
 body, republishes the unchanged command, then removes only the selected source
 after publication is confirmed. Neither operation changes delivery evidence.
 Inspection temporarily changes visibility and receive count.
@@ -347,10 +347,10 @@ deployment owners to accept and control this direct-access risk. Private DNS alo
 traversal. Configure gateway authentication, OAuth client IDs/ACL scopes and
 network restrictions separately; this PR does not provision CDP resources.
 
-An authenticated inspection response retains the exact idempotency key and notification
-type, including private-bearing spellings: these two fields are the approved
-operator-view exception. Other fields contain timestamps, receive count, fixed
-state/parsing classifications, recipient digest and the selection token.
+Authenticated inspection returns a `messages` array with each valid command's email
+inputs, SQS metadata, current delivery classification and signed selection token.
+Recipient addresses, template IDs and personalisation are visible to the operator;
+they remain excluded from logs, tokens and Mongo evidence.
 Historical dependency errors are not persisted; inspection returns its current
 classification without a placeholder failure-details field. Malformed or unsupported
 commands disclose no partial command identity and receive no usable selection.
@@ -359,16 +359,19 @@ Logs use the diagnostic category allowlist and never expose raw identities.
 Selections contain only receive-attempt ID, SQS message ID, an HMAC queue binding,
 absolute expiry, immutable-field digest and the original receive visibility timeout. Hosts sharing the evidence secret
 and DLQ configuration can validate them; no message body or receipt handle is
-returned or stored. Expiry starts before the receive request, and late dependency
+included in the selection or stored. Expiry starts before the receive request, and late dependency
 confirmations fail safely. `/health/all` always checks the DLQ and Notify, including with null cutover. `/health` gates critical migrations; the remaining dependency checks are extended health.
 
-Selection format `v2` binds the original visibility timeout, so another host
+Selection format `v3` binds the original receive size and visibility timeout;
+single-message `v2` selections remain valid, so another host
 replays the same receive parameters even with different local selection settings.
 Old `v1` tokens require fresh inspection. Replay resets SQS visibility to the
 original timeout; this can keep the message hidden after the selection expires.
 The signed expiry still limits every operation and is never extended.
 
-Redrive accepts `{ "selectionToken": "..." }` only in the authenticated POST body.
+Redrive accepts `{ "selectionToken": "..." }` or `{ "selectionTokens": ["..."] }`
+in the authenticated POST body. Batch redrive returns per-message outcomes; reinspect
+remaining messages after partial failure and visibility expiry.
 It replays the selected FIFO receive attempt and verifies message identity and
 immutable evidence before publishing the exact body and content encoding to the
 canonical recipient lane. Its transport deduplication ID is a domain-separated

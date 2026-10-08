@@ -114,6 +114,28 @@ public sealed class CommandDlqSelectionTokensTests
         Assert.Equal(expires, selection.ExpiresAtUtc);
     }
 
+    [Fact]
+    public void WhenBatchSelectionIsIssued_ShouldBindReplaySizeAcrossHosts()
+    {
+        var clock = new ControlledTimeProvider();
+        var issuer = Create(clock, 120);
+        var verifier = Create(clock, 60);
+        var token = issuer.Create(
+            "11111111-1111-1111-1111-111111111111",
+            "opaque-message-id",
+            clock.GetUtcNow().AddSeconds(120),
+            Evidence,
+            10
+        );
+
+        var selection = verifier.Validate(token);
+
+        Assert.NotNull(selection);
+        Assert.StartsWith("v3.", token);
+        Assert.Equal(10, selection.MaxNumberOfMessages);
+        Assert.Equal(120, selection.VisibilityTimeoutSeconds);
+    }
+
     private static CommandDlqSelectionTokens Create(
         TimeProvider clock,
         int lifetime,

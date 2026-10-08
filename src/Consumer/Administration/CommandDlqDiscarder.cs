@@ -37,7 +37,7 @@ public sealed class CommandDlqDiscarder(
                 {
                     QueueUrl = administration.Value.QueueUrl,
                     ReceiveRequestAttemptId = selection.ReceiveRequestAttemptId,
-                    MaxNumberOfMessages = 1,
+                    MaxNumberOfMessages = selection.MaxNumberOfMessages ?? 1,
                     WaitTimeSeconds = 0,
                     VisibilityTimeout = selection.VisibilityTimeoutSeconds,
                     MessageAttributeNames = ["All"],
@@ -99,9 +99,12 @@ public sealed class CommandDlqDiscarder(
         CommandDlqSelection selection
     )
     {
-        if (response.HttpStatusCode != HttpStatusCode.OK || response.Messages is { Count: > 1 })
+        if (
+            response.HttpStatusCode != HttpStatusCode.OK
+            || response.Messages?.Count > (selection.MaxNumberOfMessages ?? 1)
+        )
             throw new InvalidOperationException("Command DLQ replay did not succeed.");
-        var message = response.Messages?.SingleOrDefault();
+        var message = response.Messages?.SingleOrDefault(message => message.MessageId == selection.MessageId);
         if (message is null || message.MessageId != selection.MessageId || string.IsNullOrEmpty(message.ReceiptHandle))
             return null;
         NotificationCommand command;

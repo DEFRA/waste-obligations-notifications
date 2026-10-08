@@ -146,7 +146,10 @@ public sealed class CommandDlqDiscardTests : IntegrationTestBase
             using var inspected = await firstClient.SendAsync(inspectionRequest, token);
             Assert.Equal(HttpStatusCode.OK, inspected.StatusCode);
             using var inspection = JsonDocument.Parse(await inspected.Content.ReadAsStringAsync(token));
-            var selectionToken = inspection.RootElement.GetProperty("selectionToken").GetString();
+            var selectionToken = inspection
+                .RootElement.GetProperty("messages")[0]
+                .GetProperty("selectionToken")
+                .GetString();
             Assert.NotNull(first.Services.GetRequiredService<CommandDlqSelectionTokens>().Validate(selectionToken));
             var unrelated = Command("other-private-key@example.com", "other-private-recipient@example.com");
             await Publish(

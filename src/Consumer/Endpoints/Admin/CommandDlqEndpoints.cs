@@ -91,6 +91,22 @@ public static class CommandDlqEndpoints
     {
         try
         {
+            if (request.SelectionTokens is not null)
+            {
+                if (request.SelectionToken is not null)
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status400BadRequest,
+                        detail: "Specify one selection or a batch of selections."
+                    );
+                var batch = await redriver.RedriveBatch(request.SelectionTokens, cancellationToken);
+
+                return batch is null
+                    ? Results.Problem(
+                        statusCode: StatusCodes.Status400BadRequest,
+                        detail: "Command DLQ selections are invalid or expired."
+                    )
+                    : Results.Ok(new { messages = batch });
+            }
             var result = await redriver.Redrive(request.SelectionToken, cancellationToken);
 
             return result switch
@@ -125,7 +141,7 @@ public static class CommandDlqEndpoints
         {
             var inspection = await inspector.Inspect(cancellationToken);
 
-            return inspection is null ? Results.NoContent() : Results.Ok(inspection);
+            return inspection.Count == 0 ? Results.NoContent() : Results.Ok(new { messages = inspection });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

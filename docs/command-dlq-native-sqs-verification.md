@@ -10,7 +10,7 @@ Use the [HTTP requests](../runbooks/http/command-dlq.http) with the
 An authorised operator can use the always-registered body-free verification-command endpoint on the configured DLQ. It records permanent suppression before enqueueing; Notify cannot be called for the matching command. This is an operator action after deployment, not permission for an agent to call shared queues or provision cloud resources.
 
 1. Confirm `/health` succeeds and the admin ACL grants access through the approved gateway/Basic contract. POST `/admin/notification-commands/dlq/verification-command` with no payload. Save its generated `idempotencyKey` and `messageId` privately. A 503 does not confirm queuing and may leave safe suppression evidence.
-2. POST `/admin/notification-commands/dlq/inspect`. Verify its raw key matches the generated key before any action. Inspection only selects the next visible message. If another command is selected, leave it untouched and wait for selection/visibility expiry; this API cannot search for the probe by key.
+2. POST `/admin/notification-commands/dlq/inspect`. Locate the generated key in the returned messages before any action. Inspection selects up to ten visible messages in its `messages` array. If the probe is absent, leave the selected commands untouched and wait for selection/visibility expiry; this API cannot search for the probe by key.
 3. Redrive the probe using its selection token, preferably through another service host within expiry. With differing host selection lifetimes, production still uses the token's original visibility parameter. Confirm a 204 redrive response, then source-queue processing/deletion, unchanged `delivery-suppressed` evidence and no Notify call for its reference. Logs should report terminal-duplicate processing for the recovered SQS message; redrive success alone is not proof that processing completed.
 4. Record native region, revision, host/configuration differences, outcomes and safe evidence links. No token, receipt handle, credentials or message body belongs in logs/reports. The probe must be refused by discard because suppressed evidence is protected. Successful native discard and the explicit changed-visibility experiment below remain separate gaps.
 
@@ -62,11 +62,11 @@ request parameters, pass/fail outcomes and safe evidence links. Do not retain
 credentials, tokens, receipt handles or command content in reports. If native replay/recovery checks fail or cannot run, record the unresolved evidence gap.
 Record the changed-timeout experiment separately from the stable production check.
 
-Inspection returns only one next-visible message. It cannot search by key or list
+Inspection returns up to ten next-visible messages. It cannot search by key or enumerate
 the DLQ, and other invisible messages are unavailable until visibility expires.
 Each replay resets visibility to the original signed timeout, potentially beyond
 selection expiry. Wait for visibility and reinspect when a selection expires;
-`v1` selections also require fresh inspection after deploying format `v2`.
+`v1` selections also require fresh inspection after deploying the current selection format.
 
 AWS documents five-minute receive-attempt deduplication, equal messages/receipt
 handles during visibility and reset visibility on replay, provided messages have

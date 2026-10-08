@@ -29,7 +29,8 @@ public sealed class CommandDlqSelectionTokens(
         string receiveAttemptId,
         string messageId,
         DateTimeOffset expiresAtUtc,
-        string immutableFieldsDigest
+        string immutableFieldsDigest,
+        int maxNumberOfMessages = 1
     )
     {
         var selection = new CommandDlqSelection(
@@ -38,7 +39,8 @@ public sealed class CommandDlqSelectionTokens(
             QueueBinding(),
             expiresAtUtc,
             immutableFieldsDigest,
-            administration.Value.SelectionLifetimeSeconds
+            administration.Value.SelectionLifetimeSeconds,
+            maxNumberOfMessages == 1 ? null : maxNumberOfMessages
         );
         var now = timeProvider.GetUtcNow();
         if (
@@ -49,7 +51,9 @@ public sealed class CommandDlqSelectionTokens(
             throw new InvalidOperationException("Command DLQ selection is invalid or expired.");
         var payload = Encode(JsonSerializer.SerializeToUtf8Bytes(selection, s_jsonOptions));
 
-        return $"v2.{payload}.{Encode(Sign("selection-v2", payload))}";
+        var version = maxNumberOfMessages == 1 ? "v2" : "v3";
+
+        return $"{version}.{payload}.{Encode(Sign($"selection-{version}", payload))}";
     }
 
     public CommandDlqSelection? Validate(string? token)
@@ -61,13 +65,16 @@ public sealed class CommandDlqSelectionTokens(
             var parts = token.Split('.');
             if (
                 parts.Length != 3
-                || parts[0] != "v2"
-                || !CryptographicOperations.FixedTimeEquals(Sign("selection-v2", parts[1]), Decode(parts[2]))
+                || parts[0] is not ("v2" or "v3")
+                || !CryptographicOperations.FixedTimeEquals(Sign($"selection-{parts[0]}", parts[1]), Decode(parts[2]))
             )
                 return null;
             var selection = JsonSerializer.Deserialize<CommandDlqSelection>(Decode(parts[1]), s_jsonOptions);
 
-            return selection is not null && IsValid(selection) ? selection : null;
+            var hasExpectedReplaySize =
+                parts[0] == "v2" ? selection?.MaxNumberOfMessages is null : selection?.MaxNumberOfMessages is not null;
+
+            return selection is not null && IsValid(selection) && hasExpectedReplaySize ? selection : null;
         }
         catch (Exception)
         {
@@ -81,6 +88,7 @@ public sealed class CommandDlqSelectionTokens(
 
         return Guid.TryParse(selection.ReceiveRequestAttemptId, out _)
             && selection.VisibilityTimeoutSeconds is > 0 and < 300
+            && (selection.MaxNumberOfMessages is null or >= 2 and <= 10)
             && selection.MessageId is { Length: > 0 and <= 100 }
             && selection.QueueBinding == QueueBinding()
             && selection.ExpiresAtUtc.Offset == TimeSpan.Zero
