@@ -1,3 +1,8 @@
+### Check approximate DLQ counts
+# @no-log
+GET {{host}}/admin/notification-commands/dlq/status
+Authorization: Bearer {{$auth.token("service")}}
+
 ### Create a verification command
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/verification-command

@@ -523,6 +523,117 @@ public sealed class CommandDlqInspectionTests
         );
     }
 
+    [Fact]
+    public async Task WhenAdminChecksStatus_ShouldReturnApproximateCountsWithoutReceivingMessages()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(CountResponse());
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(10, body.RootElement.GetProperty("approximateVisibleMessages").GetInt64());
+        Assert.Equal(4, body.RootElement.GetProperty("approximateInFlightMessages").GetInt64());
+        Assert.Equal(2, body.RootElement.GetProperty("approximateDelayedMessages").GetInt64());
+        Assert.Equal(16, body.RootElement.GetProperty("approximateTotalMessages").GetInt64());
+        var call = Assert.Single(factory.Sqs.ReceivedCalls());
+        var attributes = Assert.IsType<GetQueueAttributesRequest>(call.GetArguments()[0]);
+        Assert.Equal("http://sqs.local/commands-dlq.fifo", attributes.QueueUrl);
+        Assert.Contains("ApproximateNumberOfMessagesNotVisible", attributes.AttributeNames);
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        AssertPrivacy(factory, body.RootElement.GetRawText());
+    }
+
+    [Theory]
+    [InlineData("missing", HttpStatusCode.Unauthorized)]
+    [InlineData("read", HttpStatusCode.Forbidden)]
+    public async Task WhenStatusCallerIsNotAdmin_ShouldDenyBeforeQueueAccess(string condition, HttpStatusCode status)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = StatusRequest(condition);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(status, response.StatusCode);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("private-invalid-count")]
+    [InlineData("-1")]
+    public async Task WhenQueueCountIsMissingOrInvalid_ShouldReturnSafeFailure(string? value)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var attributes = CountResponse();
+        if (value is null)
+            attributes.Attributes.Remove("ApproximateNumberOfMessages");
+        else
+            attributes.Attributes["ApproximateNumberOfMessages"] = value;
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(attributes);
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ status failed.", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-invalid-count", body, StringComparison.Ordinal);
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        AssertPrivacy(factory, body);
+    }
+
+    [Fact]
+    public async Task WhenStatusDependencyConfirmsAfterDeadline_ShouldRejectLateCounts()
+    {
+        await using var factory = new InspectionApplicationFactory(
+            new() { ["CommandDlqAdministration:DependencyTimeoutSeconds"] = "1" }
+        );
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async _ =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
+                return CountResponse();
+            });
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        AssertPrivacy(factory, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
+    private static GetQueueAttributesResponse CountResponse() =>
+        new()
+        {
+            HttpStatusCode = HttpStatusCode.OK,
+            Attributes = new()
+            {
+                ["ApproximateNumberOfMessages"] = "10",
+                ["ApproximateNumberOfMessagesNotVisible"] = "4",
+                ["ApproximateNumberOfMessagesDelayed"] = "2",
+            },
+        };
+
+    private static HttpRequestMessage StatusRequest(string condition)
+    {
+        var request = Request(condition);
+        request.Method = HttpMethod.Get;
+        request.RequestUri = new Uri("/admin/notification-commands/dlq/status", UriKind.Relative);
+
+        return request;
+    }
+
     private static void AssertPrivacy(InspectionApplicationFactory factory, string text)
     {
         foreach (

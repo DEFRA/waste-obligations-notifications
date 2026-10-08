@@ -13,6 +13,29 @@ public static class CommandDlqEndpoints
         builder.MapPost("/notification-commands/dlq/inspect", Inspect).ExcludeFromDescription();
         builder.MapPost("/notification-commands/dlq/redrive", Redrive).ExcludeFromDescription();
         builder.MapPost("/notification-commands/dlq/discard", Discard).ExcludeFromDescription();
+        builder.MapGet("/notification-commands/dlq/status", GetStatus).ExcludeFromDescription();
+    }
+
+    private static async Task<IResult> GetStatus(
+        CommandDlqQueueOperations operations,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            return Results.Ok(await operations.GetStatus(cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                detail: "Command DLQ status failed."
+            );
+        }
     }
 
     private static async Task<IResult> CreateVerificationCommand(

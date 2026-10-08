@@ -41,6 +41,8 @@ public sealed class CommandDlqDiagnostics(
 
     public void InspectionFailed() => logger.LogError("Command DLQ inspection failed.");
 
+    public void StatusFailed() => logger.LogError("Command DLQ status failed.");
+
     public void RedriveFailed() => logger.LogError("Command DLQ redrive failed.");
 
     public void DiscardFailed() => logger.LogError("Command DLQ discard failed.");

@@ -214,6 +214,15 @@ cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
 
 Successful redrive is followed by ordinary consumer processing: matching terminal evidence suppresses Notify and the consumer deletes the source message without changing the record. This holds for null or earlier cutover values. Creation confirms queuing rather than completed processing. Inspection selects up to ten next-visible messages, so locate the generated identity in the returned batch before acting. Suppressed probes cannot be discarded; successful native discard remains separately unverified. Local replay uses the labelled controlled API adapter and does not prove native FIFO replay.
 
+## Command-DLQ status
+
+`GET /admin/notification-commands/dlq/status` uses the same Admin ACL and startup
+boundary. It reads SQS attributes and returns approximate visible, in-flight,
+delayed and total message counts without receiving messages or changing visibility.
+Counts are eventually consistent; inspecting commands moves them into the in-flight
+count until their visibility expires or they are removed. Missing or invalid
+attributes and failed or late responses produce a fixed 503 result.
+
 ## Command-DLQ inspection
 
 Administration is always registered independently of sending.

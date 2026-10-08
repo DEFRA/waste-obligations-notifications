@@ -19,6 +19,9 @@ send. Conflicts, active claims, failed sends and incomplete persistence remain o
 SQS for visibility-timeout retry and queue redrive. A redriven command does not
 regain its original recipient-lane position.
 
+`GET /admin/notification-commands/dlq/status` returns approximate visible, in-flight,
+delayed and total DLQ counts without receiving messages.
+
 Configured Basic or OAuth administrators can inspect up to ten next-visible command-DLQ messages
 through `POST /admin/notification-commands/dlq/inspect`. Administration is always
 registered; an empty ACL denies access. Inspection returns email inputs and a signed expiring selection for each command;
