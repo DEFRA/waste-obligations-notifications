@@ -229,6 +229,10 @@ the pinned SDK's [ECS implementation](https://github.com/awslabs/aws-embedded-me
 builds an invalid derived endpoint. `AWS_EMF_ENVIRONMENT=Agent` also avoids metadata
 discovery when the collector route is already known.
 
+Each health request retains one Information `Request finished` event; other routine
+Information events for health requests are filtered. Any CDP override of
+`Microsoft.AspNetCore.Hosting.Diagnostics` must allow Information level.
+
 Mongo migrations use the same versioned engine and renewable exclusive lease as
 Waste Obligations. Migration 001 creates the unique `notificationKey_unique`
 index on `NotificationDeliveryRecord`, preserving an existing matching index.

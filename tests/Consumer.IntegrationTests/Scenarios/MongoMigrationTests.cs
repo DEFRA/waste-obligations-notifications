@@ -4,6 +4,7 @@ using Defra.WasteObligations.Consumer.Data.Migrations;
 using Defra.WasteObligations.Consumer.IntegrationTests.Fixtures;
 using Defra.WasteObligations.Consumer.Utils.Health;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -274,13 +275,16 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         var database = client.GetDatabase(databaseName);
         var cancellationToken = TestContext.Current.CancellationToken;
         var readiness = new MongoMigrationCompletion();
-        var runner = new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, readiness);
+        var logger = new RecordingMigrationLogger();
+        var runner = new MongoMigrationRunner(database, logger, readiness);
 
         try
         {
             await runner.Run(cancellationToken);
             Assert.True(readiness.IsCompleted);
+            Assert.Equal([1], logger.AppliedMigrationCounts);
             await runner.Run(cancellationToken);
+            Assert.Equal([1, 0], logger.AppliedMigrationCounts);
             var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
             using var cursor = await records.Indexes.ListAsync(cancellationToken);
             var indexes = await cursor.ToListAsync(cancellationToken);
@@ -357,6 +361,34 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         finally
         {
             await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
+    private sealed class RecordingMigrationLogger : ILogger<MongoMigrationRunner>
+    {
+        public List<int> AppliedMigrationCounts { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        )
+        {
+            if (logLevel != LogLevel.Information || state is not IEnumerable<KeyValuePair<string, object?>> properties)
+                return;
+
+            foreach (var property in properties)
+            {
+                if (property.Key == "AppliedMigrationCount" && property.Value is int count)
+                    AppliedMigrationCounts.Add(count);
+            }
         }
     }
 }

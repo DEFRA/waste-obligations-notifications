@@ -44,7 +44,13 @@ public sealed class MongoMigrationService(
             try
             {
                 if (await migrationRunner.CheckCompletion(stoppingToken))
+                {
+                    logger.LogInformation(
+                        "Mongo migrations are already complete. No pending migrations remain for this host."
+                    );
+
                     return;
+                }
 
                 leaseRequestStartedAt = timeProvider.GetTimestamp();
                 acquired =

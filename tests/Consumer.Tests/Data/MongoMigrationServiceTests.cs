@@ -14,10 +14,20 @@ public sealed class MongoMigrationServiceTests
         var lease = Substitute.For<IMongoMigrationLeaseService>();
         var runner = Substitute.For<IMongoMigrationRunner>();
         runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(true);
-        using var service = CreateService(lease, runner, new MongoMigrationOptions());
+        var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
+        using var service = CreateService(lease, runner, new MongoMigrationOptions(), logger);
 
         await service.StartAsync(TestContext.Current.CancellationToken);
         await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Single(
+            logger.ReceivedCalls(),
+            call =>
+                call.GetArguments() is [LogLevel.Information, _, var state, _, _]
+                && state?.ToString()
+                    == "Mongo migrations are already complete. No pending migrations remain for this host."
+        );
 
         await lease.DidNotReceive().TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
         await runner.DidNotReceive().Run(Arg.Any<CancellationToken>());
@@ -30,10 +40,20 @@ public sealed class MongoMigrationServiceTests
         lease.TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(false);
         var runner = Substitute.For<IMongoMigrationRunner>();
         runner.CheckCompletion(Arg.Any<CancellationToken>()).Returns(false, true);
-        using var service = CreateService(lease, runner, new MongoMigrationOptions());
+        var logger = Substitute.For<ILogger<MongoMigrationService>>();
+        logger.IsEnabled(Arg.Any<LogLevel>()).Returns(true);
+        using var service = CreateService(lease, runner, new MongoMigrationOptions(), logger);
 
         await service.StartAsync(TestContext.Current.CancellationToken);
         await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+
+        Assert.Single(
+            logger.ReceivedCalls(),
+            call =>
+                call.GetArguments() is [LogLevel.Information, _, var state, _, _]
+                && state?.ToString()
+                    == "Mongo migrations are already complete. No pending migrations remain for this host."
+        );
 
         await lease.Received(1).TryAcquire(Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
         await runner.DidNotReceive().Run(Arg.Any<CancellationToken>());

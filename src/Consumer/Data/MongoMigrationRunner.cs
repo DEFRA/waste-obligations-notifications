@@ -117,6 +117,7 @@ public sealed class MongoMigrationRunner : IMongoMigrationRunner
                     LogMigrationCompletion(migration, success);
                 }
             );
+        var appliedMigrationCount = 0;
         var critical = _migrations.LastOrDefault(migration => migration.Critical);
         if (critical is not null && !_criticalCompletion.IsCompleted)
         {
@@ -130,6 +131,7 @@ public sealed class MongoMigrationRunner : IMongoMigrationRunner
                 .Max();
             // Never target an earlier version: RunAsync(target) would roll back a newer environment.
             var prerequisite = await configuredEngine.RunAsync(currentVersion, cancellationToken);
+            appliedMigrationCount += prerequisite.InterimSteps.Count;
             await CheckCompletion(cancellationToken);
             if (!prerequisite.Success || !_criticalCompletion.IsCompleted)
                 throw new InvalidOperationException(
@@ -141,6 +143,7 @@ public sealed class MongoMigrationRunner : IMongoMigrationRunner
         try
         {
             result = await configuredEngine.RunAsync(cancellationToken);
+            appliedMigrationCount += result.InterimSteps.Count;
         }
         finally
         {
@@ -163,7 +166,7 @@ public sealed class MongoMigrationRunner : IMongoMigrationRunner
             _logger.LogInformation(
                 "Mongo migrations completed. Current version is {CurrentVersion}. Applied {AppliedMigrationCount} migration(s).",
                 result.CurrentVersion,
-                result.InterimSteps.Count
+                appliedMigrationCount
             );
         }
     }
