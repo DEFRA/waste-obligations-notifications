@@ -28,6 +28,10 @@ public sealed class OAuthAuthenticationTests
         );
         Assert.Equal(1, fixture.EndpointCalls);
         Assert.Single(fixture.Sqs.ReceivedCalls());
+        Assert.DoesNotContain(
+            fixture.Logs.Messages,
+            message => message.Contains("Basic was not authenticated", StringComparison.Ordinal)
+        );
         Assert.All(fixture.Logs.Messages, message => Assert.DoesNotContain(token, message, StringComparison.Ordinal));
     }
 

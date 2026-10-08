@@ -28,9 +28,10 @@ public sealed class BasicAuthenticationHandler(
         if (
             Request.Headers.Authorization.Count != 1
             || !AuthenticationHeaderValue.TryParse(Request.Headers.Authorization[0], out var header)
-            || !string.Equals(header.Scheme, SchemeName, StringComparison.OrdinalIgnoreCase)
         )
             return Fail();
+        if (!string.Equals(header.Scheme, SchemeName, StringComparison.OrdinalIgnoreCase))
+            return NoResult();
 
         string credentials;
         try
