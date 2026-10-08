@@ -28,7 +28,7 @@ jobs:
       - name: Validate workflows with actionlint
         run: |
           archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
-          curl --fail --silent --show-error --location https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output "$archive"
+          curl --fail --silent --show-error --proto '=https' --proto-redir '=https' --location https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output "$archive"
           printf '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  %s\n' "$archive" | sha256sum --check
           mkdir -p "$RUNNER_TEMP/actionlint"
           tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
