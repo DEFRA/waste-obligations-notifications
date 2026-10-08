@@ -16,33 +16,86 @@ permissions:
   contents: read
 
 jobs:
+  workflow-validation:
+    name: Validate GitHub Actions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate workflows with actionlint
+        run: |
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz --output "$archive"
+          printf '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  %s\n' "$archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
+          "$RUNNER_TEMP/actionlint/actionlint"
+
+  dependency-review:
+    name: Dependency security review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          base-ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          head-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fail-on-severity: high
+          fail-on-scopes: runtime, development, unknown
+          license-check: false
+          vulnerability-check: true
+          warn-only: false
+          comment-summary-in-pr: never
+          retry-on-snapshot-warnings: true
+          retry-on-snapshot-warnings-timeout: 300
+
   pr-validator:
     name: Run Pull Request Checks
+    needs: [workflow-validation, dependency-review]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     outputs:
       docker-build: ${{ steps.docker-build.outcome }}
       trivy: ${{ steps.trivy.outcome }}
     steps:
+      - name: Require security prerequisites
+        id: prerequisites
+        env:
+          WORKFLOW_VALIDATION: ${{ needs.workflow-validation.result }}
+          DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
+        run: |
+          if [ "$WORKFLOW_VALIDATION" != "success" ] || [ "$DEPENDENCY_REVIEW" != "success" ]; then
+            printf 'Security prerequisites failed: workflow validation=%s, dependency review=%s\n' "$WORKFLOW_VALIDATION" "$DEPENDENCY_REVIEW"
+            exit 1
+          fi
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 10.0
+      - name: Restore and audit dependencies
+        run: dotnet restore waste-obligations-notifications.slnx -p:NuGetAudit=true -p:NuGetAuditMode=all
       - name: Run Consumer tests
         run: |
-          dotnet build tests/Consumer.Tests/Consumer.Tests.csproj
+          dotnet build tests/Consumer.Tests/Consumer.Tests.csproj --no-restore
           dotnet test --test-modules tests/Consumer.Tests/bin/Debug/net10.0/Consumer.Tests.dll --no-build --results-directory TestResults/Consumer.Tests -- --report-trx --report-trx-filename Consumer.Tests.trx
       - name: Run Consumer integration tests
         run: |
           docker compose up -d --wait
-          dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj
+          dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj --no-restore
           dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/Consumer.IntegrationTests -- --report-trx --report-trx-filename Consumer.IntegrationTests.trx
       - name: Docker Compose logs
-        if: always()
+        if: ${{ always() && steps.prerequisites.outcome == 'success' }}
         run: docker compose logs
       - name: Stop local environment
-        if: always()
+        if: ${{ always() && steps.prerequisites.outcome == 'success' }}
         run: docker compose down -v --remove-orphans
       - name: Check Dockerfile Builds
         id: docker-build
@@ -54,14 +107,15 @@ jobs:
           tags: waste-obligations-notifications:latest
       - name: Check with Trivy
         id: trivy
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
-        with:
-          scan-type: image
-          image-ref: waste-obligations-notifications:latest
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          format: json
-          output: TestResults/trivy.json
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/TestResults"
+          docker save waste-obligations-notifications:latest --output "$RUNNER_TEMP/notifications-image.tar"
+          docker run --rm \
+            --mount "type=bind,source=$RUNNER_TEMP/notifications-image.tar,target=/scan/image.tar,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/TestResults,target=/reports" \
+            aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c \
+            image --input /scan/image.tar --exit-code 1 --severity HIGH,CRITICAL \
+            --scanners vuln,secret --format json --output /reports/trivy.json
       - name: Upload CI reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -73,7 +127,7 @@ jobs:
 
   report:
     name: Publish CI Report
-    needs: pr-validator
+    needs: [workflow-validation, dependency-review, pr-validator]
     if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false }}
     runs-on: ubuntu-latest
     concurrency:
@@ -84,12 +138,17 @@ jobs:
       pull-requests: write
     steps:
       - name: Download CI reports
+        id: download-reports
+        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ci-reports
           path: TestResults
       - name: Create CI report
         env:
+          WORKFLOW_VALIDATION: ${{ needs.workflow-validation.result }}
+          DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
+          REPORT_DOWNLOAD: ${{ steps.download-reports.outcome }}
           DOCKER_BUILD: ${{ needs.pr-validator.outputs.docker-build }}
           PR_VALIDATOR: ${{ needs.pr-validator.result }}
           TRIVY: ${{ needs.pr-validator.outputs.trivy }}
@@ -123,24 +182,30 @@ jobs:
             esac
           }
 
-          trivy_summary() {
-            if [ "$TRIVY" = "failure" ]; then
-              printf '❌ Scan failed'
-              return
-            fi
+          trivy_report_valid() {
+            jq -e 'type == "object" and .SchemaVersion == 2 and .ArtifactType == "container_image" and (.ArtifactName | type == "string" and length > 0) and (.Results | type == "array")' TestResults/trivy.json > /dev/null 2>&1
+          }
 
-            if [ ! -f TestResults/trivy.json ]; then
+          trivy_summary() {
+            if [ "$TRIVY" != "success" ] && [ "$TRIVY" != "failure" ]; then
               printf '⚪ Not run'
               return
             fi
 
-            critical=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' TestResults/trivy.json)
-            high=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' TestResults/trivy.json)
+            if ! trivy_report_valid; then
+              printf '❌ Scan failed (no usable report)'
+              return
+            fi
 
-            if [ "$critical" = "0" ] && [ "$high" = "0" ]; then
-              printf '✅ 0 Critical, 0 High'
+            critical=$(jq '[.Results[]? | (.Vulnerabilities[]?, .Secrets[]?) | select(.Severity == "CRITICAL")] | length' TestResults/trivy.json)
+            high=$(jq '[.Results[]? | (.Vulnerabilities[]?, .Secrets[]?) | select(.Severity == "HIGH")] | length' TestResults/trivy.json)
+
+            if [ "$critical" != "0" ] || [ "$high" != "0" ]; then
+              printf '❌ %s Critical, %s High (blocking)' "$critical" "$high"
+            elif [ "$TRIVY" = "failure" ]; then
+              printf '❌ Scan failed'
             else
-              printf '⚠️ %s Critical, %s High (advisory)' "$critical" "$high"
+              printf '✅ 0 Critical, 0 High'
             fi
           }
 
@@ -150,6 +215,9 @@ jobs:
             echo
             echo '| Check | Result |'
             echo '| --- | --- |'
+            printf '| Workflow validation | %s |\n' "$(step_summary "$WORKFLOW_VALIDATION")"
+            printf '| Dependency security review | %s |\n' "$(step_summary "$DEPENDENCY_REVIEW")"
+            printf '| CI report download | %s |\n' "$(step_summary "$REPORT_DOWNLOAD")"
             printf '| Unit tests | %s |\n' "$(test_summary TestResults/Consumer.Tests/Consumer.Tests.trx)"
             printf '| Integration tests | %s |\n' "$(test_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx)"
             printf '| Docker image | %s |\n' "$(step_summary "$DOCKER_BUILD")"
@@ -159,15 +227,26 @@ jobs:
             echo
             printf '[Workflow run and downloadable reports](%s/%s/actions/runs/%s). Reports are retained for seven days.\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
 
-            if [ -f TestResults/trivy.json ] && jq -e 'any(.Results[]?.Vulnerabilities[]?; .Severity == "CRITICAL" or .Severity == "HIGH")' TestResults/trivy.json > /dev/null; then
+            if trivy_report_valid && jq -e 'any(.Results[]? | (.Vulnerabilities[]?, .Secrets[]?); .Severity == "CRITICAL" or .Severity == "HIGH")' TestResults/trivy.json > /dev/null; then
               echo
-              echo '### Trivy findings'
+              echo '### Blocking Trivy findings'
               echo
-              echo 'Trivy findings are advisory; a successful scan does not fail validation when vulnerabilities are found.'
+              echo 'High and Critical vulnerabilities and secrets fail validation, including vulnerabilities without a fix.'
               echo
-              echo '| Vulnerability | Package | Installed | Fixed | Severity |'
+              echo '| Finding | Package or category | Installed | Fixed | Severity |'
               echo '| --- | --- | --- | --- | --- |'
-              jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") | "| [\(.VulnerabilityID)](\(.PrimaryURL)) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "Not available") | \(.Severity) |"' TestResults/trivy.json
+              jq -r '
+                def cell:
+                  tostring | @html | gsub("\\|"; "&#124;") | gsub("[\r\n]"; " ")
+                  | gsub("`"; "&#96;") | gsub("\\["; "&#91;") | gsub("\\]"; "&#93;")
+                  | gsub("\\*"; "&#42;") | gsub("_"; "&#95;") | gsub("\\\\"; "&#92;");
+                .Results[]? |
+                (.Vulnerabilities[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") |
+                  [.VulnerabilityID, .PkgName, .InstalledVersion, (.FixedVersion // "Not available"), .Severity]),
+                (.Secrets[]? | select(.Severity == "CRITICAL" or .Severity == "HIGH") |
+                  [(.RuleID // "Secret"), (.Category // "Secret"), "—", "—", .Severity]) |
+                "| " + (map(cell) | join(" | ")) + " |"
+              ' TestResults/trivy.json
             fi
           } > ci-report.md
       - name: Replace pull request comment
@@ -192,6 +271,7 @@ jobs:
 
   sonarcloud-scan:
     name: CDP SonarCloud Scan
+    needs: [workflow-validation, dependency-review]
     permissions:
       contents: read
       pull-requests: read

@@ -45,3 +45,22 @@ contracts, idempotency, ordering, privacy, storage, or the cutover boundary.
 Use the terms in [CONTEXT.md](CONTEXT.md) consistently. Keep current service
 contracts in [service behaviour](docs/service-behaviour.md) and coding conventions
 in [CODING_STANDARDS.md](CODING_STANDARDS.md).
+
+## CI security checks
+
+Pull request validation and SonarCloud wait for workflow validation and dependency
+security review. The existing required `Run Pull Request Checks` check explicitly
+fails if either prerequisite fails, so a skipped job cannot satisfy the branch
+rule. Dependency review blocks High and Critical vulnerabilities in
+runtime, development, and unknown dependency scopes. The .NET restore audits all
+NuGet dependencies; audit warnings remain errors.
+
+Trivy scans the built image for High and Critical vulnerabilities and secrets,
+including vulnerabilities without an available fix. Findings and scanner failures
+fail validation. The scanner reads an exported image archive without access to the
+Docker socket. CI reports show blocking findings without matched secret content.
+
+Run actionlint v1.7.12 locally when changing workflows. CI verifies its release
+archive against a pinned SHA256 checksum before running it. Review action commits,
+container digests, and the actionlint version and checksum manually when updating
+these pins.
