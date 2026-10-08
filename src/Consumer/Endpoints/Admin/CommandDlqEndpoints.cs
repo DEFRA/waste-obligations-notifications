@@ -14,6 +14,42 @@ public static class CommandDlqEndpoints
         builder.MapPost("/notification-commands/dlq/redrive", Redrive).ExcludeFromDescription();
         builder.MapPost("/notification-commands/dlq/discard", Discard).ExcludeFromDescription();
         builder.MapGet("/notification-commands/dlq/status", GetStatus).ExcludeFromDescription();
+        builder.MapPost("/notification-commands/dlq/redrive-all", RedriveAll).ExcludeFromDescription();
+    }
+
+    private static async Task<IResult> RedriveAll(
+        HttpRequest request,
+        CommandDlqQueueOperations operations,
+        CancellationToken cancellationToken
+    )
+    {
+        if (
+            request.HttpContext.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == true
+            || request.ContentLength is > 0
+            || request.Headers.ContainsKey("Transfer-Encoding")
+        )
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                detail: "Whole-queue redrive accepts no request body."
+            );
+        try
+        {
+            return Results.Accepted(
+                "/admin/notification-commands/dlq/status",
+                await operations.RedriveAll(cancellationToken)
+            );
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                detail: "Command DLQ whole-queue redrive failed."
+            );
+        }
     }
 
     private static async Task<IResult> GetStatus(

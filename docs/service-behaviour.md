@@ -218,10 +218,30 @@ Successful redrive is followed by ordinary consumer processing: matching termina
 
 `GET /admin/notification-commands/dlq/status` uses the same Admin ACL and startup
 boundary. It reads SQS attributes and returns approximate visible, in-flight,
-delayed and total message counts without receiving messages or changing visibility.
+delayed and total message counts, plus the latest AWS redrive task's status, start
+time and approximate progress. It never receives messages or changes visibility.
 Counts are eventually consistent; inspecting commands moves them into the in-flight
 count until their visibility expires or they are removed. Missing or invalid
 attributes and failed or late responses produce a fixed 503 result.
+
+## Whole command-DLQ redrive
+
+`POST /admin/notification-commands/dlq/redrive-all` uses the same Admin ACL and
+startup boundary and accepts no body. Resolve both configured queues' ARNs and
+start AWS `StartMessageMoveTask` with the DLQ as source and the command queue as
+explicit destination. AWS chooses the transfer rate. A confirmed task returns
+202 with its task handle and a Location pointing to the status endpoint; this
+confirms task creation rather than completion or email delivery. AWS owns the task
+and permits one active task per DLQ. No message content is read, transformed or
+persisted by this endpoint, including malformed commands.
+
+One dependency deadline covers ARN lookup and task creation. Failures and late
+confirmations return a fixed 503; creation may still have succeeded, so check
+status before retrying. AWS redrive operates on available messages. Let existing
+inspection visibility periods expire before whole-queue recovery. Normal command
+consumption still applies cutover, duplicate, conflict and claim rules; terminal
+suppression or abandonment is not undone. Deployed IAM must permit redrive and task
+listing as well as the source receive/delete and destination send operations.
 
 ## Command-DLQ inspection
 

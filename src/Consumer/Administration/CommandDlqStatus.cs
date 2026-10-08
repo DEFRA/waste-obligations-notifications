@@ -4,5 +4,6 @@ public sealed record CommandDlqStatus(
     long ApproximateVisibleMessages,
     long ApproximateInFlightMessages,
     long ApproximateDelayedMessages,
-    long ApproximateTotalMessages
+    long ApproximateTotalMessages,
+    CommandDlqRedriveTask? RedriveTask = null
 );

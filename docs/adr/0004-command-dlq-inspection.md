@@ -96,9 +96,21 @@ or template. Failed or late writes preserve the source; failed deletion retains
 abandonment for later completion. Future duplicates are suppressed without
 Notify.
 
+On 2026-10-08 the user approved whole-DLQ recovery through AWS's native message-move
+task. Resolve ARNs from the existing queue URLs, explicitly target the configured
+command queue, and leave transfer rate selection to AWS. Return 202 after confirmed
+creation, without reading command contents. The status endpoint combines approximate
+SQS counts with the latest task's bounded status and progress projection; it does
+not return dependency failure text. No extra application settings or recovery store
+are introduced. Existing inspection holds must expire before whole-queue recovery.
+Native movement leaves delivery evidence unchanged and normal consumption retains
+all terminal suppression and identity checks.
+
 ## Consequences
 
-Malformed commands and immutable conflicts cannot be cleared through these APIs.
+Malformed commands and immutable conflicts cannot be discarded through these APIs.
+Native whole-queue redrive can move them unchanged; normal consumption still rejects
+invalid commands or conflicts.
 They require configured queue retention or deployment-owned controlled removal;
 this decision supplies no verified removal tool. Preserve the evidence secret for
 durable identity, selection signing, Notify references and redrive deduplication.

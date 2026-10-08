@@ -28,6 +28,8 @@ public sealed class CommandDlqInspectionTests
     private const string Identity = "private-recipient@example.com";
     private const string PrivateContent = "private-personalisation-template-notify";
     private const string Receipt = "private-receipt-handle";
+    private const string DlqArn = "arn:aws:sqs:eu-west-2:000000000000:commands-dlq.fifo";
+    private const string CommandArn = "arn:aws:sqs:eu-west-2:000000000000:commands.fifo";
 
     [Theory]
     [InlineData("missing", 401)]
@@ -65,12 +67,16 @@ public sealed class CommandDlqInspectionTests
     [InlineData("inspect")]
     [InlineData("redrive")]
     [InlineData("discard")]
+    [InlineData("redrive-all")]
+    [InlineData("status")]
     public async Task WhenAclIsEmpty_ShouldStartAndDenyEveryAdminRouteWithoutEffects(string action)
     {
         await using var factory = new InspectionApplicationFactory(emptyAcl: true);
         using var client = factory.CreateClient();
         using var request = Request("admin");
         request.RequestUri = new Uri($"/admin/notification-commands/dlq/{action}", UriKind.Relative);
+        if (action == "status")
+            request.Method = HttpMethod.Get;
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         using var health = await client.GetAsync("/health", TestContext.Current.CancellationToken);
 
@@ -542,7 +548,12 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(4, body.RootElement.GetProperty("approximateInFlightMessages").GetInt64());
         Assert.Equal(2, body.RootElement.GetProperty("approximateDelayedMessages").GetInt64());
         Assert.Equal(16, body.RootElement.GetProperty("approximateTotalMessages").GetInt64());
-        var call = Assert.Single(factory.Sqs.ReceivedCalls());
+        var calls = factory.Sqs.ReceivedCalls().ToArray();
+        Assert.Equal(
+            new[] { nameof(IAmazonSQS.GetQueueAttributesAsync), nameof(IAmazonSQS.ListMessageMoveTasksAsync) },
+            calls.Select(call => call.GetMethodInfo().Name)
+        );
+        var call = calls[0];
         var attributes = Assert.IsType<GetQueueAttributesRequest>(call.GetArguments()[0]);
         Assert.Equal("http://sqs.local/commands-dlq.fifo", attributes.QueueUrl);
         Assert.Contains("ApproximateNumberOfMessagesNotVisible", attributes.AttributeNames);
@@ -613,12 +624,268 @@ public sealed class CommandDlqInspectionTests
         AssertPrivacy(factory, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task WhenAdminRedrivesAll_ShouldStartAwsTaskForConfiguredQueuesWithoutReceivingContent()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        ConfigureQueueIdentities(factory);
+        factory
+            .Sqs.StartMessageMoveTaskAsync(Arg.Any<StartMessageMoveTaskRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new StartMessageMoveTaskResponse
+                {
+                    HttpStatusCode = HttpStatusCode.OK,
+                    TaskHandle = "opaque-task-handle",
+                }
+            );
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal("/admin/notification-commands/dlq/status", response.Headers.Location?.OriginalString);
+        Assert.Equal("opaque-task-handle", body.RootElement.GetProperty("taskHandle").GetString());
+        var calls = factory.Sqs.ReceivedCalls().ToArray();
+        Assert.Equal(
+            new[]
+            {
+                nameof(IAmazonSQS.GetQueueAttributesAsync),
+                nameof(IAmazonSQS.GetQueueAttributesAsync),
+                nameof(IAmazonSQS.StartMessageMoveTaskAsync),
+            },
+            calls.Select(call => call.GetMethodInfo().Name)
+        );
+        var task = Assert.IsType<StartMessageMoveTaskRequest>(calls[2].GetArguments()[0]);
+        Assert.Equal(DlqArn, task.SourceArn);
+        Assert.Equal(CommandArn, task.DestinationArn);
+        Assert.Null(task.MaxNumberOfMessagesPerSecond);
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        AssertPrivacy(factory, body.RootElement.GetRawText());
+    }
+
+    [Theory]
+    [InlineData("missing", HttpStatusCode.Unauthorized)]
+    [InlineData("read", HttpStatusCode.Forbidden)]
+    public async Task WhenWholeQueueRedriveCallerIsNotAdmin_ShouldDenyBeforeQueueAccess(
+        string condition,
+        HttpStatusCode status
+    )
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest(condition);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(status, response.StatusCode);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task WhenWholeQueueRedriveHasBody_ShouldRejectBeforeStartingTask()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+        request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData("failure")]
+    [InlineData("unconfirmed")]
+    [InlineData("same-queue")]
+    public async Task WhenWholeQueueRedriveCannotBeConfirmed_ShouldReturnSafeFailure(string condition)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        ConfigureQueueIdentities(factory, condition == "same-queue");
+        factory
+            .Sqs.StartMessageMoveTaskAsync(Arg.Any<StartMessageMoveTaskRequest>(), Arg.Any<CancellationToken>())
+            .Returns<Task<StartMessageMoveTaskResponse>>(_ =>
+                condition == "failure"
+                    ? throw new InvalidOperationException($"{Identity} {PrivateContent} {Receipt}")
+                    : Task.FromResult(new StartMessageMoveTaskResponse { HttpStatusCode = HttpStatusCode.OK })
+            );
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ whole-queue redrive failed.", text, StringComparison.Ordinal);
+        AssertPrivacy(factory, text);
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        if (condition == "same-queue")
+            Assert.Equal(2, factory.Sqs.ReceivedCalls().Count());
+    }
+
+    [Theory]
+    [InlineData("RUNNING")]
+    [InlineData("COMPLETED")]
+    [InlineData("FAILED")]
+    public async Task WhenStatusIncludesLatestTask_ShouldReturnProgressWithoutAwsFailureDetails(string status)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(CountResponse());
+        factory
+            .Sqs.ListMessageMoveTasksAsync(Arg.Any<ListMessageMoveTasksRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new ListMessageMoveTasksResponse
+                {
+                    HttpStatusCode = HttpStatusCode.OK,
+                    Results =
+                    [
+                        new ListMessageMoveTasksResultEntry
+                        {
+                            Status = status,
+                            ApproximateNumberOfMessagesMoved = 25,
+                            ApproximateNumberOfMessagesToMove = 100,
+                            FailureReason = PrivateContent,
+                            SourceArn = DlqArn,
+                            DestinationArn = CommandArn,
+                            StartedTimestamp = 1790812800000,
+                        },
+                    ],
+                }
+            );
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var task = body.RootElement.GetProperty("redriveTask");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(status, task.GetProperty("status").GetString());
+        Assert.Equal(25, task.GetProperty("approximateMessagesMoved").GetInt64());
+        Assert.Equal(100, task.GetProperty("approximateMessagesToMove").GetInt64());
+        Assert.Equal("2026-10-01T00:00:00+00:00", task.GetProperty("startedAtUtc").GetString());
+        Assert.False(task.TryGetProperty("failureReason", out _));
+        var call = factory
+            .Sqs.ReceivedCalls()
+            .Single(call => call.GetMethodInfo().Name == nameof(IAmazonSQS.ListMessageMoveTasksAsync));
+        var listing = Assert.IsType<ListMessageMoveTasksRequest>(call.GetArguments()[0]);
+        Assert.Equal(DlqArn, listing.SourceArn);
+        Assert.Equal(1, listing.MaxResults);
+        AssertPrivacy(factory, body.RootElement.GetRawText());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenWholeQueueDependencyConfirmsAfterDeadline_ShouldRejectLateEffects(bool taskStarted)
+    {
+        await using var factory = new InspectionApplicationFactory(
+            new() { ["CommandDlqAdministration:DependencyTimeoutSeconds"] = "1" }
+        );
+        ConfigureQueueIdentities(factory);
+        if (!taskStarted)
+            factory
+                .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+                .Returns(async _ =>
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
+
+                    return new GetQueueAttributesResponse
+                    {
+                        HttpStatusCode = HttpStatusCode.OK,
+                        Attributes = new() { ["QueueArn"] = DlqArn },
+                    };
+                });
+        factory
+            .Sqs.StartMessageMoveTaskAsync(Arg.Any<StartMessageMoveTaskRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async _ =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(1100), TestContext.Current.CancellationToken);
+
+                return new StartMessageMoveTaskResponse
+                {
+                    HttpStatusCode = HttpStatusCode.OK,
+                    TaskHandle = "late-task-handle",
+                };
+            });
+        using var client = factory.CreateClient();
+        using var request = RedriveAllRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.DoesNotContain("late-task-handle", text, StringComparison.Ordinal);
+        Assert.Equal(
+            taskStarted ? 1 : 0,
+            factory
+                .Sqs.ReceivedCalls()
+                .Count(call => call.GetMethodInfo().Name == nameof(IAmazonSQS.StartMessageMoveTaskAsync))
+        );
+        AssertPrivacy(factory, text);
+    }
+
+    [Fact]
+    public async Task WhenTaskListingFails_ShouldReturnSafeFailureWithoutAwsDetails()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(CountResponse());
+        factory
+            .Sqs.ListMessageMoveTasksAsync(Arg.Any<ListMessageMoveTasksRequest>(), Arg.Any<CancellationToken>())
+            .Returns<Task<ListMessageMoveTasksResponse>>(_ =>
+                throw new InvalidOperationException($"{Identity} {PrivateContent} {Receipt}")
+            );
+        using var client = factory.CreateClient();
+        using var request = StatusRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Command DLQ status failed.", text, StringComparison.Ordinal);
+        AssertPrivacy(factory, text);
+    }
+
+    private static HttpRequestMessage RedriveAllRequest(string condition)
+    {
+        var request = Request(condition);
+        request.RequestUri = new Uri("/admin/notification-commands/dlq/redrive-all", UriKind.Relative);
+
+        return request;
+    }
+
+    private static void ConfigureQueueIdentities(InspectionApplicationFactory factory, bool sameQueue = false)
+    {
+        factory
+            .Sqs.GetQueueAttributesAsync(Arg.Any<GetQueueAttributesRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call => new GetQueueAttributesResponse
+            {
+                HttpStatusCode = HttpStatusCode.OK,
+                Attributes = new()
+                {
+                    ["QueueArn"] =
+                        sameQueue
+                        || call.Arg<GetQueueAttributesRequest>()
+                            .QueueUrl.EndsWith("commands-dlq.fifo", StringComparison.Ordinal)
+                            ? DlqArn
+                            : CommandArn,
+                },
+            });
+    }
+
     private static GetQueueAttributesResponse CountResponse() =>
         new()
         {
             HttpStatusCode = HttpStatusCode.OK,
             Attributes = new()
             {
+                ["QueueArn"] = DlqArn,
                 ["ApproximateNumberOfMessages"] = "10",
                 ["ApproximateNumberOfMessagesNotVisible"] = "4",
                 ["ApproximateNumberOfMessagesDelayed"] = "2",
@@ -723,6 +990,8 @@ public sealed class CommandDlqInspectionTests
         private static IAmazonSQS CreateSqs()
         {
             var sqs = Substitute.For<IAmazonSQS>();
+            sqs.ListMessageMoveTasksAsync(Arg.Any<ListMessageMoveTasksRequest>(), Arg.Any<CancellationToken>())
+                .Returns(new ListMessageMoveTasksResponse { HttpStatusCode = HttpStatusCode.OK, Results = [] });
             sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
                 .Returns(new ReceiveMessageResponse { HttpStatusCode = HttpStatusCode.OK, Messages = [Message()] });
 

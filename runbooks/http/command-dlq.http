@@ -1,4 +1,4 @@
-### Check approximate DLQ counts
+### Check approximate DLQ counts and latest redrive task
 # @no-log
 GET {{host}}/admin/notification-commands/dlq/status
 Authorization: Bearer {{$auth.token("service")}}
@@ -29,6 +29,11 @@ Content-Type: application/json
 {
   "selectionTokens": {{selectionTokens}}
 }
+
+### Redrive the entire DLQ using AWS
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/redrive-all
+Authorization: Bearer {{$auth.token("service")}}
 
 ### Discard the first selected command
 # @no-log

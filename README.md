@@ -20,7 +20,10 @@ SQS for visibility-timeout retry and queue redrive. A redriven command does not
 regain its original recipient-lane position.
 
 `GET /admin/notification-commands/dlq/status` returns approximate visible, in-flight,
-delayed and total DLQ counts without receiving messages.
+delayed and total DLQ counts and the latest AWS redrive task's progress without
+receiving messages. `POST /admin/notification-commands/dlq/redrive-all` accepts no
+body and starts native AWS redrive to the configured command queue, returning 202.
+Let inspection visibility expire before whole-queue recovery.
 
 Configured Basic or OAuth administrators can inspect up to ten next-visible command-DLQ messages
 through `POST /admin/notification-commands/dlq/inspect`. Administration is always
@@ -319,6 +322,13 @@ logged. This does not validate a command's template or confirm email delivery.
 Failures expose a fixed description without dependency error details.
 `/health`
 remains independent of Notify and the other extended dependency checks.
+
+Whole-queue redrive requires `sqs:StartMessageMoveTask`, `sqs:ReceiveMessage`,
+`sqs:DeleteMessage` and `sqs:GetQueueAttributes` on the DLQ, plus `sqs:SendMessage`
+and `sqs:GetQueueAttributes` on the command queue. Status also requires
+`sqs:ListMessageMoveTasks` on the DLQ. SSE-KMS queues additionally require the
+applicable `kms:Decrypt` and `kms:GenerateDataKey` permissions. These are deployment
+permissions; the endpoints introduce no new application settings.
 
 Inspection, redrive and discard are always registered. Every host requires the administration FIFO `QueueUrl`, a distinct command FIFO URL, both delivery digest secrets, Mongo connectivity and valid Notify credentials/API URL and sending budgets, including with null cutover. `SelectionLifetimeSeconds` defaults to 120 and must be strictly below AWS's 300-second receive-attempt window; `DependencyTimeoutSeconds` defaults to 10 and must be positive and shorter than the selection lifetime. Administrator requests return 503 until critical migrations complete and the first successful anonymous `/health` response finishes. Redrive and discard share one dependency deadline capped by the signed selection's remaining lifetime. Null cutover permanently suppresses commands while consumption continues. There is no administration enablement switch.
 
