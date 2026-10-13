@@ -7,6 +7,7 @@ using Defra.WasteObligations.Consumer.Data.Migrations;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Events;
 
@@ -30,9 +31,11 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
             cluster.Subscribe<CommandStartedEvent>(started =>
             {
                 if (started.CommandName == "find" && started.Command.GetValue("find", "") == CollectionName)
-                    commands.Enqueue(
-                        (started.DatabaseNamespace.DatabaseName, started.Command.DeepClone().AsBsonDocument)
-                    );
+                {
+                    // Materialize the monitored raw BSON while its callback buffer is valid.
+                    var command = BsonSerializer.Deserialize<BsonDocument>(started.Command.ToBson());
+                    commands.Enqueue((started.DatabaseNamespace.DatabaseName, command));
+                }
             });
         using var client = new MongoClient(settings);
         var database = client.GetDatabase(databaseName);
