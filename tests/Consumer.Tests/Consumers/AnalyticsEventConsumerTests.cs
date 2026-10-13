@@ -173,10 +173,7 @@ public class AnalyticsEventConsumerTests
                 {
                     if (Interlocked.Increment(ref receivedCount) == 1)
                     {
-                        return new ReceiveMessageResponse
-                        {
-                            Messages = containsMessage ? [CreateMessage(Body())] : [],
-                        };
+                        return new ReceiveMessageResponse { Messages = containsMessage ? [CreateMessage(Body())] : [] };
                     }
                     nextReceive.TrySetResult();
                     await Task.Delay(Timeout.InfiniteTimeSpan, call.ArgAt<CancellationToken>(1));
