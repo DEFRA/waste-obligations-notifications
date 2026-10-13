@@ -101,9 +101,17 @@ public sealed class NotificationCommandConsumer(
         var notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
         metrics.RecordReceived(notificationType);
         var store = recordStoreFactory.GetRecordStore();
-        var outcome = cutover is null || command.ActionOccurredAtUtc < cutover
-            ? await ProcessSuppression(command, notificationType, store, stoppingToken)
-            : await ProcessPostCutover(command, reference, notificationType, store, receiveStartedAt, stoppingToken);
+        var outcome =
+            cutover is null || command.ActionOccurredAtUtc < cutover
+                ? await ProcessSuppression(command, notificationType, store, stoppingToken)
+                : await ProcessPostCutover(
+                    command,
+                    reference,
+                    notificationType,
+                    store,
+                    receiveStartedAt,
+                    stoppingToken
+                );
 
         metrics.RecordOutcome(notificationType, outcome);
         LogOutcome(message, command, reference, cutover, notificationType, outcome);
