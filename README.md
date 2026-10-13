@@ -365,9 +365,20 @@ Authenticated inspection returns a `messages` array with each valid command's em
 inputs, SQS metadata, current delivery classification and signed selection token.
 Recipient addresses, template IDs and personalisation are visible to the operator;
 they remain excluded from logs, tokens and Mongo evidence.
+Inspection adds current-state `operatorGuidance`, implemented `availableActions`
+(method/endpoint/description), matching `deliveryRecord` summaries and available
+Notify correlation. Encoded record/replacement links support retained lookup;
+replacement summaries link to their parent. Pending/unrecorded items provide the
+original Notify reference for investigation, without asserting acceptance.
 Historical dependency errors are not persisted; inspection returns its current
 classification without a placeholder failure-details field. Malformed or unsupported
-commands disclose no partial command identity and receive no usable selection.
+commands disclose no partial command identity, summary, correlation or navigation,
+and receive no usable selection or action. Conflicts do not expose mismatched
+records as matching evidence. Guidance separates recorded acceptance from
+recipient delivery and conditional investigation from historical failure causes.
+Explicit resend remains unavailable: accepted redrive only cleans up terminal
+queue copies. See the [operator matrix](docs/service-behaviour.md#command-dlq-inspection)
+for guarded recovery choices and uncertain-Notify duplicate risk.
 Logs use the diagnostic category allowlist and never expose raw identities.
 
 Selections contain only receive-attempt ID, SQS message ID, an HMAC queue binding,

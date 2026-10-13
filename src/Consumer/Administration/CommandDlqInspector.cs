@@ -76,6 +76,12 @@ public sealed class CommandDlqInspector(
                             null,
                             null,
                             null,
+                            null,
+                            CommandDlqRecoveryGuidance.For("invalid-or-unsupported-command"),
+                            CommandDlqRecoveryGuidance.Actions("invalid-or-unsupported-command"),
+                            null,
+                            null,
+                            null,
                             null
                         )
                     );
@@ -113,7 +119,16 @@ public sealed class CommandDlqInspector(
                         command.SchemaVersion,
                         command.EmailAddress,
                         command.TemplateId,
-                        command.Personalisation
+                        command.Personalisation,
+                        CommandDlqRecoveryGuidance.For(state.Classification),
+                        CommandDlqRecoveryGuidance.Actions(state.Classification),
+                        state.Record is { } record ? Summarise(record) : null,
+                        state.Record?.NotifyNotificationId,
+                        state.Record?.NotifyReference
+                            ?? (state.Classification is "unrecorded" or "active-claim" or "expired-claim"
+                                ? digest.CreateNotifyReference(command.IdempotencyKey)
+                                : null),
+                        RecordLinks(digest.CreateIdempotencyKeyDigest(command.IdempotencyKey))
                     )
                 );
             }
@@ -130,6 +145,35 @@ public sealed class CommandDlqInspector(
             throw InspectionFailure();
         }
     }
+
+    private static CommandDlqInspectionLinks RecordLinks(string notificationKey)
+    {
+        var encoded = Uri.EscapeDataString(notificationKey);
+
+        return new(
+            "/admin/notification-commands/delivery-records?notificationKey=" + encoded,
+            "/admin/notification-commands/delivery-records?resendOfNotificationKey=" + encoded
+        );
+    }
+
+    private static DeliveryRecordSummary Summarise(NotificationDeliveryEvidence record) =>
+        new(
+            record.NotificationKey,
+            record.ResendOfNotificationKey,
+            record.NotificationType,
+            record.Outcome,
+            record.RecordedAtUtc,
+            record.ActionOccurredAtUtc,
+            record.AcceptedAtUtc,
+            record.LeaseExpiresAtUtc,
+            record.NotifyNotificationId,
+            record.NotifyReference,
+            record.TemplateId,
+            record.TemplateVersion,
+            record.ResendOfNotificationKey is { } parent
+                ? new("/admin/notification-commands/delivery-records?notificationKey=" + Uri.EscapeDataString(parent))
+                : null
+        );
 
     private InvalidOperationException InspectionFailure()
     {

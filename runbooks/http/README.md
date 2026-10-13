@@ -36,3 +36,35 @@ confirm recipient delivery. Existing resolving endpoints remain selected redrive
 and discard, plus whole-queue redrive. Explicit resend is unavailable, and search
 records cannot authorise selected actions. See the
 [existing recovery contract](../../docs/service-behaviour.md#command-dlq-inspection).
+
+Inspection now provides `operatorGuidance`, `availableActions` with HTTP method,
+endpoint and purpose, matching `deliveryRecord` evidence and available Notify
+correlation. Follow encoded `links.deliveryRecord`/`links.resends` to retained
+lookup, and a replacement's `links.sourceRecord` to its parent. Selection tokens
+and current evidence are still checked when an action runs.
+
+- Accepted: check Notify and replacement progress. Wait while processing. Recorded
+  acceptance is not recipient delivery; even a later delivery failure leaves the
+  record accepted. Selected redrive only cleans up the terminal queue copy.
+  Explicit resend is unavailable.
+- Active claim: wait and inspect again. A lease does not prove its process is
+  running; selected redrive/discard remain unavailable while active.
+- Expired claim: investigate with the original Notify reference. For confirmed
+  rejection, fix the cause (including credentials if applicable) before redrive.
+  For a lost response, check Notify; discard if delivered to prevent further
+  attempts, or wait if processing. Inconclusive lookup retains duplicate risk;
+  Notify absence is not proof that no request was accepted.
+- Unrecorded: fix the processing failure before redrive, or discard if further
+  attempts are no longer required.
+- Suppressed: confirm handover policy; the legacy sender may have sent. Redrive
+  only cleans up the terminal copy and cannot undo suppression.
+- Abandoned: confirm the previous decision; discard performs idempotent cleanup.
+  Abandonment does not prove an earlier uncertain request failed.
+- Invalid/unsupported, conflicting or unknown state: escalate to engineering.
+  No selected recovery or removal operation is offered. Invalid entries expose
+  no partially trusted identity, navigation or selected action.
+
+These are current-state instructions. Pending evidence alone cannot establish
+whether Notify rejected a request, its response was lost, the process crashed
+before sending, or acceptance persistence failed. Check diagnostics and Notify
+before choosing recovery. No new resend or removal endpoint is implemented.

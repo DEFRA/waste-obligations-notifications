@@ -124,6 +124,28 @@ Search performs no queue, Notify or evidence-write operations. No additional
 index or migration is introduced in this increment; database operation timeout
 bounds scans, and deployment query volume may require separately reviewed indexes.
 
+### Inspection recovery guidance and correlation
+
+Extend each inspection item with current-state operator guidance and only
+implemented usable actions, represented by HTTP method, endpoint and description.
+Keep action-time selection, immutable identity and state guards unchanged.
+Recorded acceptance is distinct from recipient delivery; accepted redrive cleans
+up a terminal queue copy, including after a later provider delivery failure.
+Explicit resend is unavailable. Pending guidance treats rejection and lost
+responses as conditional investigations and makes inconclusive-lookup duplicate
+risk explicit. Invalid, conflicting and unknown states direct engineering
+escalation without a new removal action.
+
+Extend only the existing read projection to return matching minimal retained
+evidence and available Notify correlation; no delivery write path changes.
+Keep the evidence model in Delivery and map it to the Administration search-summary
+contract. Do not expose a mismatched record as matching evidence. Valid pending or
+unrecorded commands can derive the original Notify reference for investigation;
+this is not proof of acceptance. Read optional parent metadata without backfill,
+with encoded record/replacement and parent search links. Invalid inputs expose no
+partial identity, correlation, navigation or usable action. All additional evidence
+remains confined to the authenticated response and excluded from diagnostic logs.
+
 ## Consequences
 
 Malformed commands and immutable conflicts cannot be discarded through these APIs.

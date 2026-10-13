@@ -172,12 +172,18 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(
             [
                 "actionOccurredAtUtc",
+                "availableActions",
+                "deliveryRecord",
                 "emailAddress",
                 "failureClassification",
                 "idempotencyKey",
                 "leaseExpiresAtUtc",
+                "links",
                 "messageId",
                 "notificationType",
+                "notifyNotificationId",
+                "notifyReference",
+                "operatorGuidance",
                 "personalisation",
                 "receiveCount",
                 "recipientDigest",
@@ -286,11 +292,197 @@ public sealed class CommandDlqInspectionTests
                 "templateId",
                 "personalisation",
                 "schemaVersion",
+                "deliveryRecord",
+                "notifyNotificationId",
+                "notifyReference",
+                "links",
             }
         )
             Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("messages")[0].GetProperty(name).ValueKind);
+        Assert.Empty(body.RootElement.GetProperty("messages")[0].GetProperty("availableActions").EnumerateArray());
+        Assert.Contains(
+            "Escalate to engineering",
+            body.RootElement.GetProperty("messages")[0].GetProperty("operatorGuidance").GetString()!,
+            StringComparison.Ordinal
+        );
         Assert.Empty(factory.Store.ReceivedCalls());
         AssertPrivacy(factory, text);
+    }
+
+    [Theory]
+    [InlineData("delivery-accepted", "inspect,redrive", "does not confirm recipient delivery")]
+    [InlineData("active-claim", "inspect", "not proof that its process is running")]
+    [InlineData("expired-claim", "inspect,redrive,discard", "inconclusive lookup leaves a duplicate-email risk")]
+    [InlineData("unrecorded", "redrive,discard", "fix the processing failure")]
+    [InlineData("delivery-suppressed", "inspect,redrive", "Ordinary replay cannot undo suppression")]
+    [InlineData("delivery-abandoned", "discard", "does not prove an earlier uncertain request failed")]
+    [InlineData("immutable-conflict", "", "producer/evidence mismatch")]
+    [InlineData("unknown-delivery-state", "", "Escalate to engineering")]
+    public async Task WhenInspectingKnownClassification_ShouldOfferOnlyImplementedGuardedActions(
+        string classification,
+        string actions,
+        string instruction
+    )
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Store.Inspect(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new NotificationDeliveryState(classification, null, null));
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var item = Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray());
+        var guidance = item.GetProperty("operatorGuidance").GetString()!;
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(instruction, guidance, StringComparison.Ordinal);
+        Assert.Contains("current evidence, not a historical failure cause", guidance, StringComparison.Ordinal);
+        var available = item.GetProperty("availableActions").EnumerateArray().ToArray();
+        Assert.Equal(
+            actions
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(action => "/admin/notification-commands/dlq/" + action),
+            available.Select(action => action.GetProperty("endpoint").GetString())
+        );
+        Assert.All(available, action => Assert.Equal("POST", action.GetProperty("method").GetString()));
+        Assert.DoesNotContain(available, action => action.GetProperty("endpoint").GetString()!.EndsWith("/resend"));
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("deliveryRecord").ValueKind);
+        Assert.Single(factory.Store.ReceivedCalls());
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData("Notify rejection", "expired-claim", "If rejection is confirmed, fix the cause", "credentials")]
+    [InlineData(
+        "lost response",
+        "expired-claim",
+        "Check Notify using the original reference",
+        "If Notify confirms delivery, discard"
+    )]
+    [InlineData(
+        "accepted then delivery failed",
+        "delivery-accepted",
+        "the record remains accepted",
+        "Explicit resend is unavailable"
+    )]
+    public async Task WhenInvestigatingAgreedFailureScenario_ShouldGiveConditionalRecoveryWithoutInventingTheCause(
+        string scenario,
+        string classification,
+        string instruction,
+        string qualification
+    )
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Store.Inspect(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new NotificationDeliveryState(classification, null, null));
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var item = body.RootElement.GetProperty("messages")[0];
+        var guidance = item.GetProperty("operatorGuidance").GetString()!;
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(instruction, guidance, StringComparison.Ordinal);
+        Assert.Contains(qualification, guidance, StringComparison.Ordinal);
+        Assert.False(item.TryGetProperty("failureDetails", out _), scenario);
+        if (classification == "expired-claim")
+        {
+            Assert.Contains(
+                "pending evidence cannot distinguish Notify rejection, a lost response",
+                guidance,
+                StringComparison.Ordinal
+            );
+            Assert.Contains("inconclusive lookup leaves a duplicate-email risk", guidance, StringComparison.Ordinal);
+            var reference = factory
+                .Services.GetRequiredService<INotificationCommandDigest>()
+                .CreateNotifyReference(Identity);
+            Assert.Equal(reference, item.GetProperty("notifyReference").GetString());
+        }
+        else
+            Assert.Contains("redrive still performs terminal-copy cleanup only", guidance, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WhenInspectingMatchingAcceptedReplacement_ShouldReturnRetainedSummaryAndEncodedNavigation()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        var digest = factory.Services.GetRequiredService<INotificationCommandDigest>();
+        var key = digest.CreateIdempotencyKeyDigest(Identity);
+        var evidence = new NotificationDeliveryEvidence(
+            key,
+            "v1:parent/+?",
+            "submitted",
+            "delivery-accepted",
+            new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc),
+            null,
+            "11111111-1111-1111-1111-111111111111",
+            "v1:retained-reference",
+            "retained-template",
+            3
+        );
+        factory
+            .Store.Inspect(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new NotificationDeliveryState(
+                    "delivery-accepted",
+                    new DateTimeOffset(evidence.RecordedAtUtc),
+                    null,
+                    evidence
+                )
+            );
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var item = body.RootElement.GetProperty("messages")[0];
+        var summary = item.GetProperty("deliveryRecord");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(key, summary.GetProperty("notificationKey").GetString());
+        Assert.Equal("v1:parent/+?", summary.GetProperty("resendOfNotificationKey").GetString());
+        Assert.Equal("11111111-1111-1111-1111-111111111111", item.GetProperty("notifyNotificationId").GetString());
+        Assert.Equal("v1:retained-reference", item.GetProperty("notifyReference").GetString());
+        Assert.Equal("v1:retained-reference", summary.GetProperty("notifyReference").GetString());
+        Assert.Equal("2026-10-12T09:00:00Z", summary.GetProperty("acceptedAtUtc").GetString());
+        Assert.Equal("retained-template", summary.GetProperty("templateId").GetString());
+        Assert.Equal(3, summary.GetProperty("templateVersion").GetInt32());
+        var encodedKey = "v1%3A" + key[3..];
+        Assert.Equal(
+            "/admin/notification-commands/delivery-records?notificationKey=" + encodedKey,
+            item.GetProperty("links").GetProperty("deliveryRecord").GetString()
+        );
+        Assert.Equal(
+            "/admin/notification-commands/delivery-records?resendOfNotificationKey=" + encodedKey,
+            item.GetProperty("links").GetProperty("resends").GetString()
+        );
+        Assert.Equal(
+            "/admin/notification-commands/delivery-records?notificationKey=v1%3Aparent%2F%2B%3F",
+            summary.GetProperty("links").GetProperty("sourceRecord").GetString()
+        );
+        foreach (
+            var field in new[] { "recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation" }
+        )
+            Assert.False(summary.TryGetProperty(field, out _));
+        Assert.Contains(
+            "An empty replacement lookup does not prove",
+            item.GetProperty("operatorGuidance").GetString()!,
+            StringComparison.Ordinal
+        );
+        Assert.Single(factory.Store.ReceivedCalls());
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
     }
 
     [Fact]

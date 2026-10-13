@@ -45,6 +45,15 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { OutcomeField, 1 },
             { RecordedAtField, 1 },
             { LeaseExpiresAtField, 1 },
+            { NotificationKeyField, 1 },
+            { "resendOfNotificationKey", 1 },
+            { "notificationType", 1 },
+            { "actionOccurredAtUtc", 1 },
+            { "acceptedAtUtc", 1 },
+            { "notifyNotificationId", 1 },
+            { "notifyReference", 1 },
+            { "templateId", 1 },
+            { "templateVersion", 1 },
             {
                 "matches",
                 new BsonDocument(
@@ -85,13 +94,37 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         if (!record["matches"].AsBoolean)
             classification = "immutable-conflict";
 
-        return new(classification, ReadTimestamp(record, RecordedAtField), ReadTimestamp(record, LeaseExpiresAtField));
+        return new(
+            classification,
+            ReadTimestamp(record, RecordedAtField),
+            ReadTimestamp(record, LeaseExpiresAtField),
+            record["matches"].AsBoolean ? ReadEvidence(record) : null
+        );
     }
 
     private static DateTimeOffset? ReadTimestamp(BsonDocument record, string name) =>
         record.TryGetValue(name, out var value) && value.BsonType == BsonType.DateTime
             ? new DateTimeOffset(value.ToUniversalTime())
             : null;
+
+    private static NotificationDeliveryEvidence ReadEvidence(BsonDocument record) =>
+        new(
+            record[NotificationKeyField].AsString,
+            ReadString(record, "resendOfNotificationKey"),
+            record["notificationType"].AsString,
+            record[OutcomeField].AsString,
+            record[RecordedAtField].ToUniversalTime(),
+            record["actionOccurredAtUtc"].ToUniversalTime(),
+            ReadTimestamp(record, "acceptedAtUtc")?.UtcDateTime,
+            ReadTimestamp(record, LeaseExpiresAtField)?.UtcDateTime,
+            ReadString(record, "notifyNotificationId"),
+            ReadString(record, "notifyReference"),
+            ReadString(record, "templateId"),
+            record.TryGetValue("templateVersion", out var version) && !version.IsBsonNull ? version.AsInt32 : null
+        );
+
+    private static string? ReadString(BsonDocument record, string name) =>
+        record.TryGetValue(name, out var value) && !value.IsBsonNull ? value.AsString : null;
 
     public async Task<AbandonmentResult> RecordAbandonment(
         NotificationCommand command,

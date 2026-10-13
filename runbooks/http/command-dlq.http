@@ -9,6 +9,8 @@ POST {{host}}/admin/notification-commands/dlq/verification-command
 Authorization: {{authorization}}
 
 ### Inspect and select up to ten commands
+# Read operatorGuidance and availableActions before recovery.
+# Follow links.deliveryRecord / links.resends for evidence; explicit resend is unavailable.
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/inspect
 Authorization: {{authorization}}
