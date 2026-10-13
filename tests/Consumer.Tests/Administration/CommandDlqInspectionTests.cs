@@ -26,6 +26,7 @@ using Serilog.Events;
 
 namespace Defra.WasteObligations.Consumer.Tests.Administration;
 
+[Collection(nameof(ProductionLoggingCollection))]
 public sealed class CommandDlqInspectionTests
 {
     private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web);
