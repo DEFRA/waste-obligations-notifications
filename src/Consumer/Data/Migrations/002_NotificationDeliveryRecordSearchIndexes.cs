@@ -15,15 +15,30 @@ public sealed class NotificationDeliveryRecordSearchIndexes : MongoMigration
         ("recordedAtUtc_id_desc", new BsonDocument { { RecordedAtField, -1 }, { "_id", -1 } }),
         (
             "notifyNotificationId_recordedAtUtc_id_desc",
-            new BsonDocument { { "notifyNotificationId", 1 }, { RecordedAtField, -1 }, { "_id", -1 } }
+            new BsonDocument
+            {
+                { "notifyNotificationId", 1 },
+                { RecordedAtField, -1 },
+                { "_id", -1 },
+            }
         ),
         (
             "resendOfNotificationKey_recordedAtUtc_id_desc",
-            new BsonDocument { { "resendOfNotificationKey", 1 }, { RecordedAtField, -1 }, { "_id", -1 } }
+            new BsonDocument
+            {
+                { "resendOfNotificationKey", 1 },
+                { RecordedAtField, -1 },
+                { "_id", -1 },
+            }
         ),
         (
             "outcome_recordedAtUtc_id_desc",
-            new BsonDocument { { "outcome", 1 }, { RecordedAtField, -1 }, { "_id", -1 } }
+            new BsonDocument
+            {
+                { "outcome", 1 },
+                { RecordedAtField, -1 },
+                { "_id", -1 },
+            }
         ),
     ];
 
@@ -89,8 +104,7 @@ public sealed class NotificationDeliveryRecordSearchIndexes : MongoMigration
         && index.GetValue("hidden", false) == BsonBoolean.False
         && !index.Contains("partialFilterExpression")
         && (
-            !index.TryGetValue("collation", out var collation)
-            || collation.Equals(new BsonDocument("locale", "simple"))
+            !index.TryGetValue("collation", out var collation) || collation.Equals(new BsonDocument("locale", "simple"))
         );
 
     private static async Task<List<BsonDocument>> ListIndexes(IMongoDatabase database, CancellationToken token)

@@ -39,17 +39,32 @@ public sealed class DeliveryRecordSearchIndexMigrationTests : IntegrationTestBas
             AssertIndex(
                 indexes,
                 "notifyNotificationId_recordedAtUtc_id_desc",
-                new BsonDocument { { "notifyNotificationId", 1 }, { RecordedAtField, -1 }, { "_id", -1 } }
+                new BsonDocument
+                {
+                    { "notifyNotificationId", 1 },
+                    { RecordedAtField, -1 },
+                    { "_id", -1 },
+                }
             );
             AssertIndex(
                 indexes,
                 "resendOfNotificationKey_recordedAtUtc_id_desc",
-                new BsonDocument { { "resendOfNotificationKey", 1 }, { RecordedAtField, -1 }, { "_id", -1 } }
+                new BsonDocument
+                {
+                    { "resendOfNotificationKey", 1 },
+                    { RecordedAtField, -1 },
+                    { "_id", -1 },
+                }
             );
             AssertIndex(
                 indexes,
                 "outcome_recordedAtUtc_id_desc",
-                new BsonDocument { { "outcome", 1 }, { RecordedAtField, -1 }, { "_id", -1 } }
+                new BsonDocument
+                {
+                    { "outcome", 1 },
+                    { RecordedAtField, -1 },
+                    { "_id", -1 },
+                }
             );
             await migration.UpAsync(context);
             await runner.Run(token);
