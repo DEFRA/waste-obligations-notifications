@@ -485,6 +485,13 @@ retained Mongo evidence independently of queue copies. The existing Admin policy
 and startup readiness boundary apply. It never receives, publishes or deletes
 queue messages, calls Notify, or changes delivery records.
 
+Opaque keys, Notify identifiers and other retained correlation are exposed through
+authenticated administration responses and remain excluded from logs. Administration
+request query strings are redacted from hosting diagnostics and ECS URL fields,
+including for rejected requests. Request-start/finish, path, method, status and
+correlation metadata remain available. Redaction affects event snapshots only;
+request filters, authorization and non-administration logging are unchanged.
+
 Filters are `recordedFromUtc` (inclusive), `recordedToUtc` (exclusive),
 `notifyNotificationId`, `notificationKey`, `resendOfNotificationKey` and `outcome`.
 Date bounds require explicit UTC (`Z` or a zero offset) and use the latest

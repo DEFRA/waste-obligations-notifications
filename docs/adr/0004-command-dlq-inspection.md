@@ -146,6 +146,16 @@ with encoded record/replacement and parent search links. Invalid inputs expose n
 partial identity, correlation, navigation or usable action. All additional evidence
 remains confined to the authenticated response and excluded from diagnostic logs.
 
+### Administration request-log privacy
+
+Keep retained identity and Notify correlation confined to authenticated responses.
+GET query values can otherwise appear in hosting diagnostics before authorization
+and in ECS URL enrichment. Redact administration query strings at the logging
+boundary, preserving lifecycle, path, method, status and correlation metadata.
+The [request-log redactor](../../src/Consumer/Utils/Logging/AdminRequestLogRedactor.cs)
+changes detached event metadata after enrichment, leaving request binding,
+authorization, log levels and non-admin request logging unchanged.
+
 ## Consequences
 
 Malformed commands and immutable conflicts cannot be discarded through these APIs.

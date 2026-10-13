@@ -9,6 +9,7 @@ using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
+using Elastic.CommonSchema.Serilog;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -20,6 +21,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using NSubstitute;
+using Serilog.Events;
 
 namespace Defra.WasteObligations.Consumer.Tests.Administration;
 
@@ -1358,6 +1360,175 @@ public sealed class CommandDlqInspectionTests
         Assert.Empty(factory.Notify.ReceivedCalls());
     }
 
+    [Theory]
+    [InlineData("admin", false, 200)]
+    [InlineData("admin", true, 200)]
+    [InlineData("missing", true, 401)]
+    [InlineData("invalid", true, 400)]
+    public async Task WhenAdminSearchContainsEvidence_ShouldKeepItOutOfProductionRequestLogs(
+        string caller,
+        bool encoded,
+        int status
+    )
+    {
+        const string key = "v1:0000000000000000000000000000000000000000000000000000000000000001";
+        const string notifyId = "12345678-1234-1234-1234-123456789abc";
+        const string encodedKey = "v1%3A0000000000000000000000000000000000000000000000000000000000000001";
+        const string encodedNotifyId = "12345678%2D1234%2D1234%2D1234%2D123456789abc";
+        const string correlation = "request-log-privacy-correlation";
+        var path = encoded
+            ? "/ADMIN/notification-commands/delivery-records"
+            : "/admin/notification-commands/delivery-records";
+        var query =
+            "notificationKey="
+            + (encoded ? encodedKey : key)
+            + "&notifyNotificationId="
+            + (encoded ? encodedNotifyId : notifyId)
+            + (caller == "invalid" ? "&pageSize=0" : "");
+        await using var factory = new InspectionApplicationFactory(productionLogging: true);
+        factory
+            .SearchReader.Search(Arg.Any<DeliveryRecordSearchQuery>(), Arg.Any<CancellationToken>())
+            .Returns(new DeliveryRecordSearchResult([], null));
+        using var client = factory.CreateClient();
+        using var request = SearchRequest(caller == "invalid" ? "admin" : caller, query);
+        request.RequestUri = new Uri(path + "?" + query, UriKind.Relative);
+        request.Headers.Add("x-cdp-request-id", correlation);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var capture = factory.ProductionLogs!;
+        await WaitForRequestLogs(capture, path);
+
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        AssertRequestLogMetadata(capture, path, status);
+        Assert.Contains(capture.EcsOutput, output => output.Contains(correlation, StringComparison.Ordinal));
+        Assert.Contains(
+            capture.Events,
+            logEvent => StructuredLogText(logEvent).Contains(correlation, StringComparison.Ordinal)
+        );
+        if (caller == "admin")
+            await factory
+                .SearchReader.Received(1)
+                .Search(
+                    Arg.Is<DeliveryRecordSearchQuery>(search =>
+                        search.NotificationKey == key && search.NotifyNotificationId == notifyId
+                    ),
+                    Arg.Any<CancellationToken>()
+                );
+        else
+            Assert.Empty(factory.SearchReader.ReceivedCalls());
+        var contexts = capture
+            .Events.Select(logEvent =>
+                logEvent.Properties.TryGetValue("HttpContext", out var value)
+                && value is ScalarValue { Value: SpecialProperties.HttpContextEnrichments context }
+                    ? context
+                    : null
+            )
+            .Where(context => context?.Url?.Path == path)
+            .ToArray();
+        Assert.NotEmpty(contexts);
+        foreach (var sensitive in new[] { key, notifyId, encodedKey, encodedNotifyId })
+        {
+            Assert.All(capture.Events, logEvent =>
+            {
+                Assert.DoesNotContain(sensitive, StructuredLogText(logEvent), StringComparison.Ordinal);
+                Assert.DoesNotContain(sensitive, logEvent.RenderMessage(), StringComparison.Ordinal);
+            });
+            Assert.All(capture.EcsOutput, output => Assert.DoesNotContain(sensitive, output, StringComparison.Ordinal));
+        }
+        Assert.All(contexts, context =>
+        {
+            var url = Assert.IsType<Elastic.CommonSchema.Url>(context!.Url);
+            Assert.Equal("", url.Query);
+            Assert.DoesNotContain("?", url.Full, StringComparison.Ordinal);
+            Assert.DoesNotContain("?", url.Original, StringComparison.Ordinal);
+        });
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData("/admin", true)]
+    [InlineData("/administrator", false)]
+    public async Task WhenPathHasAdminPrefix_ShouldRedactOnlyTheAdminSegment(string path, bool redact)
+    {
+        const string marker = "ordinary-visible-query-marker";
+        await using var factory = new InspectionApplicationFactory(productionLogging: true);
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(path + "?control=" + marker, TestContext.Current.CancellationToken);
+        var capture = factory.ProductionLogs!;
+        await WaitForRequestLogs(capture, path);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        AssertRequestLogMetadata(capture, path, 404);
+        if (redact)
+        {
+            Assert.All(
+                capture.Events,
+                logEvent => Assert.DoesNotContain(marker, StructuredLogText(logEvent), StringComparison.Ordinal)
+            );
+            Assert.All(capture.EcsOutput, output => Assert.DoesNotContain(marker, output, StringComparison.Ordinal));
+        }
+        else
+        {
+            Assert.Contains(
+                capture.Events,
+                logEvent => StructuredLogText(logEvent).Contains(marker, StringComparison.Ordinal)
+            );
+            Assert.Contains(capture.EcsOutput, output => output.Contains(marker, StringComparison.Ordinal));
+        }
+        Assert.Empty(factory.SearchReader.ReceivedCalls());
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    private static async Task WaitForRequestLogs(AdminRequestLogCapture capture, string path)
+    {
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        source.CancelAfter(TimeSpan.FromSeconds(5));
+        while (
+            !capture.Events.Any(logEvent =>
+                logEvent.MessageTemplate.Text.StartsWith("Request finished", StringComparison.Ordinal)
+                && RequestLogPath(logEvent) == path
+            )
+        )
+            await Task.Delay(TimeSpan.FromMilliseconds(10), source.Token);
+    }
+
+    private static void AssertRequestLogMetadata(AdminRequestLogCapture capture, string path, int status)
+    {
+        Assert.False(capture.Overflowed);
+        var events = capture.Events.Where(logEvent => RequestLogPath(logEvent) == path).ToArray();
+        Assert.Contains(
+            events,
+            logEvent => logEvent.MessageTemplate.Text.StartsWith("Request starting", StringComparison.Ordinal)
+        );
+        var finished = Assert.Single(
+            events,
+            logEvent => logEvent.MessageTemplate.Text.StartsWith("Request finished", StringComparison.Ordinal)
+        );
+        Assert.Equal(status, Assert.IsType<int>(Assert.IsType<ScalarValue>(finished.Properties["StatusCode"]).Value));
+        Assert.Equal("GET", Assert.IsType<string>(Assert.IsType<ScalarValue>(finished.Properties["Method"]).Value));
+        Assert.Contains(capture.EcsOutput, output => output.Contains(path, StringComparison.Ordinal));
+    }
+
+    private static string? RequestLogPath(LogEvent logEvent) =>
+        ReadLogString(logEvent, "RequestPath") ?? ReadLogString(logEvent, "Path");
+
+    private static string? ReadLogString(LogEvent logEvent, string property) =>
+        logEvent.Properties.TryGetValue(property, out var value) && value is ScalarValue { Value: string text }
+            ? text
+            : null;
+
+    private static string StructuredLogText(LogEvent logEvent) =>
+        JsonSerializer.Serialize(
+            logEvent.Properties.ToDictionary(
+                property => property.Key,
+                property => property.Value is ScalarValue scalar ? scalar.Value : property.Value.ToString()
+            )
+        );
+
     private static HttpRequestMessage SearchRequest(string condition, string? query = null)
     {
         var request = Request(condition);
@@ -1490,7 +1661,8 @@ public sealed class CommandDlqInspectionTests
     private sealed class InspectionApplicationFactory(
         Dictionary<string, string?>? overrides = null,
         bool emptyAcl = false,
-        IMongoClient? searchMongo = null
+        IMongoClient? searchMongo = null,
+        bool productionLogging = false
     ) : WebApplicationFactory<Program>
     {
         public IAmazonSQS Sqs { get; } = CreateSqs();
@@ -1498,6 +1670,19 @@ public sealed class CommandDlqInspectionTests
         public IDeliveryRecordSearchReader SearchReader { get; } = Substitute.For<IDeliveryRecordSearchReader>();
         public INotifyEmailClient Notify { get; } = Substitute.For<INotifyEmailClient>();
         public RecordingLogs Logs { get; } = new();
+        public AdminRequestLogCapture? ProductionLogs { get; } = productionLogging ? new() : null;
+
+        public override async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await base.DisposeAsync();
+            }
+            finally
+            {
+                ProductionLogs?.Dispose();
+            }
+        }
 
         private static IAmazonSQS CreateSqs()
         {
@@ -1525,9 +1710,10 @@ public sealed class CommandDlqInspectionTests
             builder.UseEnvironment("Testing");
             builder.ConfigureTestServices(services =>
             {
-                services.AddSingleton<ILoggerFactory>(_ =>
-                    LoggerFactory.Create(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(Logs))
-                );
+                if (!productionLogging)
+                    services.AddSingleton<ILoggerFactory>(_ =>
+                        LoggerFactory.Create(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(Logs))
+                    );
                 foreach (
                     var descriptor in services
                         .Where(descriptor =>
@@ -1592,6 +1778,12 @@ public sealed class CommandDlqInspectionTests
                 ["Acl:Clients:write:Secret"] = Secret,
                 ["Acl:Clients:write:Scopes:0"] = "write",
             };
+            if (ProductionLogs is { } capture)
+            {
+                values["Serilog:Using:0"] = typeof(AdminRequestLogCaptureSinkExtensions).Assembly.GetName().Name;
+                values["Serilog:WriteTo:1:Name"] = "CaptureAdminRequests";
+                values["Serilog:WriteTo:1:Args:captureId"] = capture.Id;
+            }
             if (emptyAcl)
                 foreach (
                     var key in values
