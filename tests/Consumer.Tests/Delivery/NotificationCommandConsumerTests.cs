@@ -141,11 +141,12 @@ public sealed class NotificationCommandConsumerTests : IDisposable
             logger.Messages,
             message => message.StartsWith("Notification command outcome", StringComparison.Ordinal)
         );
-        var expectedReason = suppressed
-            ? cutover is null
-                ? "null-cutover"
-                : "before-cutover"
-            : "request-accepted-by-notify";
+        var expectedReason = (suppressed, cutover is null) switch
+        {
+            (false, _) => "request-accepted-by-notify",
+            (true, true) => "null-cutover",
+            (true, false) => "before-cutover",
+        };
         Assert.Contains(expectedReason, outcome);
         var digest = new NotificationCommandDigest(
             Options.Create(
