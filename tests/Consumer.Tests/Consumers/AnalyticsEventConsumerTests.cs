@@ -3,10 +3,10 @@ using System.IO.Compression;
 using System.Text;
 using Amazon.SQS;
 using Amazon.SQS.Model;
-using Defra.WasteObligations.Consumer.Consumers;
-using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -199,7 +199,9 @@ public class AnalyticsEventConsumerTests
         await sqsClient
             .Received(2)
             .ReceiveMessageAsync(
-                Arg.Is<ReceiveMessageRequest>(request => request.MaxNumberOfMessages == 1 && request.VisibilityTimeout == 120),
+                Arg.Is<ReceiveMessageRequest>(request =>
+                    request.MaxNumberOfMessages == 1 && request.VisibilityTimeout == 120
+                ),
                 Arg.Any<CancellationToken>()
             );
         await sqsClient

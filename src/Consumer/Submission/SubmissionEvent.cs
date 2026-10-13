@@ -39,9 +39,7 @@ public sealed record SubmissionEvent(string EventId, string EntityId, Guid Organ
         && value.All(character => "0123456789ABCDEFGHJKMNPQRSTVWXYZ".Contains(character));
 
     public static bool IsEntityId(string? value) =>
-        value is { Length: 29 }
-        && value.StartsWith("cdec_", StringComparison.Ordinal)
-        && IsDeclarationId(value[5..]);
+        value is { Length: 29 } && value.StartsWith("cdec_", StringComparison.Ordinal) && IsDeclarationId(value[5..]);
 
     public static bool IsDeclarationId(string? value) =>
         value is { Length: 24 } && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');

@@ -51,16 +51,24 @@ public sealed class SubmissionEmailConsumerTests
     )
     {
         var requests = new List<string>();
-        using var harness = new Harness(EventBody(version: 1), (request, _) =>
-        {
-            requests.Add(request.RequestUri!.AbsolutePath);
-            var authentication = Assert.IsType<AuthenticationHeaderValue>(request.Headers.Authorization);
-            Assert.Equal("Basic", authentication.Scheme);
-            Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes($"reader:{s_readCredential}")), authentication.Parameter);
+        using var harness = new Harness(
+            EventBody(version: 1),
+            (request, _) =>
+            {
+                requests.Add(request.RequestUri!.AbsolutePath);
+                var authentication = Assert.IsType<AuthenticationHeaderValue>(request.Headers.Authorization);
+                Assert.Equal("Basic", authentication.Scheme);
+                Assert.Equal(
+                    Convert.ToBase64String(Encoding.UTF8.GetBytes($"reader:{s_readCredential}")),
+                    authentication.Parameter
+                );
 
-            return Task.FromResult(Response(DeclarationBody(registrationType, country, status, version: 2)));
-        });
-        harness.Sqs.Configure().DeleteMessageAsync("http://localhost/analytics", "receipt", Arg.Any<CancellationToken>())
+                return Task.FromResult(Response(DeclarationBody(registrationType, country, status, version: 2)));
+            }
+        );
+        harness
+            .Sqs.Configure()
+            .DeleteMessageAsync("http://localhost/analytics", "receipt", Arg.Any<CancellationToken>())
             .Returns(_ =>
             {
                 Assert.Single(harness.Publications);
@@ -73,7 +81,10 @@ public sealed class SubmissionEmailConsumerTests
         await harness.Deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await harness.Stop();
 
-        Assert.Equal($"/organisations/{OrganisationId}/compliance-declarations/{DeclarationId}", Assert.Single(requests));
+        Assert.Equal(
+            $"/organisations/{OrganisationId}/compliance-declarations/{DeclarationId}",
+            Assert.Single(requests)
+        );
         var publication = Assert.Single(harness.Publications);
         Assert.Equal(SubmissionKey, publication.MessageDeduplicationId);
         var command = JsonSerializer.Deserialize<NotificationCommand>(
@@ -84,7 +95,10 @@ public sealed class SubmissionEmailConsumerTests
         Assert.Equal("original@example.com", command.EmailAddress);
         Assert.Equal(template, command.TemplateId);
         Assert.Equal(notificationType, command.NotificationType);
-        Assert.Equal(new DateTimeOffset(2026, 9, 28, 10, 0, 0, TimeSpan.Zero).AddMilliseconds(123), command.ActionOccurredAtUtc);
+        Assert.Equal(
+            new DateTimeOffset(2026, 9, 28, 10, 0, 0, TimeSpan.Zero).AddMilliseconds(123),
+            command.ActionOccurredAtUtc
+        );
         Assert.Equal(5, command.Personalisation.EnumerateObject().Count());
         Assert.Equal(JsonValueKind.Number, command.Personalisation.GetProperty("obligationYear").ValueKind);
         Assert.Equal(2025, command.Personalisation.GetProperty("obligationYear").GetInt32());
@@ -125,7 +139,11 @@ public sealed class SubmissionEmailConsumerTests
         {
             "older" => body.Replace("\"version\": 3", "\"version\": 1", StringComparison.Ordinal),
             "wrong-declaration" => body.Replace(DeclarationId, "65f1f6570bb08052a8a27b02", StringComparison.Ordinal),
-            "wrong-organisation" => body.Replace(OrganisationId, "9a47d78a-1983-4733-af0f-413a245565a3", StringComparison.Ordinal),
+            "wrong-organisation" => body.Replace(
+                OrganisationId,
+                "9a47d78a-1983-4733-af0f-413a245565a3",
+                StringComparison.Ordinal
+            ),
             "missing-audit" => body.Replace("Submitted", "Draft", StringComparison.Ordinal),
             "missing-email" => body.Replace(Recipient, "", StringComparison.Ordinal),
             "missing-name" => body.Replace(UserName, "", StringComparison.Ordinal),
@@ -133,13 +151,22 @@ public sealed class SubmissionEmailConsumerTests
             "missing-regulator-email" => body.Replace("regulator@example.com", "", StringComparison.Ordinal),
             "missing-registration" => body.Replace("DirectProducer", "", StringComparison.Ordinal),
             "invalid-year" => body.Replace("2025", "0", StringComparison.Ordinal),
-            "invalid-timestamp" => body.Replace("2026-09-28T10:00:00.123Z", "2026-09-28T10:00:00", StringComparison.Ordinal),
-            "invalid-version" => body.Replace("\"version\": 3", "\"version\": \"private-value\"", StringComparison.Ordinal),
+            "invalid-timestamp" => body.Replace(
+                "2026-09-28T10:00:00.123Z",
+                "2026-09-28T10:00:00",
+                StringComparison.Ordinal
+            ),
+            "invalid-version" => body.Replace(
+                "\"version\": 3",
+                "\"version\": \"private-value\"",
+                StringComparison.Ordinal
+            ),
             _ => body,
         };
         using var harness = new Harness(
             EventBody(),
-            (_, _) => Task.FromResult(Response(body, scenario == "not-found" ? HttpStatusCode.NotFound : HttpStatusCode.OK))
+            (_, _) =>
+                Task.FromResult(Response(body, scenario == "not-found" ? HttpStatusCode.NotFound : HttpStatusCode.OK))
         );
 
         await harness.Start();
@@ -168,12 +195,15 @@ public sealed class SubmissionEmailConsumerTests
         var body = EventBody().Replace("compliance_declaration_v1.3", schema, StringComparison.Ordinal);
         if (malformedVersion)
             body = body.Replace("\"version\": 2", "\"version\": \"bad-version\"", StringComparison.Ordinal);
-        using var harness = new Harness(body, (_, _) =>
-        {
-            Interlocked.Increment(ref reads);
+        using var harness = new Harness(
+            body,
+            (_, _) =>
+            {
+                Interlocked.Increment(ref reads);
 
-            return Task.FromResult(Response(DeclarationBody()));
-        });
+                return Task.FromResult(Response(DeclarationBody()));
+            }
+        );
 
         await harness.Start();
         await harness.Logger.Warning.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
@@ -192,10 +222,14 @@ public sealed class SubmissionEmailConsumerTests
     {
         using var harness = new Harness(EventBody(), (_, _) => Task.FromResult(Response(DeclarationBody())));
         if (published)
-            harness.Sqs.Configure().DeleteMessageAsync("http://localhost/analytics", "receipt", Arg.Any<CancellationToken>())
+            harness
+                .Sqs.Configure()
+                .DeleteMessageAsync("http://localhost/analytics", "receipt", Arg.Any<CancellationToken>())
                 .Returns(Task.FromException<DeleteMessageResponse>(new InvalidOperationException(PrivateFailure)));
         else
-            harness.Sqs.Configure().SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>())
+            harness
+                .Sqs.Configure()
+                .SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>())
                 .Returns(new SendMessageResponse { HttpStatusCode = HttpStatusCode.ServiceUnavailable });
 
         await harness.Start();
@@ -204,10 +238,15 @@ public sealed class SubmissionEmailConsumerTests
 
         var warning = Assert.Single(harness.Logger.Entries, entry => entry.Level == LogLevel.Warning);
         Assert.Contains(published ? "acknowledgement-unconfirmed" : "publication-unconfirmed", warning.State);
-        Assert.Contains(published ? "publication confirmed but acknowledgement unconfirmed" : "not acknowledged", warning.Text);
+        Assert.Contains(
+            published ? "publication confirmed but acknowledgement unconfirmed" : "not acknowledged",
+            warning.Text
+        );
         Assert.Equal(
             published,
-            harness.Logger.Entries.Any(entry => entry.Text.StartsWith("Published submitted email command", StringComparison.Ordinal))
+            harness.Logger.Entries.Any(entry =>
+                entry.Text.StartsWith("Published submitted email command", StringComparison.Ordinal)
+            )
         );
         Assert.False(harness.Deleted.Task.IsCompleted);
         AssertSafe(harness.Logger);
@@ -219,25 +258,31 @@ public sealed class SubmissionEmailConsumerTests
         var reads = 0;
         var timedOutAt = 0L;
         var backoff = TimeSpan.Zero;
-        using var harness = new Harness(EventBody(), async (_, token) =>
-        {
-            if (Interlocked.Increment(ref reads) == 1)
+        using var harness = new Harness(
+            EventBody(),
+            async (_, token) =>
             {
-                try
+                if (Interlocked.Increment(ref reads) == 1)
                 {
-                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                    try
+                    {
+                        await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                    }
+                    finally
+                    {
+                        timedOutAt = Stopwatch.GetTimestamp();
+                    }
                 }
-                finally
-                {
-                    timedOutAt = Stopwatch.GetTimestamp();
-                }
-            }
-            backoff = Stopwatch.GetElapsedTime(timedOutAt);
+                backoff = Stopwatch.GetElapsedTime(timedOutAt);
 
-            return Response(DeclarationBody());
-        }, readTimeoutSeconds: 1);
+                return Response(DeclarationBody());
+            },
+            readTimeoutSeconds: 1
+        );
         var receives = 0;
-        harness.Sqs.Configure().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+        harness
+            .Sqs.Configure()
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
             .Returns(async call =>
             {
                 if (Interlocked.Increment(ref receives) <= 2)
@@ -256,7 +301,11 @@ public sealed class SubmissionEmailConsumerTests
         Assert.Equal(2, reads);
         Assert.True(backoff >= TimeSpan.FromMilliseconds(800));
         Assert.Single(harness.Publications);
-        Assert.Contains(harness.Logger.Entries, entry => entry.Level == LogLevel.Warning && entry.State.Contains("dependency-timeout", StringComparison.Ordinal));
+        Assert.Contains(
+            harness.Logger.Entries,
+            entry =>
+                entry.Level == LogLevel.Warning && entry.State.Contains("dependency-timeout", StringComparison.Ordinal)
+        );
         AssertSafe(harness.Logger);
     }
 
@@ -264,13 +313,16 @@ public sealed class SubmissionEmailConsumerTests
     public async Task WhenHostStopsDuringDeclarationRead_ShouldNotPublishAcknowledgeOrWarn()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var harness = new Harness(EventBody(), async (_, token) =>
-        {
-            entered.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+        using var harness = new Harness(
+            EventBody(),
+            async (_, token) =>
+            {
+                entered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
 
-            return Response(DeclarationBody());
-        });
+                return Response(DeclarationBody());
+            }
+        );
 
         await harness.Start();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
@@ -302,7 +354,10 @@ public sealed class SubmissionEmailConsumerTests
 
         Assert.Empty(harness.Publications);
         Assert.False(harness.Deleted.Task.IsCompleted);
-        Assert.Contains(harness.Logger.Entries, entry => entry.State.Contains("dependency-timeout", StringComparison.Ordinal));
+        Assert.Contains(
+            harness.Logger.Entries,
+            entry => entry.State.Contains("dependency-timeout", StringComparison.Ordinal)
+        );
         AssertSafe(harness.Logger);
     }
 
@@ -312,12 +367,8 @@ public sealed class SubmissionEmailConsumerTests
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var harness = new Harness(
             EventBody(),
-            (_, _) => Task.FromResult(
-                new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StalledContent(cancelled),
-                }
-            ),
+            (_, _) =>
+                Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StalledContent(cancelled) }),
             readTimeoutSeconds: 1
         );
 
@@ -328,7 +379,10 @@ public sealed class SubmissionEmailConsumerTests
 
         Assert.Empty(harness.Publications);
         Assert.False(harness.Deleted.Task.IsCompleted);
-        Assert.Contains(harness.Logger.Entries, entry => entry.State.Contains("dependency-timeout", StringComparison.Ordinal));
+        Assert.Contains(
+            harness.Logger.Entries,
+            entry => entry.State.Contains("dependency-timeout", StringComparison.Ordinal)
+        );
         AssertSafe(harness.Logger);
     }
 
@@ -355,7 +409,9 @@ public sealed class SubmissionEmailConsumerTests
         using var harness = new Harness(EventBody(), (_, _) => Task.FromResult(Response(DeclarationBody())));
         var receives = 0;
         var acknowledged = 0;
-        harness.Sqs.Configure().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+        harness
+            .Sqs.Configure()
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
             .Returns(async call =>
             {
                 var count = Interlocked.Increment(ref receives);
@@ -370,7 +426,9 @@ public sealed class SubmissionEmailConsumerTests
 
                 return new ReceiveMessageResponse();
             });
-        harness.Sqs.Configure().DeleteMessageAsync("http://localhost/analytics", "receipt", Arg.Any<CancellationToken>())
+        harness
+            .Sqs.Configure()
+            .DeleteMessageAsync("http://localhost/analytics", "receipt", Arg.Any<CancellationToken>())
             .Returns(_ =>
             {
                 if (Interlocked.Increment(ref acknowledged) == 2)
@@ -396,8 +454,11 @@ public sealed class SubmissionEmailConsumerTests
     )
     {
         using var harness = new Harness("{}", (_, _) => throw new InvalidOperationException(PrivateFailure));
-        var message = CreateMessage(EventBody().Replace(EventId, PrivateFailure, StringComparison.Ordinal)
-            .Replace("cdec_" + DeclarationId, PrivateFailure, StringComparison.Ordinal));
+        var message = CreateMessage(
+            EventBody()
+                .Replace(EventId, PrivateFailure, StringComparison.Ordinal)
+                .Replace("cdec_" + DeclarationId, PrivateFailure, StringComparison.Ordinal)
+        );
         if (unsupportedEncoding)
         {
             message.MessageAttributes = new Dictionary<string, MessageAttributeValue>
@@ -405,7 +466,9 @@ public sealed class SubmissionEmailConsumerTests
                 ["Content-Encoding"] = new() { StringValue = PrivateFailure },
             };
         }
-        harness.Sqs.Configure().ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+        harness
+            .Sqs.Configure()
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
             .Returns(new ReceiveMessageResponse { Messages = [message] });
 
         await harness.Start();
@@ -420,59 +483,65 @@ public sealed class SubmissionEmailConsumerTests
 
     private static void AssertSafe(RecordingLogger logger)
     {
-        Assert.All(logger.Entries, entry =>
-        {
-            Assert.Null(entry.Exception);
-            foreach (var privateValue in new[]
+        Assert.All(
+            logger.Entries,
+            entry =>
             {
-                Recipient.Trim(),
-                UserName,
-                "regulator@example.com",
-                "later@example.com",
-                "Later Actor",
-                s_readCredential,
-                SubmissionKey,
-                PrivateFailure,
-            })
-            {
-                Assert.DoesNotContain(privateValue, entry.State, StringComparison.OrdinalIgnoreCase);
-                Assert.DoesNotContain(privateValue, entry.Text, StringComparison.OrdinalIgnoreCase);
+                Assert.Null(entry.Exception);
+                foreach (
+                    var privateValue in new[]
+                    {
+                        Recipient.Trim(),
+                        UserName,
+                        "regulator@example.com",
+                        "later@example.com",
+                        "Later Actor",
+                        s_readCredential,
+                        SubmissionKey,
+                        PrivateFailure,
+                    }
+                )
+                {
+                    Assert.DoesNotContain(privateValue, entry.State, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain(privateValue, entry.Text, StringComparison.OrdinalIgnoreCase);
+                }
             }
-        });
+        );
     }
 
-    private static Message CreateMessage(string body) => new()
-    {
-        MessageId = MessageId,
-        ReceiptHandle = "receipt",
-        Body = body,
-    };
+    private static Message CreateMessage(string body) =>
+        new()
+        {
+            MessageId = MessageId,
+            ReceiptHandle = "receipt",
+            Body = body,
+        };
 
-    private static string EventBody(int version = 2) => $$"""
-        { "eventId": "{{EventId}}", "entityId": "cdec_{{DeclarationId}}", "entity": "compliance_declaration",
-          "eventType": "submission.created", "schemaVersion": "compliance_declaration_v1.3", "version": {{version}},
-          "after": { "organisation": { "id": "{{OrganisationId}}", "businessCountry": "GB-SCT", "regulator": "current organisation" } } }
-        """;
+    private static string EventBody(int version = 2) =>
+        $$"""
+            { "eventId": "{{EventId}}", "entityId": "cdec_{{DeclarationId}}", "entity": "compliance_declaration",
+              "eventType": "submission.created", "schemaVersion": "compliance_declaration_v1.3", "version": {{version}},
+              "after": { "organisation": { "id": "{{OrganisationId}}", "businessCountry": "GB-SCT", "regulator": "current organisation" } } }
+            """;
 
     private static string DeclarationBody(
         string registrationType = "DirectProducer",
         string country = "GB-ENG",
         string status = "Cancelled",
         int version = 3
-    ) => $$"""
-        { "id": "{{DeclarationId}}", "version": {{version}}, "status": "{{status}}", "obligationYear": 2025,
-          "organisation": { "id": "{{OrganisationId}}", "registrationType": "{{registrationType}}",
-            "businessCountry": "{{country}}", "regulator": "stored regulator", "regulatorEmail": "regulator@example.com" },
-          "audit": [ { "action": "Submitted", "timestamp": "2026-09-28T10:00:00.123Z",
-            "user": { "email": "{{Recipient}}", "name": "{{UserName}}", "locale": "cy" } },
-            { "action": "Submitted", "timestamp": "2026-09-29T10:00:00Z", "user": { "email": "later@example.com", "name": "Later Actor" } },
-            { "action": "Cancelled", "timestamp": "2026-09-30T10:00:00Z", "user": { "email": "later@example.com", "name": "Later Actor" } } ] }
-        """;
+    ) =>
+        $$"""
+            { "id": "{{DeclarationId}}", "version": {{version}}, "status": "{{status}}", "obligationYear": 2025,
+              "organisation": { "id": "{{OrganisationId}}", "registrationType": "{{registrationType}}",
+                "businessCountry": "{{country}}", "regulator": "stored regulator", "regulatorEmail": "regulator@example.com" },
+              "audit": [ { "action": "Submitted", "timestamp": "2026-09-28T10:00:00.123Z",
+                "user": { "email": "{{Recipient}}", "name": "{{UserName}}", "locale": "cy" } },
+                { "action": "Submitted", "timestamp": "2026-09-29T10:00:00Z", "user": { "email": "later@example.com", "name": "Later Actor" } },
+                { "action": "Cancelled", "timestamp": "2026-09-30T10:00:00Z", "user": { "email": "later@example.com", "name": "Later Actor" } } ] }
+            """;
 
-    private static HttpResponseMessage Response(string body, HttpStatusCode status = HttpStatusCode.OK) => new(status)
-    {
-        Content = new StringContent(body, Encoding.UTF8, "application/json"),
-    };
+    private static HttpResponseMessage Response(string body, HttpStatusCode status = HttpStatusCode.OK) =>
+        new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
     private sealed class Harness : IDisposable
     {
@@ -570,9 +639,8 @@ public sealed class SubmissionEmailConsumerTests
         }
     }
 
-    private sealed class DeclarationHandler(
-        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> read
-    ) : HttpMessageHandler
+    private sealed class DeclarationHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> read)
+        : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -630,7 +698,8 @@ public sealed class SubmissionEmailConsumerTests
         )
         {
             var fields = state is IEnumerable<KeyValuePair<string, object?>> values
-                ? string.Join(";", values.Select(value => value.Key + "=" + value.Value)) : "";
+                ? string.Join(";", values.Select(value => value.Key + "=" + value.Value))
+                : "";
             Entries.Enqueue(new LogEntry(logLevel, formatter(state, exception), fields, exception));
             if (logLevel == LogLevel.Warning)
                 Warning.TrySetResult();

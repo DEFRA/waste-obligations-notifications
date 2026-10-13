@@ -4,10 +4,8 @@ using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Submission;
 
-public sealed class DeclarationHealthCheck(
-    IDeclarationClient client,
-    IOptions<AnalyticsEventConsumerOptions> options
-) : IHealthCheck
+public sealed class DeclarationHealthCheck(IDeclarationClient client, IOptions<AnalyticsEventConsumerOptions> options)
+    : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context,

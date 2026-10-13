@@ -99,7 +99,9 @@ public sealed class SubmissionRegistrationTests
                 {
                     ["AnalyticsEventConsumer:WaitTimeSeconds"] = wait.ToString(CultureInfo.InvariantCulture),
                     ["AnalyticsEventConsumer:ReceiveTimeoutSeconds"] = receive.ToString(CultureInfo.InvariantCulture),
-                    ["AnalyticsEventConsumer:VisibilityTimeoutSeconds"] = visibility.ToString(CultureInfo.InvariantCulture),
+                    ["AnalyticsEventConsumer:VisibilityTimeoutSeconds"] = visibility.ToString(
+                        CultureInfo.InvariantCulture
+                    ),
                     ["AnalyticsEventConsumer:ReadTimeoutSeconds"] = "10",
                     ["AnalyticsEventConsumer:PublishTimeoutSeconds"] = "10",
                     ["AnalyticsEventConsumer:DeleteTimeoutSeconds"] = "5",

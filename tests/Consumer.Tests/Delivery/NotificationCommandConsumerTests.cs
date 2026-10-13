@@ -142,7 +142,9 @@ public sealed class NotificationCommandConsumerTests : IDisposable
             message => message.StartsWith("Notification command outcome", StringComparison.Ordinal)
         );
         var expectedReason = suppressed
-            ? cutover is null ? "null-cutover" : "before-cutover"
+            ? cutover is null
+                ? "null-cutover"
+                : "before-cutover"
             : "request-accepted-by-notify";
         Assert.Contains(expectedReason, outcome);
         var digest = new NotificationCommandDigest(
@@ -157,12 +159,15 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         );
         Assert.Contains(digest.CreateNotifyReference(CommandIdempotencyKey), outcome);
         Assert.DoesNotContain("delivered", outcome, StringComparison.OrdinalIgnoreCase);
-        Assert.All(logger.States, state =>
-        {
-            Assert.DoesNotContain(EmailAddress, state);
-            Assert.DoesNotContain(Personalisation, state);
-            Assert.DoesNotContain(CommandIdempotencyKey, state);
-        });
+        Assert.All(
+            logger.States,
+            state =>
+            {
+                Assert.DoesNotContain(EmailAddress, state);
+                Assert.DoesNotContain(Personalisation, state);
+                Assert.DoesNotContain(CommandIdempotencyKey, state);
+            }
+        );
         Assert.Empty(logger.Exceptions);
     }
 

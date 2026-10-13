@@ -34,7 +34,11 @@ public sealed class DeclarationClient(HttpClient client, IOptions<SubmissionEmai
 
     public async Task<bool> CheckHealth(CancellationToken cancellationToken)
     {
-        using var response = await client.GetAsync("health", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await client.GetAsync(
+            "health",
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken
+        );
 
         return response.IsSuccessStatusCode;
     }

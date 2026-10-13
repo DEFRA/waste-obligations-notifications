@@ -12,25 +12,25 @@ public static class ServiceCollectionExtensions
             .ValidateDataAnnotations()
             .Validate(options => options.HasValidTemplates, "Submission templates must be UUIDs")
             .Validate(
-                options => !configuration.GetValue<bool>("AnalyticsEventConsumer:ProcessingEnabled") || options.HasReadConfiguration,
+                options =>
+                    !configuration.GetValue<bool>("AnalyticsEventConsumer:ProcessingEnabled")
+                    || options.HasReadConfiguration,
                 "Enabled analytics requires declaration read API and credentials"
             )
             .ValidateOnStart();
         services.AddSingleton<SubmissionCommandMapper>();
         services
-            .AddHttpClient<IDeclarationClient, DeclarationClient>((provider, client) =>
-            {
-                var options = provider.GetRequiredService<IOptions<SubmissionEmailOptions>>().Value;
-                if (options.HasReadConfiguration)
-                    client.BaseAddress = new Uri(options.ApiBaseAddress.TrimEnd('/') + "/");
-                client.Timeout = Timeout.InfiniteTimeSpan;
-            })
-            .ConfigurePrimaryHttpMessageHandler(() =>
-                new SocketsHttpHandler
+            .AddHttpClient<IDeclarationClient, DeclarationClient>(
+                (provider, client) =>
                 {
-                    AllowAutoRedirect = false,
-                    PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+                    var options = provider.GetRequiredService<IOptions<SubmissionEmailOptions>>().Value;
+                    if (options.HasReadConfiguration)
+                        client.BaseAddress = new Uri(options.ApiBaseAddress.TrimEnd('/') + "/");
+                    client.Timeout = Timeout.InfiniteTimeSpan;
                 }
+            )
+            .ConfigurePrimaryHttpMessageHandler(() =>
+                new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = TimeSpan.FromMinutes(2) }
             )
             .RemoveAllLoggers();
 

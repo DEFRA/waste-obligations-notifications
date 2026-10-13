@@ -25,7 +25,8 @@ public sealed class SubmissionCommandMapper(IOptions<SubmissionEmailOptions> opt
             throw new SubmissionProcessingException("older-declaration-version");
         if (!declaration.TryGetProperty("audit", out var audit) || audit.ValueKind != JsonValueKind.Array)
             throw new SubmissionProcessingException("invalid-declaration");
-        var submitted = audit.EnumerateArray()
+        var submitted = audit
+            .EnumerateArray()
             .FirstOrDefault(entry => SubmissionEvent.ReadString(entry, "action") == "Submitted");
         if (
             submitted.ValueKind != JsonValueKind.Object

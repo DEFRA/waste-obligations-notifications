@@ -22,7 +22,10 @@ public static class ServiceCollectionExtensions
                 options => options.ReceiveTimeoutSeconds > options.WaitTimeSeconds,
                 "Analytics receive timeout must exceed the long-poll wait"
             )
-            .Validate(options => options.HasValidProcessingBudget, "Analytics visibility must cover the processing budget")
+            .Validate(
+                options => options.HasValidProcessingBudget,
+                "Analytics visibility must cover the processing budget"
+            )
             .ValidateOnStart();
 
         services.AddAWSService<IAmazonSQS>();

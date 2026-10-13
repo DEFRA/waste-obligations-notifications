@@ -50,17 +50,18 @@ public sealed class AnalyticsEventConsumer(
                 // Future batching requires review of this complete receive/read/publish/delete budget.
                 var receiveStartedAt = Stopwatch.GetTimestamp();
                 var response = await AnalyticsProcessingBudget.Run(
-                    token => sqsClient.ReceiveMessageAsync(
-                        new ReceiveMessageRequest
-                        {
-                            QueueUrl = options.Value.QueueUrl,
-                            MaxNumberOfMessages = 1,
-                            MessageAttributeNames = ["All"],
-                            WaitTimeSeconds = options.Value.WaitTimeSeconds,
-                            VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
-                        },
-                        token
-                    ),
+                    token =>
+                        sqsClient.ReceiveMessageAsync(
+                            new ReceiveMessageRequest
+                            {
+                                QueueUrl = options.Value.QueueUrl,
+                                MaxNumberOfMessages = 1,
+                                MessageAttributeNames = ["All"],
+                                WaitTimeSeconds = options.Value.WaitTimeSeconds,
+                                VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
+                            },
+                            token
+                        ),
                     options.Value.ReceiveTimeoutSeconds,
                     stoppingToken
                 );
@@ -119,11 +120,7 @@ public sealed class AnalyticsEventConsumer(
 
                     if (logger.IsEnabled(LogLevel.Information))
                     {
-                        logger.LogInformation(
-                            "Consumed analytics event {EventId} for {EntityId}",
-                            eventId,
-                            entityId
-                        );
+                        logger.LogInformation("Consumed analytics event {EventId} for {EntityId}", eventId, entityId);
                     }
 
                     stage = "acknowledgement";
