@@ -12,6 +12,8 @@ public sealed class MongoDeliveryRecordSearchReader(
     IOptions<CommandDlqAdministrationOptions> administration
 ) : IDeliveryRecordSearchReader
 {
+    private const string RecordedAtField = "recordedAtUtc";
+
     public async Task<DeliveryRecordSearchResult> Search(
         DeliveryRecordSearchQuery query,
         CancellationToken cancellationToken
@@ -28,9 +30,9 @@ public sealed class MongoDeliveryRecordSearchReader(
             var filters = new List<FilterDefinition<BsonDocument>>();
             var builder = Builders<BsonDocument>.Filter;
             if (query.RecordedFromUtc is { } from)
-                filters.Add(builder.Gte("recordedAtUtc", RoundUpToMillisecond(from)));
+                filters.Add(builder.Gte(RecordedAtField, RoundUpToMillisecond(from)));
             if (query.RecordedToUtc is { } to)
-                filters.Add(builder.Lt("recordedAtUtc", RoundUpToMillisecond(to)));
+                filters.Add(builder.Lt(RecordedAtField, RoundUpToMillisecond(to)));
             AddExact(filters, "notifyNotificationId", query.NotifyNotificationId);
             AddExact(filters, "notificationKey", query.NotificationKey);
             AddExact(filters, "resendOfNotificationKey", query.ResendOfNotificationKey);
@@ -38,8 +40,8 @@ public sealed class MongoDeliveryRecordSearchReader(
             if (query.ReadCursor() is { } cursor)
                 filters.Add(
                     builder.Or(
-                        builder.Lt("recordedAtUtc", cursor.RecordedAtUtc),
-                        builder.And(builder.Eq("recordedAtUtc", cursor.RecordedAtUtc), builder.Lt("_id", cursor.Id))
+                        builder.Lt(RecordedAtField, cursor.RecordedAtUtc),
+                        builder.And(builder.Eq(RecordedAtField, cursor.RecordedAtUtc), builder.Lt("_id", cursor.Id))
                     )
                 );
             var projection = new BsonDocument
@@ -49,7 +51,7 @@ public sealed class MongoDeliveryRecordSearchReader(
                 { "resendOfNotificationKey", 1 },
                 { "notificationType", 1 },
                 { "outcome", 1 },
-                { "recordedAtUtc", 1 },
+                { RecordedAtField, 1 },
                 { "actionOccurredAtUtc", 1 },
                 { "acceptedAtUtc", 1 },
                 { "leaseExpiresAtUtc", 1 },
@@ -66,7 +68,7 @@ public sealed class MongoDeliveryRecordSearchReader(
                     filters.Count == 0 ? builder.Empty : builder.And(filters),
                     new FindOptions { Collation = Collation.Simple, MaxTime = timeout }
                 )
-                .Sort(Builders<BsonDocument>.Sort.Descending("recordedAtUtc").Descending("_id"))
+                .Sort(Builders<BsonDocument>.Sort.Descending(RecordedAtField).Descending("_id"))
                 .Project<BsonDocument>(projection)
                 .Limit(query.PageSize + 1)
                 .ToListAsync(source.Token)
@@ -77,7 +79,7 @@ public sealed class MongoDeliveryRecordSearchReader(
             var page = documents.Take(query.PageSize).ToArray();
             var nextCursor =
                 documents.Count > query.PageSize
-                    ? query.CreateCursor(page[^1]["recordedAtUtc"].ToUniversalTime(), page[^1]["_id"].AsObjectId)
+                    ? query.CreateCursor(page[^1][RecordedAtField].ToUniversalTime(), page[^1]["_id"].AsObjectId)
                     : null;
 
             return new(page.Select(Summarise).ToArray(), nextCursor);
@@ -117,7 +119,7 @@ public sealed class MongoDeliveryRecordSearchReader(
             parent,
             record["notificationType"].AsString,
             record["outcome"].AsString,
-            record["recordedAtUtc"].ToUniversalTime(),
+            record[RecordedAtField].ToUniversalTime(),
             record["actionOccurredAtUtc"].ToUniversalTime(),
             ReadDate(record, "acceptedAtUtc"),
             ReadDate(record, "leaseExpiresAtUtc"),

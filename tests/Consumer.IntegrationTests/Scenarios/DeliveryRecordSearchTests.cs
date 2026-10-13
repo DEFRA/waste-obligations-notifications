@@ -162,15 +162,20 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             var before = await records.Find(new BsonDocument()).Sort("{_id:1}").ToListAsync(token);
             var reader = Reader(client, databaseName);
             var first = await reader.Search(new DeliveryRecordSearchQuery { PageSize = 2 }, token);
-            Assert.Equal(new[] { "v1:new", "v1:accepted" }, first.Records.Select(record => record.NotificationKey));
+            Assert.Collection(
+                first.Records,
+                record => Assert.Equal("v1:new", record.NotificationKey),
+                record => Assert.Equal("v1:accepted", record.NotificationKey)
+            );
             Assert.NotNull(first.NextCursor);
             var second = await reader.Search(
                 new DeliveryRecordSearchQuery { PageSize = 2, Cursor = first.NextCursor },
                 token
             );
-            Assert.Equal(
-                new[] { "v1:pending", "v1:abandoned" },
-                second.Records.Select(record => record.NotificationKey)
+            Assert.Collection(
+                second.Records,
+                record => Assert.Equal("v1:pending", record.NotificationKey),
+                record => Assert.Equal("v1:abandoned", record.NotificationKey)
             );
             Assert.NotNull(second.NextCursor);
             var third = await reader.Search(

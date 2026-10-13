@@ -103,36 +103,7 @@ public sealed class CommandDlqInspector(
                 );
                 diagnostics.Inspected(state.Classification, command.NotificationType);
 
-                inspections.Add(
-                    new(
-                        command.IdempotencyKey,
-                        command.NotificationType,
-                        command.ActionOccurredAtUtc,
-                        SentAt(message),
-                        ReceiveCount(message),
-                        state.Classification,
-                        digest.CreateRecipientDigest(command.EmailAddress),
-                        state.RecordedAtUtc,
-                        state.LeaseExpiresAtUtc,
-                        token,
-                        message.MessageId,
-                        command.SchemaVersion,
-                        command.EmailAddress,
-                        command.TemplateId,
-                        command.Personalisation,
-                        CommandDlqRecoveryGuidance.For(state.Classification),
-                        CommandDlqRecoveryGuidance.Actions(state.Classification),
-                        state.Record is { } record ? Summarise(record) : null,
-                        state.Record?.NotifyNotificationId,
-                        state.Record?.NotifyReference
-                            ?? (
-                                state.Classification is "unrecorded" or "active-claim" or "expired-claim"
-                                    ? digest.CreateNotifyReference(command.IdempotencyKey)
-                                    : null
-                            ),
-                        RecordLinks(digest.CreateIdempotencyKeyDigest(command.IdempotencyKey))
-                    )
-                );
+                inspections.Add(CreateSupportedInspection(message, command, state, token));
             }
             EnsureTimely(started, source.Token);
 
@@ -147,6 +118,41 @@ public sealed class CommandDlqInspector(
             throw InspectionFailure();
         }
     }
+
+    private CommandDlqInspection CreateSupportedInspection(
+        Message message,
+        NotificationCommand command,
+        NotificationDeliveryState state,
+        string token
+    ) =>
+        new(
+            command.IdempotencyKey,
+            command.NotificationType,
+            command.ActionOccurredAtUtc,
+            SentAt(message),
+            ReceiveCount(message),
+            state.Classification,
+            digest.CreateRecipientDigest(command.EmailAddress),
+            state.RecordedAtUtc,
+            state.LeaseExpiresAtUtc,
+            token,
+            message.MessageId,
+            command.SchemaVersion,
+            command.EmailAddress,
+            command.TemplateId,
+            command.Personalisation,
+            CommandDlqRecoveryGuidance.For(state.Classification),
+            CommandDlqRecoveryGuidance.Actions(state.Classification),
+            state.Record is { } record ? Summarise(record) : null,
+            state.Record?.NotifyNotificationId,
+            state.Record?.NotifyReference
+                ?? (
+                    state.Classification is "unrecorded" or "active-claim" or "expired-claim"
+                        ? digest.CreateNotifyReference(command.IdempotencyKey)
+                        : null
+                ),
+            RecordLinks(digest.CreateIdempotencyKeyDigest(command.IdempotencyKey))
+        );
 
     private static CommandDlqInspectionLinks RecordLinks(string notificationKey)
     {

@@ -11,6 +11,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
 {
     internal const string CollectionName = nameof(NotificationDeliveryRecord);
     private const string OutcomeField = "outcome";
+    private const string NotificationTypeField = "notificationType";
+    private const string ActionOccurredAtField = "actionOccurredAtUtc";
     private const string ServerNow = "$$NOW";
     private const string NotificationKeyField = "notificationKey";
     private const string ImmutableFieldsField = "immutableFields";
@@ -47,8 +49,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { LeaseExpiresAtField, 1 },
             { NotificationKeyField, 1 },
             { "resendOfNotificationKey", 1 },
-            { "notificationType", 1 },
-            { "actionOccurredAtUtc", 1 },
+            { NotificationTypeField, 1 },
+            { ActionOccurredAtField, 1 },
             { "acceptedAtUtc", 1 },
             { "notifyNotificationId", 1 },
             { "notifyReference", 1 },
@@ -111,10 +113,10 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         new(
             record[NotificationKeyField].AsString,
             ReadString(record, "resendOfNotificationKey"),
-            record["notificationType"].AsString,
+            record[NotificationTypeField].AsString,
             record[OutcomeField].AsString,
             record[RecordedAtField].ToUniversalTime(),
-            record["actionOccurredAtUtc"].ToUniversalTime(),
+            record[ActionOccurredAtField].ToUniversalTime(),
             ReadTimestamp(record, "acceptedAtUtc")?.UtcDateTime,
             ReadTimestamp(record, LeaseExpiresAtField)?.UtcDateTime,
             ReadString(record, "notifyNotificationId"),
@@ -145,8 +147,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { NotificationKeyField, Literal(notificationKey) },
             { ImmutableFieldsField, Literal(immutableFields) },
             { "recipient", Literal(_digest.CreateRecipientDigest(command.EmailAddress)) },
-            { "notificationType", Literal(command.NotificationType) },
-            { "actionOccurredAtUtc", command.ActionOccurredAtUtc.UtcDateTime },
+            { NotificationTypeField, Literal(command.NotificationType) },
+            { ActionOccurredAtField, command.ActionOccurredAtUtc.UtcDateTime },
             { OutcomeField, AbandonedOutcome },
             { RecordedAtField, ServerNow },
         };
@@ -288,8 +290,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { NotificationKeyField, Literal(notificationKey) },
             { ImmutableFieldsField, Literal(immutableFields) },
             { "recipient", Literal(_digest.CreateRecipientDigest(command.EmailAddress)) },
-            { "notificationType", Literal(command.NotificationType) },
-            { "actionOccurredAtUtc", command.ActionOccurredAtUtc.UtcDateTime },
+            { NotificationTypeField, Literal(command.NotificationType) },
+            { ActionOccurredAtField, command.ActionOccurredAtUtc.UtcDateTime },
             { OutcomeField, PendingOutcome },
             { RecordedAtField, ServerNow },
             { "attemptOwner", Literal(attemptOwner) },
