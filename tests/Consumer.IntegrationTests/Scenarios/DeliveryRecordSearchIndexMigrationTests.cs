@@ -102,7 +102,7 @@ public sealed class DeliveryRecordSearchIndexMigrationTests : IntegrationTestBas
     )
     {
         using var client = CreateMongoClient();
-        var databaseName = $"notifications_search_index_conflict_{Guid.NewGuid():N}";
+        var databaseName = $"notifications_index_conflict_{Guid.NewGuid():N}";
         var database = client.GetDatabase(databaseName);
         var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
         var token = TestContext.Current.CancellationToken;
