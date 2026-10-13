@@ -434,6 +434,25 @@ The user approved always-registered authenticated administration despite this ev
 
 Authenticated `POST /admin/notification-commands/dlq/verification-command` accepts no body. It creates a random `verification-` key with fixed synthetic fields, confirms matching permanent suppression in Mongo, then enqueues it on the configured DLQ. The response contains `idempotencyKey` and `messageId`; it confirms queuing, not processing. Store rejection or failure never publishes; publication failure leaves safe suppression evidence. Inspect and match the generated key before redriving. The normal consumer then processes it as a terminal duplicate, deletes it and makes no Notify call, with either a null cutover or a boundary before its fixed 2000-01-01 action time. This enables operator verification without recipient mail. It cannot verify successful discard because suppressed evidence is protected. Follow the runbook and retain the native proof gap until it is run against AWS.
 
+### Search retained delivery evidence
+
+Use authenticated `GET /admin/notification-commands/delivery-records` after a queue
+copy has disappeared or before a Notify ID exists. Combine explicit UTC
+`recordedFromUtc`/`recordedToUtc` bounds (inclusive/exclusive), exact
+`notifyNotificationId`, `notificationKey`, `resendOfNotificationKey`, and optional
+`outcome`. Bounds use recording time, not business-action time. All retained
+outcomes are included by default; pending records remain `delivery-pending`.
+
+The response contains `records` and `nextCursor`. Pages default to 25, with
+`pageSize` 1–100, newest recording time first and a stable identifier tie-breaker.
+Retain the filters when supplying the opaque cursor for the next page. Concurrent
+updates do not provide a snapshot. Summaries expose retained correlation and
+encoded parent links without email payloads or queue/Notify/evidence-write effects.
+Acceptance does not establish recipient delivery. Optional parent readback does
+not create replacements; explicit resend remains unavailable.
+See [the HTTP runbook](runbooks/http/README.md) and
+[service behaviour](docs/service-behaviour.md#retained-delivery-record-search).
+
 ## Code quality and delivery
 
 GitHub Actions runs Consumer tests, validates Compose, builds and scans the

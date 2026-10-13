@@ -106,6 +106,24 @@ are introduced. Existing inspection holds must expire before whole-queue recover
 Native movement leaves delivery evidence unchanged and normal consumption retains
 all terminal suppression and identity checks.
 
+### Retained evidence search
+
+Add read-only authenticated delivery-record search independently of queue
+inspection. Use a separate Mongo reader, preserving the delivery write-store
+interface. Project only retained identity/state/timestamps and available Notify,
+template and optional parent correlation; exclude payloads, recipient/immutable
+digests and attempt ownership. Read optional parent metadata without backfill or
+changes to publication and command writes; explicit resend is deferred.
+
+Use recording time for inclusive/exclusive UTC ranges and exact combined
+identifier filters. Sort newest first with Mongo ObjectId as a stable tie-breaker,
+and use bounded opaque cursors bound to the search filters. Unchanged-dataset
+traversal is stable; concurrent updates have no snapshot guarantee. Reuse the
+existing bounded administration dependency timeout and fixed safe failures.
+Search performs no queue, Notify or evidence-write operations. No additional
+index or migration is introduced in this increment; database operation timeout
+bounds scans, and deployment query volume may require separately reviewed indexes.
+
 ## Consequences
 
 Malformed commands and immutable conflicts cannot be discarded through these APIs.

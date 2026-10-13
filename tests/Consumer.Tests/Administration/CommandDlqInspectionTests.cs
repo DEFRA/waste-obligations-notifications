@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Defra.WasteObligations.Consumer.Administration;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
@@ -16,6 +17,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
+using MongoDB.Driver;
 using NSubstitute;
 
 namespace Defra.WasteObligations.Consumer.Tests.Administration;
@@ -982,6 +985,195 @@ public sealed class CommandDlqInspectionTests
         AssertPrivacy(factory, body);
     }
 
+    [Theory]
+    [InlineData("missing", HttpStatusCode.Unauthorized)]
+    [InlineData("read", HttpStatusCode.Forbidden)]
+    public async Task WhenSearchCallerIsNotAdmin_ShouldDenyBeforeReadingEvidence(string condition, HttpStatusCode status)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = SearchRequest(condition);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(status, response.StatusCode);
+        Assert.Empty(factory.SearchReader.ReceivedCalls());
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData("pageSize=0")]
+    [InlineData("pageSize=101")]
+    [InlineData("pageSize=999999999999999999999")]
+    [InlineData("pageSize=1&pageSize=2")]
+    [InlineData("notificationKey=")]
+    [InlineData("outcome=%00")]
+    [InlineData("recordedFromUtc=2026-10-12T00:00:00")]
+    [InlineData("recordedFromUtc=2026-10-12T00:00:00%2B01:00")]
+    [InlineData("recordedFromUtc=2026-10-13T00:00:00Z&recordedToUtc=2026-10-12T00:00:00Z")]
+    [InlineData("cursor=private-invalid-cursor")]
+    public async Task WhenSearchQueryIsInvalid_ShouldRejectBeforeReadingEvidence(string query)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = SearchRequest("admin", query);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("Delivery record search query is invalid.", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-invalid-cursor", body, StringComparison.Ordinal);
+        Assert.Empty(factory.SearchReader.ReceivedCalls());
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task WhenAdminSearchesRetainedEvidence_ShouldReturnSummaryAndEncodedParentThroughRealReaderWithoutEffects()
+    {
+        var mongo = Substitute.For<IMongoClient>();
+        var database = Substitute.For<IMongoDatabase>();
+        var collection = Substitute.For<IMongoCollection<BsonDocument>>();
+        var cursor = Substitute.For<IAsyncCursor<BsonDocument>>();
+        mongo.GetDatabase("inspection-test", Arg.Any<MongoDatabaseSettings>()).Returns(database);
+        database
+            .GetCollection<BsonDocument>("NotificationDeliveryRecord", Arg.Any<MongoCollectionSettings>())
+            .Returns(collection);
+        cursor.Current.Returns(
+            new[]
+            {
+                new BsonDocument
+                {
+                    { "_id", ObjectId.Parse("000000000000000000000001") },
+                    { "notificationKey", "v1:replacement" },
+                    { "resendOfNotificationKey", "v1:parent/+?" },
+                    { "notificationType", "submitted" },
+                    { "outcome", "delivery-pending" },
+                    { "recordedAtUtc", new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc) },
+                    { "actionOccurredAtUtc", new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc) },
+                },
+            }
+        );
+        cursor.MoveNextAsync(Arg.Any<CancellationToken>()).Returns(true, false);
+        collection
+            .FindAsync(
+                Arg.Any<FilterDefinition<BsonDocument>>(),
+                Arg.Any<FindOptions<BsonDocument, BsonDocument>>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(cursor);
+        await using var factory = new InspectionApplicationFactory(searchMongo: mongo);
+        using var client = factory.CreateClient();
+        using var request = SearchRequest("admin", "notificationKey=v1%3Areplacement");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(text);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var record = Assert.Single(body.RootElement.GetProperty("records").EnumerateArray());
+        Assert.Equal("v1:replacement", record.GetProperty("notificationKey").GetString());
+        Assert.Equal("delivery-pending", record.GetProperty("outcome").GetString());
+        Assert.Equal("2026-10-12T09:00:00Z", record.GetProperty("recordedAtUtc").GetString());
+        Assert.Equal(JsonValueKind.Null, record.GetProperty("notifyNotificationId").ValueKind);
+        Assert.Equal(
+            "/admin/notification-commands/delivery-records?notificationKey=v1%3Aparent%2F%2B%3F",
+            record.GetProperty("links").GetProperty("sourceRecord").GetString()
+        );
+        Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
+        foreach (var field in new[] { "recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation" })
+            Assert.False(record.TryGetProperty(field, out _));
+        Assert.Equal("FindAsync", Assert.Single(collection.ReceivedCalls()).GetMethodInfo().Name);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        AssertPrivacy(factory, text);
+    }
+
+    [Fact]
+    public async Task WhenSearchDependencyFails_ShouldReturnFixedFailureWithoutDependencyContent()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .SearchReader.Search(Arg.Any<DeliveryRecordSearchQuery>(), Arg.Any<CancellationToken>())
+            .Returns<Task<DeliveryRecordSearchResult>>(_ => throw new InvalidOperationException(PrivateContent));
+        using var client = factory.CreateClient();
+        using var request = SearchRequest("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Delivery record search failed.", body, StringComparison.Ordinal);
+        AssertPrivacy(factory, body);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenSearchIsCancelled_ShouldBoundMongoWorkAndDistinguishCallerCancellation(bool callerCancels)
+    {
+        var mongo = Substitute.For<IMongoClient>();
+        var database = Substitute.For<IMongoDatabase>();
+        var collection = Substitute.For<IMongoCollection<BsonDocument>>();
+        mongo.GetDatabase("inspection-test", Arg.Any<MongoDatabaseSettings>()).Returns(database);
+        database
+            .GetCollection<BsonDocument>("NotificationDeliveryRecord", Arg.Any<MongoCollectionSettings>())
+            .Returns(collection);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken dependencyToken = default;
+        collection
+            .FindAsync(
+                Arg.Any<FilterDefinition<BsonDocument>>(),
+                Arg.Any<FindOptions<BsonDocument, BsonDocument>>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(async call =>
+            {
+                dependencyToken = call.ArgAt<CancellationToken>(2);
+                entered.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, dependencyToken);
+
+                return Substitute.For<IAsyncCursor<BsonDocument>>();
+            });
+        await using var factory = new InspectionApplicationFactory(
+            new() { ["CommandDlqAdministration:DependencyTimeoutSeconds"] = "1" },
+            searchMongo: mongo
+        );
+        using var client = factory.CreateClient();
+        using var request = SearchRequest("admin");
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var pending = client.SendAsync(request, source.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        if (callerCancels)
+        {
+            await source.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
+        }
+        else
+        {
+            using var response = await pending;
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            AssertPrivacy(factory, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        }
+        Assert.True(dependencyToken.IsCancellationRequested);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    private static HttpRequestMessage SearchRequest(string condition, string? query = null)
+    {
+        var request = Request(condition);
+        request.Method = HttpMethod.Get;
+        request.RequestUri = new Uri(
+            "/admin/notification-commands/delivery-records" + (query is null ? "" : "?" + query),
+            UriKind.Relative
+        );
+
+        return request;
+    }
+
     private static void ConfigureQueueIdentities(InspectionApplicationFactory factory, bool sameQueue = false)
     {
         factory
@@ -1101,11 +1293,13 @@ public sealed class CommandDlqInspectionTests
 
     private sealed class InspectionApplicationFactory(
         Dictionary<string, string?>? overrides = null,
-        bool emptyAcl = false
+        bool emptyAcl = false,
+        IMongoClient? searchMongo = null
     ) : WebApplicationFactory<Program>
     {
         public IAmazonSQS Sqs { get; } = CreateSqs();
         public INotificationDeliveryRecordStore Store { get; } = CreateStore();
+        public IDeliveryRecordSearchReader SearchReader { get; } = Substitute.For<IDeliveryRecordSearchReader>();
         public INotifyEmailClient Notify { get; } = Substitute.For<INotifyEmailClient>();
         public RecordingLogs Logs { get; } = new();
 
@@ -1156,6 +1350,16 @@ public sealed class CommandDlqInspectionTests
                 services.AddSingleton(Store);
                 services.RemoveAll<INotifyEmailClient>();
                 services.AddSingleton(Notify);
+                if (searchMongo is null)
+                {
+                    services.RemoveAll<IDeliveryRecordSearchReader>();
+                    services.AddSingleton(SearchReader);
+                }
+                else
+                {
+                    services.RemoveAll<IMongoClient>();
+                    services.AddSingleton(searchMongo);
+                }
                 var completion = new MongoMigrationCompletion();
                 completion.MarkCompleted();
                 services.AddSingleton(completion);

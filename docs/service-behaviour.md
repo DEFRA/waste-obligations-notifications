@@ -444,3 +444,40 @@ deployment deadline. Metrics and startup logging remain available for diagnosis.
 Suppression recorded with an unset cutover remains terminal after configuration,
 including an action at or after the new boundary. Delete matching replays without
 changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.
+
+## Retained delivery-record search
+
+Authenticated `GET /admin/notification-commands/delivery-records` searches current
+retained Mongo evidence independently of queue copies. The existing Admin policy
+and startup readiness boundary apply. It never receives, publishes or deletes
+queue messages, calls Notify, or changes delivery records.
+
+Filters are `recordedFromUtc` (inclusive), `recordedToUtc` (exclusive),
+`notifyNotificationId`, `notificationKey`, `resendOfNotificationKey` and `outcome`.
+Date bounds require explicit UTC (`Z` or a zero offset) and use the latest
+`recordedAtUtc` processing-state time, rather than `actionOccurredAtUtc`.
+Supplied filters combine; Notify IDs and opaque keys match exactly, including
+case. All retained outcomes are returned by default. Outcome filtering matches
+an exact bounded value, including unrecognised retained outcomes. Typical values
+are `delivery-pending`, `delivery-accepted`, `delivery-suppressed` and
+`delivery-abandoned`. Pending evidence remains pending irrespective of lease
+expiry; search does not classify a historical failure or check live delivery.
+
+Responses contain `records` and nullable `nextCursor`. `pageSize` defaults to 25
+and accepts 1–100. Results sort by recording time descending, then stable Mongo
+identifier descending. Continue with the returned opaque cursor and the same
+filters; changing filters or malformed cursors returns 400. An unchanged dataset
+has no page omissions or repetitions. Concurrent state updates do not provide a
+historical snapshot. Empty searches return an empty records array and null cursor.
+Dependency work uses the existing administration timeout; failures return a fixed
+503 response without dependency details, and request cancellation propagates.
+
+Summaries include opaque identity, retained outcome/type, business-action and
+recording timestamps, and available acceptance, lease, template and Notify
+correlation. Recipient/immutable digests, attempt owners and email payloads are
+excluded. Optional `resendOfNotificationKey` is read without backfill. Original
+records have no parent; replacement summaries provide an encoded
+`links.sourceRecord` URL for exact parent lookup. An empty parent/replacement
+lookup does not prove queue absence or publication failure. Recorded acceptance
+is not proof of recipient delivery. Explicit resend remains unavailable; this
+search capability does not create replacement commands or change DLQ inspection.
