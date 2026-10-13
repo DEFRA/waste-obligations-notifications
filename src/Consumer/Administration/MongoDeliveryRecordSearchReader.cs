@@ -75,9 +75,10 @@ public sealed class MongoDeliveryRecordSearchReader(
             if (Stopwatch.GetElapsedTime(started) >= timeout)
                 throw new TimeoutException();
             var page = documents.Take(query.PageSize).ToArray();
-            var nextCursor = documents.Count > query.PageSize
-                ? query.CreateCursor(page[^1]["recordedAtUtc"].ToUniversalTime(), page[^1]["_id"].AsObjectId)
-                : null;
+            var nextCursor =
+                documents.Count > query.PageSize
+                    ? query.CreateCursor(page[^1]["recordedAtUtc"].ToUniversalTime(), page[^1]["_id"].AsObjectId)
+                    : null;
 
             return new(page.Select(Summarise).ToArray(), nextCursor);
         }

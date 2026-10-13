@@ -23,7 +23,14 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             Record(1, "v1:replacement", "delivery-accepted", from, "notify-1", "v1:parent/+?"),
             Record(2, "v1:replacement-other", "delivery-accepted", from.AddHours(1), "notify-1", "v1:parent/+?"),
             Record(3, "v1:replacement-upper", "delivery-accepted", to, "notify-1", "v1:parent/+?"),
-            Record(4, "v1:replacement-before", "delivery-accepted", from.AddMilliseconds(-1), "notify-1", "v1:parent/+?"),
+            Record(
+                4,
+                "v1:replacement-before",
+                "delivery-accepted",
+                from.AddMilliseconds(-1),
+                "notify-1",
+                "v1:parent/+?"
+            ),
             Record(5, "v1:replacement-pending", "delivery-pending", from, null, "v1:parent/+?"),
             Record(6, "v1:replacement-case-notify", "delivery-accepted", from, "NOTIFY-1", "v1:parent/+?"),
             Record(7, "v1:replacement-other-parent", "delivery-accepted", from, "notify-1", "v1:other"),
@@ -63,14 +70,28 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
                 record.Links?.SourceRecord
             );
             Assert.Null(result.NextCursor);
-            foreach (var exclusion in new[]
-            {
-                new DeliveryRecordSearchQuery { NotificationKey = "v1:replacement", NotifyNotificationId = "NOTIFY-1" },
-                new DeliveryRecordSearchQuery { NotificationKey = "v1:replacement", ResendOfNotificationKey = "v1:other" },
-                new DeliveryRecordSearchQuery { NotificationKey = "v1:replacement", Outcome = "delivery-pending" },
-                new DeliveryRecordSearchQuery { NotificationKey = "v1:replacement", RecordedFromUtc = from.AddHours(1) },
-                new DeliveryRecordSearchQuery { NotificationKey = "v1:replacement", RecordedToUtc = from },
-            })
+            foreach (
+                var exclusion in new[]
+                {
+                    new DeliveryRecordSearchQuery
+                    {
+                        NotificationKey = "v1:replacement",
+                        NotifyNotificationId = "NOTIFY-1",
+                    },
+                    new DeliveryRecordSearchQuery
+                    {
+                        NotificationKey = "v1:replacement",
+                        ResendOfNotificationKey = "v1:other",
+                    },
+                    new DeliveryRecordSearchQuery { NotificationKey = "v1:replacement", Outcome = "delivery-pending" },
+                    new DeliveryRecordSearchQuery
+                    {
+                        NotificationKey = "v1:replacement",
+                        RecordedFromUtc = from.AddHours(1),
+                    },
+                    new DeliveryRecordSearchQuery { NotificationKey = "v1:replacement", RecordedToUtc = from },
+                }
+            )
                 Assert.Empty((await reader.Search(exclusion, token)).Records);
             var notify = await reader.Search(
                 new DeliveryRecordSearchQuery { NotifyNotificationId = "notify-1" },
@@ -147,7 +168,10 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
                 new DeliveryRecordSearchQuery { PageSize = 2, Cursor = first.NextCursor },
                 token
             );
-            Assert.Equal(new[] { "v1:pending", "v1:abandoned" }, second.Records.Select(record => record.NotificationKey));
+            Assert.Equal(
+                new[] { "v1:pending", "v1:abandoned" },
+                second.Records.Select(record => record.NotificationKey)
+            );
             Assert.NotNull(second.NextCursor);
             var third = await reader.Search(
                 new DeliveryRecordSearchQuery { PageSize = 2, Cursor = second.NextCursor },
