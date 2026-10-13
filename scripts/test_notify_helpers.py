@@ -46,7 +46,8 @@ class NotifyHelperTests(unittest.TestCase):
             self.assertNotIn("Notify__ApiKey", actual)
 
     def test_required_gate_accepts_four_and_rejects_nonexecution(self):
-        with tempfile.TemporaryDirectory() as directory:
+        # The isolated worker mounts /tmp without executable-file support.
+        with tempfile.TemporaryDirectory(dir=SCRIPTS.parent) as directory:
             root = Path(directory)
             fake_dotnet = root / "dotnet"
             fake_dotnet.write_text(
