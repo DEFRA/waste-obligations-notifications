@@ -86,7 +86,9 @@ public sealed class AnalyticsEventConsumer(
                             options.Value.ReadTimeoutSeconds,
                             stoppingToken
                         );
+#pragma warning disable S1854 // Retry diagnostics use this assignment when synchronous mapping throws.
                         stage = "declaration-validation";
+#pragma warning restore S1854
                         var command = mapper.Map(submission, declaration.RootElement);
                         stage = "publication";
                         budget.EnsureRemaining(
@@ -141,41 +143,54 @@ public sealed class AnalyticsEventConsumer(
             }
             catch (Exception exception)
             {
-                logger.LogError("Analytics event consumption failed");
-                var reason = exception switch
-                {
-                    SubmissionProcessingException failure => failure.Reason,
-                    OperationCanceledException or TimeoutException => "dependency-timeout",
-                    JsonException => "invalid-data",
-                    _ => stage switch
-                    {
-                        "publication" => "publication-unconfirmed",
-                        "acknowledgement" => "acknowledgement-unconfirmed",
-                        "validation" or "declaration-validation" => "invalid-data",
-                        _ => "dependency-failed",
-                    },
-                };
-                if (published)
-                    logger.LogWarning(
-                        "Analytics command publication confirmed but acknowledgement unconfirmed; queue retry is possible at {Stage} for {FailureReason} from SQS message {MessageId}, event {EventId}, entity {EntityId}",
-                        stage,
-                        reason,
-                        messageId,
-                        eventId,
-                        entityId
-                    );
-                else
-                    logger.LogWarning(
-                        "Analytics processing not acknowledged; left for queue retry/recovery at {Stage} for {FailureReason} from SQS message {MessageId}, event {EventId}, entity {EntityId}",
-                        stage,
-                        reason,
-                        messageId,
-                        eventId,
-                        entityId
-                    );
+                LogFailure(exception, stage, messageId, eventId, entityId, published);
                 await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
             }
         }
+    }
+
+    private void LogFailure(
+        Exception exception,
+        string stage,
+        string? messageId,
+        string? eventId,
+        string? entityId,
+        bool published
+    )
+    {
+        // Dependency exceptions can contain PII or credentials; log only fixed diagnostics.
+        logger.LogError("Analytics event consumption failed");
+        var reason = exception switch
+        {
+            SubmissionProcessingException failure => failure.Reason,
+            OperationCanceledException or TimeoutException => "dependency-timeout",
+            JsonException => "invalid-data",
+            _ => stage switch
+            {
+                "publication" => "publication-unconfirmed",
+                "acknowledgement" => "acknowledgement-unconfirmed",
+                "validation" or "declaration-validation" => "invalid-data",
+                _ => "dependency-failed",
+            },
+        };
+        if (published)
+            logger.LogWarning(
+                "Analytics command publication confirmed but acknowledgement unconfirmed; queue retry is possible at {Stage} for {FailureReason} from SQS message {MessageId}, event {EventId}, entity {EntityId}",
+                stage,
+                reason,
+                messageId,
+                eventId,
+                entityId
+            );
+        else
+            logger.LogWarning(
+                "Analytics processing not acknowledged; left for queue retry/recovery at {Stage} for {FailureReason} from SQS message {MessageId}, event {EventId}, entity {EntityId}",
+                stage,
+                reason,
+                messageId,
+                eventId,
+                entityId
+            );
     }
 
     private static string ReadRequiredString(JsonElement element, string propertyName)

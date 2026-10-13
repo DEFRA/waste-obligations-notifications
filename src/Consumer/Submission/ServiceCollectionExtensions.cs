@@ -25,7 +25,7 @@ public static class ServiceCollectionExtensions
                 {
                     var options = provider.GetRequiredService<IOptions<SubmissionEmailOptions>>().Value;
                     if (options.HasReadConfiguration)
-                        client.BaseAddress = new Uri(options.ApiBaseAddress.TrimEnd('/') + "/");
+                        client.BaseAddress = new Uri(options.ApiBaseAddress.TrimEnd('/') + '/');
                     client.Timeout = Timeout.InfiniteTimeSpan;
                 }
             )

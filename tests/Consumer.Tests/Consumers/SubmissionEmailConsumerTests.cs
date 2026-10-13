@@ -177,6 +177,7 @@ public sealed class SubmissionEmailConsumerTests
         Assert.False(harness.Deleted.Task.IsCompleted);
         var warning = Assert.Single(harness.Logger.Entries, entry => entry.Level == LogLevel.Warning);
         Assert.Contains(reason, warning.State);
+        Assert.Contains(scenario == "not-found" ? "declaration-read" : "declaration-validation", warning.State);
         Assert.Contains(MessageId, warning.State);
         Assert.Contains(EventId, warning.State);
         Assert.Contains("not acknowledged", warning.Text);
