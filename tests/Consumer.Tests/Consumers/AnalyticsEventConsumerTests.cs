@@ -140,7 +140,7 @@ public class AnalyticsEventConsumerTests
             .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         Assert.Single(logger.Messages, message => message == "Analytics event consumption failed");
-        Assert.False(subject.ExecuteTask!.IsFaulted);
+        Assert.False(subject.ExecuteTask.IsFaulted);
         await sqsClient.Received(1).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
     }
 
