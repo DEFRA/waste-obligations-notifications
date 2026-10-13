@@ -39,113 +39,126 @@ public sealed class AnalyticsEventConsumer(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            var stage = "receive";
-            string? messageId = null;
-            string? eventId = null;
-            string? entityId = null;
-            var published = false;
-            try
+            await ReceiveAndProcess(stoppingToken);
+        }
+    }
+
+    private async Task ReceiveAndProcess(CancellationToken stoppingToken)
+    {
+        var stage = "receive";
+        string? messageId = null;
+        string? eventId = null;
+        string? entityId = null;
+        var published = false;
+        try
+        {
+            // The analytics visibility budget covers one event, independently of command delivery and other hosts.
+            // Future batching requires review of this complete receive/read/publish/delete budget.
+            var receiveStartedAt = Stopwatch.GetTimestamp();
+            var response = await AnalyticsProcessingBudget.Run(
+                token =>
+                    sqsClient.ReceiveMessageAsync(
+                        new ReceiveMessageRequest
+                        {
+                            QueueUrl = options.Value.QueueUrl,
+                            MaxNumberOfMessages = 1,
+                            MessageAttributeNames = ["All"],
+                            WaitTimeSeconds = options.Value.WaitTimeSeconds,
+                            VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
+                        },
+                        token
+                    ),
+                options.Value.ReceiveTimeoutSeconds,
+                stoppingToken
+            );
+
+            foreach (var message in response.Messages ?? [])
             {
-                // The analytics visibility budget covers one event, independently of command delivery and other hosts.
-                // Future batching requires review of this complete receive/read/publish/delete budget.
-                var receiveStartedAt = Stopwatch.GetTimestamp();
-                var response = await AnalyticsProcessingBudget.Run(
-                    token =>
-                        sqsClient.ReceiveMessageAsync(
-                            new ReceiveMessageRequest
-                            {
-                                QueueUrl = options.Value.QueueUrl,
-                                MaxNumberOfMessages = 1,
-                                MessageAttributeNames = ["All"],
-                                WaitTimeSeconds = options.Value.WaitTimeSeconds,
-                                VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
-                            },
-                            token
-                        ),
-                    options.Value.ReceiveTimeoutSeconds,
-                    stoppingToken
-                );
-
-                foreach (var message in response.Messages ?? [])
+                messageId = Guid.TryParseExact(message.MessageId, "D", out _) ? message.MessageId : null;
+                stage = "validation";
+                using var document = JsonDocument.Parse(ReadBody(message));
+                var root = document.RootElement;
+                var rawEventId = ReadRequiredString(root, "eventId");
+                eventId = SubmissionEvent.IsEventId(rawEventId) ? rawEventId : null;
+                var rawEntityId = ReadRequiredString(root, "entityId");
+                entityId = SubmissionEvent.IsEntityId(rawEntityId) ? rawEntityId : null;
+                var submission = SubmissionEvent.Read(root, rawEventId, rawEntityId);
+                if (submission is not null)
                 {
-                    messageId = Guid.TryParseExact(message.MessageId, "D", out _) ? message.MessageId : null;
-                    stage = "validation";
-                    using var document = JsonDocument.Parse(ReadBody(message));
-                    var root = document.RootElement;
-                    var rawEventId = ReadRequiredString(root, "eventId");
-                    eventId = SubmissionEvent.IsEventId(rawEventId) ? rawEventId : null;
-                    var rawEntityId = ReadRequiredString(root, "entityId");
-                    entityId = SubmissionEvent.IsEntityId(rawEntityId) ? rawEntityId : null;
-                    var submission = SubmissionEvent.Read(root, rawEventId, rawEntityId);
-                    if (submission is not null)
-                    {
-                        stage = "declaration-read";
-                        budget.EnsureRemaining(receiveStartedAt, options.Value.CompletionBudgetSeconds);
-                        using var declaration = await AnalyticsProcessingBudget.Run(
-                            token => declarationClient.Read(submission, token),
-                            options.Value.ReadTimeoutSeconds,
-                            stoppingToken
-                        );
-#pragma warning disable S1854 // Retry diagnostics use this assignment when synchronous mapping throws.
-                        stage = "declaration-validation";
-#pragma warning restore S1854
-                        var command = mapper.Map(submission, declaration.RootElement);
-                        stage = "publication";
-                        budget.EnsureRemaining(
-                            receiveStartedAt,
-                            options.Value.PublishTimeoutSeconds
-                                + options.Value.DeleteTimeoutSeconds
-                                + options.Value.SafetyHeadroomSeconds
-                        );
-                        await AnalyticsProcessingBudget.Run(
-                            async token =>
-                            {
-                                await publisher.Publish(command, token);
-
-                                return true;
-                            },
-                            options.Value.PublishTimeoutSeconds,
-                            stoppingToken
-                        );
-                        published = true;
-                        logger.LogInformation(
-                            "Published submitted email command for analytics event {EventId} for {EntityId} from SQS message {MessageId} with Notify reference {NotifyReference}, template {TemplateId}, type {NotificationType} and action {ActionOccurredAtUtc}",
-                            eventId,
-                            entityId,
-                            messageId,
-                            digest.CreateNotifyReference(command.IdempotencyKey),
-                            command.TemplateId,
-                            command.NotificationType,
-                            command.ActionOccurredAtUtc
-                        );
-                    }
-
-                    if (logger.IsEnabled(LogLevel.Information))
-                    {
-                        logger.LogInformation("Consumed analytics event {EventId} for {EntityId}", eventId, entityId);
-                    }
-
-                    stage = "acknowledgement";
-                    budget.EnsureRemaining(
-                        receiveStartedAt,
-                        options.Value.DeleteTimeoutSeconds + options.Value.SafetyHeadroomSeconds
-                    );
-                    await AnalyticsProcessingBudget.Run(
-                        token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
-                        options.Value.DeleteTimeoutSeconds,
+                    stage = "declaration-read";
+                    budget.EnsureRemaining(receiveStartedAt, options.Value.CompletionBudgetSeconds);
+                    using var declaration = await AnalyticsProcessingBudget.Run(
+                        token => declarationClient.Read(submission, token),
+                        options.Value.ReadTimeoutSeconds,
                         stoppingToken
                     );
+#pragma warning disable S1854 // Retry diagnostics use this assignment when synchronous mapping throws.
+                    stage = "declaration-validation";
+#pragma warning restore S1854
+                    var command = mapper.Map(submission, declaration.RootElement);
+                    stage = "publication";
+                    budget.EnsureRemaining(
+                        receiveStartedAt,
+                        options.Value.PublishTimeoutSeconds
+                            + options.Value.DeleteTimeoutSeconds
+                            + options.Value.SafetyHeadroomSeconds
+                    );
+                    await AnalyticsProcessingBudget.Run(
+                        async token =>
+                        {
+                            await publisher.Publish(command, token);
+
+                            return true;
+                        },
+                        options.Value.PublishTimeoutSeconds,
+                        stoppingToken
+                    );
+                    published = true;
+                    LogPublication(command, messageId, eventId, entityId);
                 }
+
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    logger.LogInformation("Consumed analytics event {EventId} for {EntityId}", eventId, entityId);
+                }
+
+                stage = "acknowledgement";
+                budget.EnsureRemaining(
+                    receiveStartedAt,
+                    options.Value.DeleteTimeoutSeconds + options.Value.SafetyHeadroomSeconds
+                );
+                await AnalyticsProcessingBudget.Run(
+                    token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
+                    options.Value.DeleteTimeoutSeconds,
+                    stoppingToken
+                );
             }
-            catch (Exception) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception exception)
-            {
-                LogFailure(exception, stage, messageId, eventId, entityId, published);
-                await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
-            }
+        }
+        catch (Exception) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            LogFailure(exception, stage, messageId, eventId, entityId, published);
+            await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
+        }
+    }
+
+    private void LogPublication(NotificationCommand command, string? messageId, string? eventId, string? entityId)
+    {
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            logger.LogInformation(
+                "Published submitted email command for analytics event {EventId} for {EntityId} from SQS message {MessageId} with Notify reference {NotifyReference}, template {TemplateId}, type {NotificationType} and action {ActionOccurredAtUtc}",
+                eventId,
+                entityId,
+                messageId,
+                digest.CreateNotifyReference(command.IdempotencyKey),
+                command.TemplateId,
+                command.NotificationType,
+                command.ActionOccurredAtUtc
+            );
         }
     }
 

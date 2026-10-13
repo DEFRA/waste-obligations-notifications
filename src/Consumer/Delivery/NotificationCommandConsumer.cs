@@ -101,38 +101,59 @@ public sealed class NotificationCommandConsumer(
         var notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
         metrics.RecordReceived(notificationType);
         var store = recordStoreFactory.GetRecordStore();
-        var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
-        if (cutover is null || command.ActionOccurredAtUtc < cutover)
-        {
-            var result = await RunBounded(
-                token => store.RecordSuppression(command, token),
-                options.Value.ClaimTimeoutSeconds,
-                stoppingToken,
-                failureReason: NotificationCommandFailureReason.StoreError
-            );
-            if (result is SuppressionClaimResult.Conflict or SuppressionClaimResult.ActiveClaim)
-                throw new NotificationCommandProcessingException(
-                    result == SuppressionClaimResult.Conflict
-                        ? NotificationCommandFailureReason.Conflict
-                        : NotificationCommandFailureReason.ActiveClaim
-                );
-            if (result == SuppressionClaimResult.TerminalDuplicate)
-            {
-                metrics.RecordDuplicate(notificationType);
-                outcome = "terminal-duplicate";
-            }
-        }
-        else
-            outcome = await ProcessPostCutover(
-                command,
-                reference,
-                notificationType,
-                store,
-                receiveStartedAt,
-                stoppingToken
-            );
+        var outcome = cutover is null || command.ActionOccurredAtUtc < cutover
+            ? await ProcessSuppression(command, notificationType, store, stoppingToken)
+            : await ProcessPostCutover(command, reference, notificationType, store, receiveStartedAt, stoppingToken);
 
         metrics.RecordOutcome(notificationType, outcome);
+        LogOutcome(message, command, reference, cutover, notificationType, outcome);
+        stoppingToken.ThrowIfCancellationRequested();
+        await RunBounded(
+            token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
+            options.Value.DeleteTimeoutSeconds,
+            stoppingToken,
+            failureReason: NotificationCommandFailureReason.QueueError
+        );
+    }
+
+    private async Task<string> ProcessSuppression(
+        NotificationCommand command,
+        string notificationType,
+        INotificationDeliveryRecordStore store,
+        CancellationToken stoppingToken
+    )
+    {
+        var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
+        var result = await RunBounded(
+            token => store.RecordSuppression(command, token),
+            options.Value.ClaimTimeoutSeconds,
+            stoppingToken,
+            failureReason: NotificationCommandFailureReason.StoreError
+        );
+        if (result is SuppressionClaimResult.Conflict or SuppressionClaimResult.ActiveClaim)
+            throw new NotificationCommandProcessingException(
+                result == SuppressionClaimResult.Conflict
+                    ? NotificationCommandFailureReason.Conflict
+                    : NotificationCommandFailureReason.ActiveClaim
+            );
+        if (result == SuppressionClaimResult.TerminalDuplicate)
+        {
+            metrics.RecordDuplicate(notificationType);
+            outcome = "terminal-duplicate";
+        }
+
+        return outcome;
+    }
+
+    private void LogOutcome(
+        Message message,
+        NotificationCommand command,
+        string reference,
+        DateTimeOffset? cutover,
+        string notificationType,
+        string outcome
+    )
+    {
         if (logger.IsEnabled(LogLevel.Information))
             logger.LogInformation(
                 "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}, template {TemplateId}, action {ActionOccurredAtUtc} and reason {OutcomeReason}",
@@ -149,13 +170,6 @@ public sealed class NotificationCommandConsumer(
                     _ => "existing-terminal-evidence",
                 }
             );
-        stoppingToken.ThrowIfCancellationRequested();
-        await RunBounded(
-            token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
-            options.Value.DeleteTimeoutSeconds,
-            stoppingToken,
-            failureReason: NotificationCommandFailureReason.QueueError
-        );
     }
 
     private async Task<string> ProcessPostCutover(

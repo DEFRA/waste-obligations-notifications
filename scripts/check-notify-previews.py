@@ -2,7 +2,26 @@
 """Fail unless the focused real-provider run reports all four previews passed."""
 from pathlib import Path
 import subprocess
-import xml.etree.ElementTree as ET
+from xml.parsers import expat
+
+
+def read_cases(report):
+    cases = []
+    parser = expat.ParserCreate(namespace_separator="}")
+
+    def reject_doctype(*_):
+        raise SystemExit("Required Notify preview reports must not contain a document type.")
+
+    def start_element(name, attributes):
+        if name == "http://microsoft.com/schemas/VisualStudio/TeamTest/2010}UnitTestResult":
+            cases.append(attributes)
+
+    parser.StartDoctypeDeclHandler = reject_doctype
+    parser.StartElementHandler = start_element
+    with report.open("rb") as stream:
+        parser.ParseFile(stream)
+    return cases
+
 
 results = Path("TestResults/NotifyPreviews")
 results.mkdir(parents=True, exist_ok=True)
@@ -20,9 +39,7 @@ if result.returncode != 0:
     raise SystemExit(result.returncode)
 if not report.is_file():
     raise SystemExit("Required Notify previews produced no execution report.")
-root = ET.parse(report).getroot()
-namespace = {"trx": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
-cases = root.findall(".//trx:UnitTestResult", namespace)
+cases = read_cases(report)
 expected = "WhenConfiguredSubmissionTemplateIsPreviewed_ShouldRenderExpectedContent"
 if (
     len(cases) != 4

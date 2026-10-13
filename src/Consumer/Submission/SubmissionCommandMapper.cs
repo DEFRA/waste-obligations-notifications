@@ -6,6 +6,8 @@ namespace Defra.WasteObligations.Consumer.Submission;
 
 public sealed class SubmissionCommandMapper(IOptions<SubmissionEmailOptions> options)
 {
+    private const string InvalidDeclaration = "invalid-declaration";
+
     public NotificationCommand Map(SubmissionEvent submission, JsonElement declaration)
     {
         if (
@@ -15,16 +17,9 @@ public sealed class SubmissionCommandMapper(IOptions<SubmissionEmailOptions> opt
             || organisationId != submission.OrganisationId
         )
             throw new SubmissionProcessingException("declaration-identity-mismatch");
-        if (
-            !declaration.TryGetProperty("version", out var version)
-            || !version.TryGetInt32(out var number)
-            || number <= 0
-        )
-            throw new SubmissionProcessingException("invalid-declaration");
-        if (number < submission.Version)
-            throw new SubmissionProcessingException("older-declaration-version");
+        ValidateVersion(submission, declaration);
         if (!declaration.TryGetProperty("audit", out var audit) || audit.ValueKind != JsonValueKind.Array)
-            throw new SubmissionProcessingException("invalid-declaration");
+            throw new SubmissionProcessingException(InvalidDeclaration);
         var submitted = audit
             .EnumerateArray()
             .FirstOrDefault(entry => SubmissionEvent.ReadString(entry, "action") == "Submitted");
@@ -33,7 +28,7 @@ public sealed class SubmissionCommandMapper(IOptions<SubmissionEmailOptions> opt
             || !submitted.TryGetProperty("user", out var user)
             || !UtcTimestamp.TryParse(SubmissionEvent.ReadString(submitted, "timestamp"), out var actionAt)
         )
-            throw new SubmissionProcessingException("invalid-declaration");
+            throw new SubmissionProcessingException(InvalidDeclaration);
         var recipient = Require(user, "email");
         var userName = Require(user, "name");
         var registrationType = Require(organisation, "registrationType");
@@ -44,7 +39,7 @@ public sealed class SubmissionCommandMapper(IOptions<SubmissionEmailOptions> opt
             || !year.TryGetInt32(out var obligationYear)
             || obligationYear <= 0
         )
-            throw new SubmissionProcessingException("invalid-declaration");
+            throw new SubmissionProcessingException(InvalidDeclaration);
         var scheme = registrationType == "ComplianceScheme";
         var welsh = SubmissionEvent.ReadString(organisation, "businessCountry") == "GB-WLS";
         var templateId = (scheme, welsh) switch
@@ -77,11 +72,23 @@ public sealed class SubmissionCommandMapper(IOptions<SubmissionEmailOptions> opt
         return command;
     }
 
+    private static void ValidateVersion(SubmissionEvent submission, JsonElement declaration)
+    {
+        if (
+            !declaration.TryGetProperty("version", out var version)
+            || !version.TryGetInt32(out var number)
+            || number <= 0
+        )
+            throw new SubmissionProcessingException(InvalidDeclaration);
+        if (number < submission.Version)
+            throw new SubmissionProcessingException("older-declaration-version");
+    }
+
     private static string Require(JsonElement element, string property)
     {
         var value = SubmissionEvent.ReadString(element, property);
         if (string.IsNullOrWhiteSpace(value))
-            throw new SubmissionProcessingException("invalid-declaration");
+            throw new SubmissionProcessingException(InvalidDeclaration);
 
         return value;
     }

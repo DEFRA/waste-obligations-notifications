@@ -45,6 +45,30 @@ class NotifyHelperTests(unittest.TestCase):
             self.assertEqual("", actual["NOTIFY__APIKEY"])
             self.assertNotIn("Notify__ApiKey", actual)
 
+    def test_launcher_continues_path_after_missing_interpreter(self):
+        with tempfile.TemporaryDirectory(dir=SCRIPTS.parent) as directory:
+            root = Path(directory)
+            first = root / "first"
+            second = root / "second"
+            first.mkdir()
+            second.mkdir()
+            name = "notify-helper-command"
+            (first / name).write_text("#!/missing/mo549/interpreter\n", encoding="utf-8")
+            (second / name).write_text(
+                "#!" + sys.executable + "\nprint('command executed')\n", encoding="utf-8"
+            )
+            (first / name).chmod(0o700)
+            (second / name).chmod(0o700)
+            environment = os.environ | {
+                "PATH": str(first) + os.pathsep + str(second),
+                "GOVUKNOTIFY_APIKEY": "",
+            }
+            result = subprocess.run(
+                [sys.executable, str(SCRIPTS / "with-notify-key.py"), "preview", name],
+                cwd=root, env=environment, capture_output=True, text=True, check=True,
+            )
+            self.assertEqual("command executed", result.stdout.strip())
+
     def test_required_gate_accepts_four_and_rejects_nonexecution(self):
         # The isolated worker mounts /tmp without executable-file support.
         with tempfile.TemporaryDirectory(dir=SCRIPTS.parent) as directory:
@@ -62,11 +86,12 @@ class NotifyHelperTests(unittest.TestCase):
                 "names=['direct-en','direct-cy','scheme-en','scheme-cy']\n"
                 "if mode=='duplicate': names=['direct-en']*4\n"
                 "cases=''.join(f'<UnitTestResult testName=\"WhenConfiguredSubmissionTemplateIsPreviewed_ShouldRenderExpectedContent({names[i]})\" outcome=\"{outcome}\" />' for i in range(count))\n"
-                "(path/'NotifyPreviews.trx').write_text('<TestRun xmlns=\"http://microsoft.com/schemas/VisualStudio/TeamTest/2010\"><Results>'+cases+'</Results></TestRun>')\n",
+                "prefix='<!DOCTYPE TestRun [<!ENTITY unused \"fixture\">]>' if mode=='doctype' else ''\n"
+                "(path/'NotifyPreviews.trx').write_text(prefix+'<TestRun xmlns=\"http://microsoft.com/schemas/VisualStudio/TeamTest/2010\"><Results>'+cases+'</Results></TestRun>')\n",
                 encoding="utf-8",
             )
             fake_dotnet.chmod(0o700)
-            for mode in ("passed", "error", "missing", "partial", "skipped", "duplicate"):
+            for mode in ("passed", "error", "missing", "partial", "skipped", "duplicate", "doctype"):
                 with self.subTest(mode=mode):
                     environment = os.environ | {"PATH": str(root) + os.pathsep + os.environ["PATH"], "FAKE_PREVIEW_MODE": mode}
                     result = subprocess.run(

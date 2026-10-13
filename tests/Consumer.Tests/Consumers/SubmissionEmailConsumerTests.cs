@@ -89,7 +89,7 @@ public sealed class SubmissionEmailConsumerTests
         Assert.Equal(SubmissionKey, publication.MessageDeduplicationId);
         var command = JsonSerializer.Deserialize<NotificationCommand>(
             publication.MessageBody,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            JsonSerializerOptions.Web
         )!;
         Assert.Equal(SubmissionKey, command.IdempotencyKey);
         Assert.Equal("original@example.com", command.EmailAddress);
