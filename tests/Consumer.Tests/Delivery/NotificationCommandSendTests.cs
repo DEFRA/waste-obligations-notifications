@@ -19,6 +19,7 @@ namespace Defra.WasteObligations.Consumer.Tests.Delivery;
 public sealed class NotificationCommandSendTests : IDisposable
 {
     private const string QueueUrl = "commands.fifo";
+    private const string MessageId = "38eb6c84-a6df-4a1e-b4b5-7f685806802c";
     private const string Reference = "v1:82334b5671ae90cb56279cc2a9924a629589f6b31ef04a870af3c0a01a2fa095";
     private const string PrivateValues = "private-key recipient@example.com private-body template-1";
     private readonly ServiceProvider _metricServices = new ServiceCollection()
@@ -609,7 +610,7 @@ public sealed class NotificationCommandSendTests : IDisposable
             logger.Messages,
             message =>
                 message.Contains(
-                    $"for other from SQS message message-1 with Notify reference {Reference}",
+                    $"for other from SQS message {MessageId} with Notify reference {Reference}",
                     StringComparison.Ordinal
                 )
         );
@@ -1054,7 +1055,7 @@ public sealed class NotificationCommandSendTests : IDisposable
     private static Message Message(string notificationType = "submitted", string timestamp = "2026-09-29T00:00:00Z") =>
         new()
         {
-            MessageId = "message-1",
+            MessageId = MessageId,
             ReceiptHandle = "receipt",
             Body = JsonSerializer.Serialize(
                 new
