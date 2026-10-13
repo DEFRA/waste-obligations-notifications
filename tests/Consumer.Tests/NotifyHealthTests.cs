@@ -179,29 +179,31 @@ public sealed class NotifyHealthTests
         {
             builder.UseEnvironment("Testing");
             builder.ConfigureTestServices(ConfigureBoundaries);
-            builder.ConfigureAppConfiguration((_, configuration) =>
-            {
-                var values = new Dictionary<string, string?>
+            builder.ConfigureAppConfiguration(
+                (_, configuration) =>
                 {
-                    ["AWS_EMF_ENABLED"] = "false",
-                    ["Acl:Clients:health-fixture:Type"] = "ApiKey",
-                    ["Acl:Clients:health-fixture:Secret"] = "fixture-only",
-                    ["Acl:Clients:health-fixture:Scopes:0"] = "admin",
-                    ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
-                    ["AnalyticsEventConsumer:QueueUrl"] = "http://sqs.local/analytics",
-                    ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/commands.fifo",
-                    ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
-                    ["NotificationCommandDelivery:EvidenceDigestSecret"] = "health-test-evidence-secret",
-                    ["NotificationCommandDelivery:RecipientLaneSecret"] = "health-test-recipient-secret",
-                    ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
-                    ["Mongo:DatabaseName"] = "health-test",
-                    ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
-                    ["Notify:BaseAddress"] = "http://notify.local",
-                };
-                if (cutover is not null)
-                    values["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover;
-                configuration.AddInMemoryCollection(values);
-            });
+                    var values = new Dictionary<string, string?>
+                    {
+                        ["AWS_EMF_ENABLED"] = "false",
+                        ["Acl:Clients:health-fixture:Type"] = "ApiKey",
+                        ["Acl:Clients:health-fixture:Secret"] = "fixture-only",
+                        ["Acl:Clients:health-fixture:Scopes:0"] = "admin",
+                        ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
+                        ["AnalyticsEventConsumer:QueueUrl"] = "http://sqs.local/analytics",
+                        ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/commands.fifo",
+                        ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
+                        ["NotificationCommandDelivery:EvidenceDigestSecret"] = "health-test-evidence-secret",
+                        ["NotificationCommandDelivery:RecipientLaneSecret"] = "health-test-recipient-secret",
+                        ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
+                        ["Mongo:DatabaseName"] = "health-test",
+                        ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
+                        ["Notify:BaseAddress"] = "http://notify.local",
+                    };
+                    if (cutover is not null)
+                        values["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover;
+                    configuration.AddInMemoryCollection(values);
+                }
+            );
         }
 
         private void ConfigureBoundaries(IServiceCollection services)
