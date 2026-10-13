@@ -7,7 +7,7 @@ command_queue_name="waste_obligations_notifications_commands.fifo"
 command_dead_letter_queue_name="waste_obligations_notifications_commands_dlq.fifo"
 
 topic_arn="$(aws sns create-topic --name "$topic_name" --query TopicArn --output text)"
-queue_url="$(aws sqs create-queue --queue-name "$queue_name" --query QueueUrl --output text)"
+queue_url="$(aws sqs create-queue --queue-name "$queue_name" --attributes VisibilityTimeout=120 --query QueueUrl --output text)"
 queue_arn="$(
     aws sqs get-queue-attributes \
         --queue-url "$queue_url" \

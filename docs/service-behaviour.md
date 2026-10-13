@@ -7,15 +7,17 @@ implementation scope is described below.
 
 ## Current scope
 
-The analytics consumer logs event and entity IDs and deletes successfully
-processed messages. It does not deliver notifications or persist event data.
+The analytics consumer logs safe event and entity IDs and deletes successfully
+processed messages. Matching submission events enrich the declaration and publish
+submitted-email commands before acknowledgement. It does not call Notify or persist
+event data.
 With the default null cutover, the command consumer durably suppresses every
 valid command and deletes it without Notify. With a supplied boundary, it
 records pre-cutover commands as `delivery-suppressed` and
 sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
-cutover. Analytics does not yet create notification commands. Configured Basic or OAuth
+cutover. Cancellation production is not implemented. Configured Basic or OAuth
 administrators can inspect command-DLQ batches, redrive selected commands or discard one command-DLQ message. Redrive does not restore a command's
 original recipient-lane position.
 
@@ -27,8 +29,12 @@ original recipient-lane position.
 - Preserve the analytics-event transport contract: raw JSON and
   `Content-Encoding: gzip+base64` are supported. Any other declared encoding is
   a processing failure.
-- Do not filter analytics events by event type or entity type. Log a parsed
-  event's `eventId` and `entityId` before deleting its SQS message.
+- Only `submission.created` for `compliance_declaration` creates a submitted-email
+  command. Other events retain log-and-acknowledge processing without declaration
+  reads. Qualifying events require schema `compliance_declaration_v1.3`, positive
+  entity version, ULID event ID, `cdec_` plus 24 lowercase hex declaration ID and
+  nonempty organisation GUID at `after.organisation.id`. Log only validated opaque
+  identifiers; malformed transport uses validated SQS UUID correlation where available.
 - Delete an SQS message only after all work needed to make it terminal has
   succeeded. Parsing, validation, persistence, or processing failures must
   leave the message in the queue for its redrive policy.
@@ -36,10 +42,14 @@ original recipient-lane position.
   the three hosts processes analytics events and notification commands independently
   through separate consumers. Receive size is fixed in code, with no batch-size
   configuration; administration inspection and recovery batches retain their limits.
-  The command visibility and lease budget covers one attempt. Analytics currently
-  parses, logs and acknowledges one event; the command budget does not establish
-  an analytics processing budget. Future batching requires a reviewed budget for
-  the affected consumer.
+  The command visibility and lease budget covers one attempt. The separate analytics
+  budget bounds receive/read/publish/delete to 30/10/10/5 seconds with 10 seconds
+  headroom, within explicit receive visibility of 120 seconds. Startup validates
+  the whole budget and requires receive timeout above long-poll wait. Monotonic
+  timing starts before receive and rejects late confirmations before further side
+  effects. Linked cancellation reaches complete HTTP buffering and SQS operations;
+  cancellation-resistant work can still outlive its token deadline. Future batching
+  requires review of the affected consumer's budget.
 - Both consumers immediately receive again after success or an empty response;
   SQS long polling supplies idle waiting. Each consumer's `PollIntervalSeconds`
   is cancellation-aware backoff only after errors, including dependency cancellation
@@ -49,14 +59,46 @@ original recipient-lane position.
   A disabled analytics consumer logs once and awaits cancellation.
 - Apply the logging restrictions in [coding standards](../CODING_STANDARDS.md).
 
+## Submitted-email production
+
+Read `GET /organisations/{organisationId}/compliance-declarations/{declarationId}`
+using the authorised Basic service client. Require matching declaration/organisation
+identity and an equal or newer monotonic entity version. A 404, older read, invalid
+required data or unconfirmed publication leaves the event unacknowledged; never
+substitute event snapshot enrichment. The first stored action exactly `Submitted`
+supplies original email, name and explicit UTC action time, even for a latest
+Accepted or Cancelled declaration.
+
+Use persisted registration type, country, regulator and regulator email. Exact
+`ComplianceScheme` selects scheme; otherwise direct. Only `GB-WLS` selects Welsh,
+independently of locale. `SubmissionEmail` exposes `DirectEnglishTemplateId`,
+`DirectWelshTemplateId`, `SchemeEnglishTemplateId`, `SchemeWelshTemplateId` with the
+legacy UUID defaults documented in the README. Preserve numeric `obligationYear`
+and strings `regulatorLeading`, `regulatorInline`, `regulatorEmail`, `user`.
+English adds `The ` / `the ` to the stored regulator; Welsh leaves it unchanged.
+
+Use `submission:{organisationGuid:D}:{declarationObjectId}` as the intended-email
+identity. Transport copies, later entity versions/status and mapping changes do
+not create new intentions. The existing publisher confirms queue acceptance before
+analytics deletion; immutable mapping differences conflict with retained delivery
+evidence. See [ADR 0005](adr/0005-submitted-email-production.md).
+
+Information publication logs carry validated event/entity IDs, HMAC Notify reference,
+configured UUID template, one of `submitted-direct-en/cy` or `submitted-scheme-en/cy`
+and original action time. Delivery uses the same reference and distinguishes recorded
+null/before-cutover suppression, request acceptance by Notify and terminal duplicates.
+Retry warnings use fixed stages/reasons with no PII, raw key, exception object/text or
+payload. Confirmed publication with unconfirmed acknowledgement is a possible queue
+retry, not a claim that the message definitely remains queued. No log proves recipient
+delivery, and duplicates do not claim new acceptance or suppression.
+
 ## Notification commands and data protection
 
 Producer wire fields, timestamp precision and exact FIFO lane calculation are
 specified in the [producer contract](notification-command-producer-contract.md).
 
 - Keep notification delivery separate from the analytics-event path. Analytics
-  consumption does not deliver notifications, mutate business data, transform
-  payloads, or persist event data.
+  creates commands but does not call Notify, mutate business data or persist event data.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
 - Consume commands unconditionally after successful startup readiness. Null
@@ -393,6 +435,15 @@ administration start after its first successful anonymous response completes.
   queue, with its own redrive policy. Never reuse the producer queue.
 - `AnalyticsEventConsumer__QueueUrl` and
   `AnalyticsEventConsumer__ProcessingEnabled` are deployment-owned settings.
+- Enabled analytics requires `SubmissionEmail__ApiBaseAddress`, `ClientId` and
+  `ClientSecret` (with the same section prefix) for a Basic-auth declaration client
+  with `read` scope. Read/template configuration validates at startup; disabled
+  analytics can resolve with read placeholders. The declaration API health check is
+  lightweight, anonymous, read-only and extended-health-only; critical Mongo remains
+  the startup gate. Development read configuration targets the isolated Compose HTTP
+  fixture: health is healthy and declaration reads return 404 without fabricated emails.
+- Analytics dependency timeouts, headroom and explicit visibility are configured in
+  `AnalyticsEventConsumer`; the command queue budget does not cover analytics.
 - Command queue, MongoDB, cutover, digest-secret and `AWS_EMF_*` settings are also
   deployment-owned. Local Compose settings do not configure CDP environments.
   Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
@@ -406,7 +457,8 @@ administration start after its first successful anonymous response completes.
 Unit tests cover parsing, validation, logging, deletion, and failure behaviour.
 Compose-backed integration tests cover health and SNS-to-SQS-to-consumer wiring.
 Test that stored command evidence and logs do not disclose protected identifiers,
-addresses, templates, or personalisation. Analytics event and entity IDs are
+addresses, untrusted template text or personalisation. Configured UUID template IDs
+are permitted submission/delivery diagnostics. Analytics event and entity IDs are
 logged as required by the analytics contract above.
 
 ## Initial deployment and cutover

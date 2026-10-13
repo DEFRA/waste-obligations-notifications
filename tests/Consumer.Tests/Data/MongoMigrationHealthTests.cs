@@ -98,6 +98,9 @@ public sealed class MongoMigrationHealthTests
             {
                 ["AnalyticsEventConsumer:ProcessingEnabled"] = analyticsEnabled.ToString(),
                 ["AnalyticsEventConsumer:QueueUrl"] = "http://localhost:4566/analytics",
+                ["SubmissionEmail:ApiBaseAddress"] = "http://localhost:8080",
+                ["SubmissionEmail:ClientId"] = "health-test-reader",
+                ["SubmissionEmail:ClientSecret"] = "health-test-secret",
                 ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                 ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                 ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",

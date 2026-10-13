@@ -5,6 +5,9 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -196,7 +199,7 @@ public class AnalyticsEventConsumerTests
         await sqsClient
             .Received(2)
             .ReceiveMessageAsync(
-                Arg.Is<ReceiveMessageRequest>(request => request.MaxNumberOfMessages == 1),
+                Arg.Is<ReceiveMessageRequest>(request => request.MaxNumberOfMessages == 1 && request.VisibilityTimeout == 120),
                 Arg.Any<CancellationToken>()
             );
         await sqsClient
@@ -273,7 +276,28 @@ public class AnalyticsEventConsumerTests
                     }
             ),
             logger ?? new RecordingLogger<AnalyticsEventConsumer>(),
-            StartedApplication()
+            StartedApplication(),
+            new DeclarationClient(new HttpClient(), Options.Create(new SubmissionEmailOptions())),
+            new SubmissionCommandMapper(Options.Create(new SubmissionEmailOptions())),
+            new NotificationCommandPublisher(
+                sqsClient,
+                DeliveryOptions(),
+                new NotificationCommandDigest(DeliveryOptions())
+            ),
+            new NotificationCommandDigest(DeliveryOptions()),
+            new AnalyticsProcessingBudget(
+                Options.Create(configuredOptions ?? new AnalyticsEventConsumerOptions { QueueUrl = QueueUrl })
+            )
+        );
+
+    private static IOptions<NotificationCommandDeliveryOptions> DeliveryOptions() =>
+        Options.Create(
+            new NotificationCommandDeliveryOptions
+            {
+                QueueUrl = "http://localhost/commands.fifo",
+                EvidenceDigestSecret = "test-evidence-secret",
+                RecipientLaneSecret = "test-lane-secret",
+            }
         );
 
     private static ApplicationStartup StartedApplication()

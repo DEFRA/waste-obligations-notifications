@@ -6,8 +6,10 @@ A CDP consumer service for analytics events and notification commands published 
 
 The service receives every message from its service-owned SQS subscription to the
 `waste_obligations_analytics_events` SNS topic. It logs the analytics event ID and
-entity ID, then deletes the successfully processed message. It deliberately does
-not send notifications, persist data, or act on the event payload.
+entity ID, then deletes the successfully processed message. For `submission.created`
+events for `compliance_declaration`, it reads the declaration and publishes the
+original submitted-email command before acknowledgement. Other events retain the
+log-and-acknowledge behaviour. Analytics does not call Notify or persist event data.
 
 With the default null cutover, the command consumer durably suppresses every
 valid command and deletes it without Notify. With a supplied boundary, it
@@ -116,6 +118,34 @@ service-owned `AnalyticsEventConsumer__QueueUrl`. The deployed queue must be a
 separate subscription from the producer queue and must have the CDP dead-letter
 queue convention configured.
 
+Enabled analytics also requires `SubmissionEmail__ApiBaseAddress`,
+`SubmissionEmail__ClientId` and `SubmissionEmail__ClientSecret` for the Waste
+Obligations declaration API. Provision a Basic-auth service client with `read`
+scope. Requests use `GET /organisations/{organisationId}/compliance-declarations/{declarationId}`.
+The returned declaration must match both identities and have an equal or newer
+entity version. A 404, older version, malformed declaration or unconfirmed
+publication retains the event for retry; the event snapshot is never enrichment
+fallback. The first stored `Submitted` audit supplies recipient, name and UTC
+action time even when the latest declaration is Accepted or Cancelled.
+
+`SubmissionEmail` owns four UUID template mappings, overridable through
+`SubmissionEmail__DirectEnglishTemplateId`, `SubmissionEmail__DirectWelshTemplateId`,
+`SubmissionEmail__SchemeEnglishTemplateId` and `SubmissionEmail__SchemeWelshTemplateId`.
+Defaults are respectively `5f64e3bd-d454-4a45-a9c6-9409bf940d7a`,
+`b3223b0b-a467-40c1-9150-f78b76d11fd8`, `b103685d-de8a-4ea9-abc8-d244ca26841b`
+and `95d8c2aa-a229-4ecb-9774-78ec06d0cbac`. Persisted registration type
+`ComplianceScheme` selects scheme; other types select direct. Only persisted
+`GB-WLS` selects Welsh, independently of submitter locale. Personalisation keeps
+numeric `obligationYear` and strings `regulatorLeading`, `regulatorInline`,
+`regulatorEmail`, and `user`; English adds `The ` / `the ` to the stored regulator.
+
+Development read settings target the isolated Compose HTTP fixture's `/declarations`
+boundary. Its health route is healthy; all declaration reads return 404, so it never
+fabricates submission emails. Configure the accessible real API and authorised
+credentials before exercising real submitted events. Declaration health appears only
+on `/health/all`, so the existing critical-Mongo startup boundary is unchanged.
+Disabled analytics accepts read placeholders and makes no declaration requests.
+
 `NotificationCommandDelivery` is deployment-owned. Every host consumes commands
 after successful startup readiness; there is no command-processing enablement
 flag. Before deployment, provide the FIFO queue URL, optional cutover, distinct
@@ -146,9 +176,34 @@ Both normal consumers request exactly one message per receive. Each of the three
 hosts independently processes one analytics event and one command at a time through
 separate consumers. Receive size is fixed in code and has no batch-size setting;
 administration inspection and recovery batches retain their limits. The command
-visibility and lease budget covers one attempt. Analytics currently parses, logs
-and acknowledges one event; its processing budget is separate from command delivery.
+visibility and lease budget covers one attempt. Analytics has a separate validated
+receive/read/publication/acknowledgement budget.
 Future batching requires a reviewed budget for the affected consumer.
+
+Analytics requests `AnalyticsEventConsumer__VisibilityTimeoutSeconds` explicitly
+(120 seconds). Its receive, read, publish and delete bounds default to 30, 10, 10
+and 5 seconds, with 10 seconds safety headroom: 65 seconds in total. Configure
+`ReceiveTimeoutSeconds`, `ReadTimeoutSeconds`, `PublishTimeoutSeconds`,
+`DeleteTimeoutSeconds` and `SafetyHeadroomSeconds` in the `AnalyticsEventConsumer`
+section; startup requires receive timeout above the long-poll wait and visibility
+covering the complete budget. Monotonic timing starts before receive, cancellation
+passes through HTTP response buffering and SQS operations, and late confirmations
+cannot authorise the next side effect. Cancellation-resistant dependencies may
+still outlive their token deadline; this does not promise forced termination.
+
+Publication logs correlate validated event/entity IDs with the same HMAC Notify
+reference used in delivery outcomes, template, bounded submission type and original
+action time. Retry warnings use fixed reasons/stages without dependency text or
+PII. Confirmed publication with unconfirmed acknowledgement is reported as possible
+retry. Delivery outcomes distinguish null-cutover/before-cutover suppression,
+request acceptance by Notify, and terminal duplicates; none proves recipient delivery.
+The four `submitted-direct-en/cy` and `submitted-scheme-en/cy` categories are included
+in the checked-in diagnostics allowlist for existing command metrics.
+
+Keep both services on null cutover for producer dry-run comparison. Verify deployed
+MO-562 version responses, read-client permissions, effective templates/account
+access and queue redrive policies before activation. Shared live handover remains
+gated on both submitted and cancellation producers; MO-550 owns cancellation.
 
 Both consumers start the next receive immediately after success or an empty
 response, letting SQS long polling supply idle waiting.

@@ -137,6 +137,33 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 Arg.Any<string>(),
                 Arg.Any<CancellationToken>()
             );
+        var outcome = Assert.Single(
+            logger.Messages,
+            message => message.StartsWith("Notification command outcome", StringComparison.Ordinal)
+        );
+        var expectedReason = suppressed
+            ? cutover is null ? "null-cutover" : "before-cutover"
+            : "request-accepted-by-notify";
+        Assert.Contains(expectedReason, outcome);
+        var digest = new NotificationCommandDigest(
+            Options.Create(
+                new NotificationCommandDeliveryOptions
+                {
+                    QueueUrl = QueueUrl,
+                    EvidenceDigestSecret = "test-evidence-secret",
+                    RecipientLaneSecret = "test-lane-secret",
+                }
+            )
+        );
+        Assert.Contains(digest.CreateNotifyReference(CommandIdempotencyKey), outcome);
+        Assert.DoesNotContain("delivered", outcome, StringComparison.OrdinalIgnoreCase);
+        Assert.All(logger.States, state =>
+        {
+            Assert.DoesNotContain(EmailAddress, state);
+            Assert.DoesNotContain(Personalisation, state);
+            Assert.DoesNotContain(CommandIdempotencyKey, state);
+        });
+        Assert.Empty(logger.Exceptions);
     }
 
     [Theory]
@@ -575,13 +602,23 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 Arg.Any<CancellationToken>()
             )
             .Returns(SuppressionClaimResult.TerminalDuplicate);
-        var subject = CreateSubject(sqsClient, recordStore);
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        var subject = CreateSubject(sqsClient, recordStore, logger);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
         await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
         await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+        var outcome = Assert.Single(
+            logger.Messages,
+            message => message.StartsWith("Notification command outcome", StringComparison.Ordinal)
+        );
+        Assert.Contains("terminal-duplicate", outcome);
+        Assert.Contains("existing-terminal-evidence", outcome);
+        Assert.DoesNotContain("null-cutover", outcome);
+        Assert.DoesNotContain("before-cutover", outcome);
+        Assert.DoesNotContain("request-accepted-by-notify", outcome);
     }
 
     [Fact]
@@ -793,9 +830,12 @@ public sealed class NotificationCommandConsumerTests : IDisposable
     {
         private readonly List<string> _messages = [];
         private readonly List<Exception> _exceptions = [];
+        private readonly List<string> _states = [];
 
         public IReadOnlyList<string> Messages => _messages;
         public IReadOnlyList<Exception> Exceptions => _exceptions;
+
+        public IReadOnlyList<string> States => _states;
 
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
@@ -813,6 +853,8 @@ public sealed class NotificationCommandConsumerTests : IDisposable
             lock (_messages)
             {
                 _messages.Add(formatter(state, exception));
+                if (state is IEnumerable<KeyValuePair<string, object?>> fields)
+                    _states.Add(string.Join(";", fields.Select(field => field.Key + "=" + field.Value)));
                 if (exception is not null)
                     _exceptions.Add(exception);
             }

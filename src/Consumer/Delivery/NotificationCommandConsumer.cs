@@ -38,7 +38,7 @@ public sealed class NotificationCommandConsumer(
                 var response = await ReceiveCommands(stoppingToken);
                 foreach (var message in response.Messages ?? [])
                 {
-                    messageId = message.MessageId;
+                    messageId = Guid.TryParseExact(message.MessageId, "D", out _) ? message.MessageId : null;
                     var command = ReadCommand(message);
                     notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
                     reference = digest.CreateNotifyReference(command.IdempotencyKey);
@@ -135,11 +135,19 @@ public sealed class NotificationCommandConsumer(
         metrics.RecordOutcome(notificationType, outcome);
         if (logger.IsEnabled(LogLevel.Information))
             logger.LogInformation(
-                "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}",
+                "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}, template {TemplateId}, action {ActionOccurredAtUtc} and reason {OutcomeReason}",
                 outcome,
                 notificationType,
-                message.MessageId,
-                reference
+                Guid.TryParseExact(message.MessageId, "D", out _) ? message.MessageId : null,
+                reference,
+                Guid.TryParseExact(command.TemplateId, "D", out _) ? command.TemplateId : null,
+                command.ActionOccurredAtUtc,
+                outcome switch
+                {
+                    "delivery-suppressed" => cutover is null ? "null-cutover" : "before-cutover",
+                    "delivery-accepted" => "request-accepted-by-notify",
+                    _ => "existing-terminal-evidence",
+                }
             );
         stoppingToken.ThrowIfCancellationRequested();
         await RunBounded(

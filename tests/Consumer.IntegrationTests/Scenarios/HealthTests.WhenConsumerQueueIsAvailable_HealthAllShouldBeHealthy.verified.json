@@ -1,6 +1,9 @@
 {
   "status": "Healthy",
   "results": {
+    "DeclarationApi": {
+      "status": "Healthy"
+    },
     "EmailDeliveryCutover": {
       "status": "Healthy",
       "data": {

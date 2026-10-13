@@ -5,6 +5,7 @@ using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -20,6 +21,11 @@ public static class ServiceCollectionExtensions
 
         var healthChecks = services
             .AddHealthChecks()
+            .AddCheck<DeclarationHealthCheck>(
+                "DeclarationApi",
+                tags: [WebApplicationExtensions.Extended],
+                timeout: TimeSpan.FromSeconds(10)
+            )
             .AddCheck<EmailDeliveryCutoverHealthCheck>(
                 "EmailDeliveryCutover",
                 tags: [WebApplicationExtensions.Extended]
