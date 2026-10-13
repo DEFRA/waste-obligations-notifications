@@ -61,6 +61,7 @@ if (keyPath is not null)
 }
 app.MapGet("/test/api-key", () => Results.Text(apiKey));
 app.MapGet("/health", () => Results.Ok());
+
 // Isolated declaration dependency: health is available, but no submission data is fabricated.
 app.MapGet("/declarations/health", () => Results.Ok());
 app.MapGet(
