@@ -213,13 +213,23 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
             if (document.TryGetValue("stage", out var stage) && stage.IsString)
                 yield return stage.AsString;
             foreach (var value in document.Values)
-            foreach (var nested in Stages(value))
-                yield return nested;
+            {
+                foreach (var nested in Stages(value))
+                {
+                    yield return nested;
+                }
+            }
         }
         else if (node is BsonArray array)
+        {
             foreach (var value in array)
-            foreach (var nested in Stages(value))
-                yield return nested;
+            {
+                foreach (var nested in Stages(value))
+                {
+                    yield return nested;
+                }
+            }
+        }
     }
 
     private static BsonDocument Record(
