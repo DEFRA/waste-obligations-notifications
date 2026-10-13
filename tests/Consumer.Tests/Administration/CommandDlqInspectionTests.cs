@@ -1085,16 +1085,8 @@ public sealed class CommandDlqInspectionTests
             record.GetProperty("links").GetProperty("sourceRecord").GetString()
         );
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
-        foreach (
-            var field in new[]
-            {
-                "recipient",
-                "immutableFields",
-                "attemptOwner",
-                "emailAddress",
-                "personalisation",
-            }
-        )
+        string[] privateFields = ["recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation"];
+        foreach (var field in privateFields)
             Assert.False(record.TryGetProperty(field, out _));
         Assert.Equal("FindAsync", Assert.Single(collection.ReceivedCalls()).GetMethodInfo().Name);
         Assert.Empty(factory.Sqs.ReceivedCalls());

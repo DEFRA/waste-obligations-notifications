@@ -179,11 +179,11 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             );
             Assert.Equal("v1:old", Assert.Single(third.Records).NotificationKey);
             Assert.Null(third.NextCursor);
-            Assert.All(first.Records.Concat(second.Records).Concat(third.Records), record =>
+            foreach (var record in first.Records.Concat(second.Records).Concat(third.Records))
             {
                 Assert.Null(record.ResendOfNotificationKey);
                 Assert.Null(record.Links);
-            });
+            }
             var pending = await reader.Search(
                 new DeliveryRecordSearchQuery { NotificationKey = "v1:pending" },
                 token
