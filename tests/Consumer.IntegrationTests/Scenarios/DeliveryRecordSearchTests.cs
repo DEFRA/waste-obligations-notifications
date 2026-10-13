@@ -184,10 +184,7 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
                 Assert.Null(record.ResendOfNotificationKey);
                 Assert.Null(record.Links);
             }
-            var pending = await reader.Search(
-                new DeliveryRecordSearchQuery { NotificationKey = "v1:pending" },
-                token
-            );
+            var pending = await reader.Search(new DeliveryRecordSearchQuery { NotificationKey = "v1:pending" }, token);
             Assert.Equal("delivery-pending", Assert.Single(pending.Records).Outcome);
             Assert.Null(pending.Records[0].NotifyNotificationId);
             var missingId = await reader.Search(
@@ -206,10 +203,7 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
                     token
                 )
             );
-            var accepted = await reader.Search(
-                new DeliveryRecordSearchQuery { Outcome = "delivery-accepted" },
-                token
-            );
+            var accepted = await reader.Search(new DeliveryRecordSearchQuery { Outcome = "delivery-accepted" }, token);
             Assert.Equal("v1:accepted", Assert.Single(accepted.Records).NotificationKey);
             Assert.Equal(before, await records.Find(new BsonDocument()).Sort("{_id:1}").ToListAsync(token));
         }
