@@ -1083,7 +1083,14 @@ public sealed class CommandDlqInspectionTests
         );
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
         foreach (
-            var field in new[] { "recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation" }
+            var field in new[]
+            {
+                "recipient",
+                "immutableFields",
+                "attemptOwner",
+                "emailAddress",
+                "personalisation",
+            }
         )
             Assert.False(record.TryGetProperty(field, out _));
         Assert.Equal("FindAsync", Assert.Single(collection.ReceivedCalls()).GetMethodInfo().Name);

@@ -73,11 +73,7 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             foreach (
                 var exclusion in new[]
                 {
-                    new DeliveryRecordSearchQuery
-                    {
-                        NotificationKey = "v1:replacement",
-                        NotifyNotificationId = "NOTIFY-1",
-                    },
+                    new DeliveryRecordSearchQuery { NotificationKey = "v1:replacement", NotifyNotificationId = "NOTIFY-1" },
                     new DeliveryRecordSearchQuery
                     {
                         NotificationKey = "v1:replacement",
