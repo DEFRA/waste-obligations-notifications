@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Startup;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -126,31 +128,156 @@ public class AnalyticsEventConsumerTests
             .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
             .Returns(FailureThenWait(new InvalidOperationException("SQS receive failed")));
         var logger = new RecordingLogger<AnalyticsEventConsumer>();
-        var subject = CreateSubject(sqsClient, logger);
+        using var subject = CreateSubject(sqsClient, logger, pollIntervalSeconds: 300);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
         await logger.WaitForMessage("Analytics event consumption failed", TestContext.Current.CancellationToken);
+        await subject
+            .StopAsync(TestContext.Current.CancellationToken)
+            .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await subject
+            .ExecuteTask!.ContinueWith(_ => { }, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Single(logger.Messages, message => message == "Analytics event consumption failed");
+        Assert.False(subject.ExecuteTask!.IsFaulted);
+        await sqsClient.Received(1).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Start_WhenReceiveSucceeds_ShouldImmediatelyReceiveOneMessageDespiteRemovedBatchOverride(
+        bool containsMessage
+    )
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["QueueUrl"] = QueueUrl,
+                    ["ProcessingEnabled"] = "true",
+                    ["BatchSize"] = "10",
+                    ["WaitTimeSeconds"] = "0",
+                    ["PollIntervalSeconds"] = "300",
+                }
+            )
+            .Build();
+        var nextReceive = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var receivedCount = 0;
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                async call =>
+                {
+                    if (Interlocked.Increment(ref receivedCount) == 1)
+                    {
+                        return new ReceiveMessageResponse
+                        {
+                            Messages = containsMessage ? [CreateMessage(Body())] : [],
+                        };
+                    }
+                    nextReceive.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, call.ArgAt<CancellationToken>(1));
+
+                    return new ReceiveMessageResponse();
+                }
+            );
+        sqsClient
+            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
+            .Returns(new DeleteMessageResponse());
+        var logger = new RecordingLogger<AnalyticsEventConsumer>();
+        using var subject = CreateSubject(
+            sqsClient,
+            logger,
+            configuredOptions: configuration.Get<AnalyticsEventConsumerOptions>()!
+        );
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await nextReceive.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
-        Assert.Contains(logger.Messages, message => message == "Analytics event consumption failed");
+        await sqsClient
+            .Received(2)
+            .ReceiveMessageAsync(
+                Arg.Is<ReceiveMessageRequest>(request => request.MaxNumberOfMessages == 1),
+                Arg.Any<CancellationToken>()
+            );
+        await sqsClient
+            .Received(containsMessage ? 1 : 0)
+            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+        Assert.DoesNotContain(logger.Messages, message => message == "Analytics event consumption failed");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Start_WhenDependencyFails_ShouldBackOffAndProcessNextMessage(bool dependencyCancelled)
+    {
+        var deleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var receivedCount = 0;
+        var failedAt = 0L;
+        var retryDelay = TimeSpan.Zero;
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                async call =>
+                {
+                    var count = Interlocked.Increment(ref receivedCount);
+                    if (count == 1)
+                    {
+                        failedAt = Stopwatch.GetTimestamp();
+                        if (dependencyCancelled)
+                            throw new OperationCanceledException("Dependency timed out");
+                        throw new InvalidOperationException("Dependency failed");
+                    }
+                    if (count == 2)
+                    {
+                        retryDelay = Stopwatch.GetElapsedTime(failedAt);
+
+                        return new ReceiveMessageResponse { Messages = [CreateMessage(Body())] };
+                    }
+                    await Task.Delay(Timeout.InfiniteTimeSpan, call.ArgAt<CancellationToken>(1));
+
+                    return new ReceiveMessageResponse();
+                }
+            );
+        sqsClient
+            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
+            .Returns(new DeleteMessageResponse())
+            .AndDoes(_ => deleted.TrySetResult());
+        var logger = new RecordingLogger<AnalyticsEventConsumer>();
+        using var subject = CreateSubject(sqsClient, logger);
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(retryDelay >= TimeSpan.FromSeconds(1));
+        Assert.Single(logger.Messages, message => message == "Analytics event consumption failed");
+        await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
     }
 
     private static AnalyticsEventConsumer CreateSubject(
         IAmazonSQS sqsClient,
         ILogger<AnalyticsEventConsumer>? logger = null,
-        bool processingEnabled = true
+        bool processingEnabled = true,
+        int pollIntervalSeconds = 1,
+        AnalyticsEventConsumerOptions? configuredOptions = null
     ) =>
         new(
             sqsClient,
             Options.Create(
-                new AnalyticsEventConsumerOptions
-                {
-                    QueueUrl = QueueUrl,
-                    ProcessingEnabled = processingEnabled,
-                    BatchSize = 10,
-                    WaitTimeSeconds = 0,
-                    PollIntervalSeconds = 1,
-                }
+                configuredOptions
+                    ?? new AnalyticsEventConsumerOptions
+                    {
+                        QueueUrl = QueueUrl,
+                        ProcessingEnabled = processingEnabled,
+                        WaitTimeSeconds = 0,
+                        PollIntervalSeconds = pollIntervalSeconds,
+                    }
             ),
             logger ?? new RecordingLogger<AnalyticsEventConsumer>(),
             StartedApplication()

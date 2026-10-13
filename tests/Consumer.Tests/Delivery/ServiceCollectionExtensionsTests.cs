@@ -53,7 +53,9 @@ public sealed class ServiceCollectionExtensionsTests
         {
             Assert.Equal(waitTimeSeconds, options.Value.WaitTimeSeconds);
             Assert.Equal(receiveTimeoutSeconds, options.Value.ReceiveTimeoutSeconds);
-            Assert.Equal(1, options.Value.BatchSize);
+            Assert.Equal(7, options.Value.PollIntervalSeconds);
+            Assert.Equal(1000, options.Value.CommandLeaseSeconds);
+            Assert.Equal(1000, options.Value.VisibilityTimeoutSeconds);
             Assert.True(options.Value.HasValidProcessingBudget);
         }
         else
@@ -80,6 +82,7 @@ public sealed class ServiceCollectionExtensionsTests
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",
                     ["NotificationCommandDelivery:CommandLeaseSeconds"] = ampleBudgetSeconds,
                     ["NotificationCommandDelivery:VisibilityTimeoutSeconds"] = ampleBudgetSeconds,
+                    ["NotificationCommandDelivery:PollIntervalSeconds"] = "7",
                     ["NotificationCommandDelivery:WaitTimeSeconds"] = waitTimeSeconds.ToString(
                         CultureInfo.InvariantCulture
                     ),

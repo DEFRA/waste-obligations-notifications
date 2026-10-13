@@ -32,11 +32,19 @@ original recipient-lane position.
 - Delete an SQS message only after all work needed to make it terminal has
   succeeded. Parsing, validation, persistence, or processing failures must
   leave the message in the queue for its redrive policy.
-- Background consumers should long-poll, process the configured batch, and log
-  non-cancellation exceptions. Analytics consumption waits for its configured
-  poll interval after each receive. Command consumption immediately receives
-  again after success or an empty response; its poll interval is backoff only
-  after errors. The command receive timeout must exceed its long-poll wait and
+- Both normal consumers long-poll for exactly one message per receive. Each of
+  the three hosts processes analytics events and notification commands independently
+  through separate consumers. Receive size is fixed in code, with no batch-size
+  configuration; administration inspection and recovery batches retain their limits.
+  The command visibility and lease budget covers one attempt. Analytics currently
+  parses, logs and acknowledges one event; the command budget does not establish
+  an analytics processing budget. Future batching requires a reviewed budget for
+  the affected consumer.
+- Both consumers immediately receive again after success or an empty response;
+  SQS long polling supplies idle waiting. Each consumer's `PollIntervalSeconds`
+  is cancellation-aware backoff only after errors, including dependency cancellation
+  when the host is still running. Actual host cancellation stops processing without
+  failure logging. The command receive timeout must exceed its long-poll wait and
   bounds that receive without changing the shared SQS client's configuration.
   A disabled analytics consumer logs once and awaits cancellation.
 - Apply the logging restrictions in [coding standards](../CODING_STANDARDS.md).

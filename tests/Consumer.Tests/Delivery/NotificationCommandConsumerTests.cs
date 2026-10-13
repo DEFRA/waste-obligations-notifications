@@ -8,6 +8,7 @@ using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -205,8 +206,23 @@ public sealed class NotificationCommandConsumerTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Start_WhenReceiveSucceedsOrIsEmpty_ShouldImmediatelyReceiveAgain(bool hasCommand)
+    public async Task Start_WhenReceiveSucceedsOrIsEmpty_ShouldImmediatelyReceiveOneDespiteRemovedBatchOverride(
+        bool hasCommand
+    )
     {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["QueueUrl"] = QueueUrl,
+                    ["EvidenceDigestSecret"] = "test-evidence-secret",
+                    ["RecipientLaneSecret"] = "test-recipient-lane-secret",
+                    ["BatchSize"] = "10",
+                    ["WaitTimeSeconds"] = "0",
+                    ["PollIntervalSeconds"] = "300",
+                }
+            )
+            .Build();
         var receivedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var deleted = false;
         var sqsClient = Substitute.For<IAmazonSQS>();
@@ -243,13 +259,24 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 Arg.Any<CancellationToken>()
             )
             .Returns(SuppressionClaimResult.Recorded);
-        using var subject = CreateSubject(sqsClient, recordStore, pollIntervalSeconds: 300);
+        using var subject = CreateSubject(
+            sqsClient,
+            recordStore,
+            configuredOptions: configuration.Get<NotificationCommandDeliveryOptions>()!
+        );
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
         await receivedAgain.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
-        await sqsClient.Received(2).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+        await sqsClient
+            .Received(2)
+            .ReceiveMessageAsync(
+                Arg.Is<ReceiveMessageRequest>(request =>
+                    request.MaxNumberOfMessages == 1 && request.VisibilityTimeout == 120
+                ),
+                Arg.Any<CancellationToken>()
+            );
         await sqsClient
             .Received(hasCommand ? 1 : 0)
             .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
@@ -635,21 +662,23 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         int pollIntervalSeconds = 1,
         int receiveTimeoutSeconds = 30,
         string? cutover = "2026-09-29T00:00:00Z",
-        INotifyEmailClient? notify = null
+        INotifyEmailClient? notify = null,
+        NotificationCommandDeliveryOptions? configuredOptions = null
     ) =>
         new(
             sqsClient,
             Options.Create(
-                new NotificationCommandDeliveryOptions
-                {
-                    QueueUrl = QueueUrl,
-                    EmailDeliveryCutoverUtc = cutover,
-                    EvidenceDigestSecret = "test-evidence-secret",
-                    RecipientLaneSecret = "test-recipient-lane-secret",
-                    WaitTimeSeconds = 0,
-                    PollIntervalSeconds = pollIntervalSeconds,
-                    ReceiveTimeoutSeconds = receiveTimeoutSeconds,
-                }
+                configuredOptions
+                    ?? new NotificationCommandDeliveryOptions
+                    {
+                        QueueUrl = QueueUrl,
+                        EmailDeliveryCutoverUtc = cutover,
+                        EvidenceDigestSecret = "test-evidence-secret",
+                        RecipientLaneSecret = "test-recipient-lane-secret",
+                        WaitTimeSeconds = 0,
+                        PollIntervalSeconds = pollIntervalSeconds,
+                        ReceiveTimeoutSeconds = receiveTimeoutSeconds,
+                    }
             ),
             CreateRecordStoreFactory(recordStore),
             readiness ?? CompletedReadiness(),

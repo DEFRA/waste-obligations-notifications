@@ -36,7 +36,8 @@ public sealed class AnalyticsEventConsumer(
                     new ReceiveMessageRequest
                     {
                         QueueUrl = options.Value.QueueUrl,
-                        MaxNumberOfMessages = options.Value.BatchSize,
+                        // Each host processes one event independently; future batching needs a reviewed analytics budget.
+                        MaxNumberOfMessages = 1,
                         MessageAttributeNames = ["All"],
                         WaitTimeSeconds = options.Value.WaitTimeSeconds,
                     },
@@ -60,12 +61,15 @@ public sealed class AnalyticsEventConsumer(
                     await sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, stoppingToken);
                 }
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
             {
                 logger.LogError(exception, "Analytics event consumption failed");
+                await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
             }
-
-            await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
         }
     }
 

@@ -247,7 +247,8 @@ public sealed class NotificationCommandConsumer(
                     new ReceiveMessageRequest
                     {
                         QueueUrl = options.Value.QueueUrl,
-                        MaxNumberOfMessages = options.Value.BatchSize,
+                        // The validated visibility and lease budget covers one attempt; batching needs a reviewed budget.
+                        MaxNumberOfMessages = 1,
                         MessageAttributeNames = ["All"],
                         WaitTimeSeconds = options.Value.WaitTimeSeconds,
                         VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,

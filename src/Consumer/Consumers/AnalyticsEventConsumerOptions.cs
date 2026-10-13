@@ -11,9 +11,6 @@ public sealed record AnalyticsEventConsumerOptions
 
     public bool ProcessingEnabled { get; init; }
 
-    [Range(1, 10)]
-    public int BatchSize { get; init; } = 10;
-
     [Range(0, 20)]
     public int WaitTimeSeconds { get; init; } = 20;
 

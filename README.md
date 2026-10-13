@@ -142,13 +142,24 @@ characters). Unconfigured types use `other`. Failure logs contain a fixed cause
 and exception type, without retaining dependency exception text or payloads.
 Delivery evidence retains the command type and identity digests, outside diagnostic output.
 
-Command consumption starts the next receive immediately after success or an
-empty response. `NotificationCommandDelivery__PollIntervalSeconds` is the
-error backoff only (15 seconds initially). Each host processes one command
-at a time. `WaitTimeSeconds` defaults to a 20-second long poll;
+Both normal consumers request exactly one message per receive. Each of the three
+hosts independently processes one analytics event and one command at a time through
+separate consumers. Receive size is fixed in code and has no batch-size setting;
+administration inspection and recovery batches retain their limits. The command
+visibility and lease budget covers one attempt. Analytics currently parses, logs
+and acknowledges one event; its processing budget is separate from command delivery.
+Future batching requires a reviewed budget for the affected consumer.
+
+Both consumers start the next receive immediately after success or an empty
+response, letting SQS long polling supply idle waiting.
+`AnalyticsEventConsumer__PollIntervalSeconds` and
+`NotificationCommandDelivery__PollIntervalSeconds` are cancellation-aware error
+backoff only (15 seconds initially). A dependency cancellation while the host is
+running is a failure and retries after backoff; host shutdown interrupts waiting
+without failure logging. `WaitTimeSeconds` defaults to a 20-second long poll;
 `ReceiveTimeoutSeconds` bounds the entire receive request, including SDK
 retries, and defaults to 30 seconds. It must exceed `WaitTimeSeconds`. These
-command settings leave analytics polling and the shared SQS client unchanged.
+command timeout settings do not configure analytics or change the shared SQS client.
 CDP can override them through the `NotificationCommandDelivery` section;
 local Compose values do not configure deployed environments.
 
