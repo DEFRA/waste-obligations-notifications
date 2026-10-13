@@ -7,6 +7,31 @@ permissions:
   contents: read
 
 jobs:
+  notify-previews:
+    name: Required Notify submission previews
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check local Notify setup and preview execution guards
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 10.0
+      - name: Restore and audit provider preview dependencies
+        run: dotnet restore tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj -p:NuGetAudit=true -p:NuGetAuditMode=all
+      - name: Build provider preview tests
+        run: DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj --no-restore -m:1 -nodeReuse:false --disable-build-servers -v:minimal
+      - name: Require all four real Notify previews
+        env:
+          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
+          NOTIFY_PREVIEWS_REQUIRED: "true"
+        run: python3 scripts/check-notify-previews.py
+
   build:
     if: github.run_number != 1
     name: CDP-build-hotfix-workflow
@@ -48,7 +73,7 @@ jobs:
 
   publish:
     name: CDP-publish-hotfix-workflow
-    needs: [build, sonarcloud-scan]
+    needs: [build, sonarcloud-scan, notify-previews]
     runs-on: ubuntu-latest
     permissions:
       contents: write

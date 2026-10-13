@@ -95,6 +95,42 @@ integration tests; it does not contact GOV.UK Notify. Its port is `8086`.
 
 The Consumer health endpoint is available at `http://localhost:8085/health`.
 
+For local real-Notify previews, put only your authorised credential in an ignored
+root `.env` (also excluded from Docker build inputs):
+
+```dotenv
+GovukNotify_ApiKey=<authorised-notify-api-key>
+```
+
+After building the integration test project, run the four previews without Compose:
+
+```bash
+python3 scripts/with-notify-key.py preview python3 scripts/check-notify-previews.py
+```
+
+The launcher reads the file as data and maps the key to `GOVUKNOTIFY_APIKEY` only
+when that destination is absent. An explicitly set destination, including an empty
+value, wins. Missing credentials produce explicit skipped cases in ordinary local
+integration runs; the preview-check script requires all four to execute and pass.
+`SubmissionEmail__DirectEnglishTemplateId`, `SubmissionEmail__DirectWelshTemplateId`,
+`SubmissionEmail__SchemeEnglishTemplateId` and `SubmissionEmail__SchemeWelshTemplateId`
+override the preview IDs using the same options as the producer. Previews first
+load the required copy of the consumer appsettings mappings, then environment
+overrides. Previews use only
+synthetic values and never send email.
+
+For a locally configured consumer using the real Notify endpoint, the same launcher
+maps the fallback to `Notify__ApiKey`:
+
+```bash
+python3 scripts/with-notify-key.py consumer dotnet run --project src/Consumer --no-launch-profile
+```
+
+Supply the other required runtime settings separately, including the real
+`Notify__BaseAddress`; retain null cutover for dry-run suppression. The launcher
+sets only the requested destination. Compose and isolated integration fixtures
+continue to supply their own dummy key and fixture endpoint.
+
 ## Documentation
 
 - [Coding standards](CODING_STANDARDS.md): code structure, style, security, and test conventions.
@@ -505,7 +541,12 @@ Authenticated `POST /admin/notification-commands/dlq/verification-command` accep
 GitHub Actions runs Consumer tests, validates Compose, builds and scans the
 container image, and sends coverage to SonarCloud under
 `DEFRA_waste-obligations-notifications`. Dependabot manages NuGet, actions, and
-container dependency updates. Journey tests are not currently part of this service.
+container dependency updates. PR validation, main publishing and hotfix publishing
+also require all four real-Notify submission previews to execute and pass before
+image build or publication. The repository `GOVUKNOTIFY_APIKEY` Actions secret is
+supplied only to the preview test process; missing access, errors, wrong rendering,
+skips or fewer than four results fail that gate. Existing unit/integration and
+security checks remain required. Journey tests are not currently part of this service.
 
 The isolated Notify fixture creates random synthetic API credentials for each fresh
 local volume and reuses them on fixture restarts. Compose supplies them through

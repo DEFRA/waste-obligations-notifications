@@ -16,6 +16,30 @@ permissions:
   contents: read
 
 jobs:
+  notify-previews:
+    needs: [workflow-validation, dependency-review]
+    name: Required Notify submission previews
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: 10.0
+      - name: Restore and audit provider preview dependencies
+        run: dotnet restore tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj -p:NuGetAudit=true -p:NuGetAuditMode=all
+      - name: Build provider preview tests
+        run: DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj --no-restore -m:1 -nodeReuse:false --disable-build-servers -v:minimal
+      - name: Require all four real Notify previews
+        env:
+          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
+          NOTIFY_PREVIEWS_REQUIRED: "true"
+        run: python3 scripts/check-notify-previews.py
+
   workflow-validation:
     name: Validate GitHub Actions
     runs-on: ubuntu-latest
@@ -25,6 +49,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Check local Notify setup and preview execution guards
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Validate workflows with actionlint
         run: |
           archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
@@ -55,7 +81,7 @@ jobs:
 
   pr-validator:
     name: Run Pull Request Checks
-    needs: [workflow-validation, dependency-review]
+    needs: [workflow-validation, dependency-review, notify-previews]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     outputs:
@@ -67,9 +93,10 @@ jobs:
         env:
           WORKFLOW_VALIDATION: ${{ needs.workflow-validation.result }}
           DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
+          NOTIFY_PREVIEWS: ${{ needs.notify-previews.result }}
         run: |
-          if [ "$WORKFLOW_VALIDATION" != "success" ] || [ "$DEPENDENCY_REVIEW" != "success" ]; then
-            printf 'Security prerequisites failed: workflow validation=%s, dependency review=%s\n' "$WORKFLOW_VALIDATION" "$DEPENDENCY_REVIEW"
+          if [ "$WORKFLOW_VALIDATION" != "success" ] || [ "$DEPENDENCY_REVIEW" != "success" ] || [ "$NOTIFY_PREVIEWS" != "success" ]; then
+            printf 'Security prerequisites failed: workflow validation=%s, dependency review=%s, Notify previews=%s\n' "$WORKFLOW_VALIDATION" "$DEPENDENCY_REVIEW" "$NOTIFY_PREVIEWS"
             exit 1
           fi
       - name: Check out code

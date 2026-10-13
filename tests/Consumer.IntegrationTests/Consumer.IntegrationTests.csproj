@@ -21,6 +21,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="../../src/Consumer/appsettings.json" Link="consumer-appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../src/Consumer/Consumer.csproj" />
     <ProjectReference Include="../Consumer.MigrationFixtures/Consumer.MigrationFixtures.csproj" />
   </ItemGroup>
