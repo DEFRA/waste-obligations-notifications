@@ -21,7 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="../../src/Consumer/appsettings.json" Link="consumer-appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content
+      Include="../../src/Consumer/appsettings.json"
+      Link="consumer-appsettings.json"
+      CopyToOutputDirectory="PreserveNewest"
+    />
   </ItemGroup>
 
   <ItemGroup>

@@ -29,7 +29,8 @@ public sealed class SubmissionTemplatePreviewTests
             .AddJsonFile("consumer-appsettings.json", optional: false)
             .AddEnvironmentVariables()
             .Build();
-        var options = configuration.GetSection(SubmissionEmailOptions.SectionName).Get<SubmissionEmailOptions>()
+        var options =
+            configuration.GetSection(SubmissionEmailOptions.SectionName).Get<SubmissionEmailOptions>()
             ?? new SubmissionEmailOptions();
         Assert.True(options.HasValidTemplates);
         var templateId = variant switch
@@ -62,9 +63,10 @@ public sealed class SubmissionTemplatePreviewTests
             using var transport = new NotifySdkHttpClient(http, HttpStatusCode.OK, deadline.Token);
             var client = new NotificationClient(transport, apiKey);
             var preview = await Task.Run(
-                () => client.GenerateTemplatePreviewAsync(templateId, personalisation),
-                deadline.Token
-            ).WaitAsync(deadline.Token);
+                    () => client.GenerateTemplatePreviewAsync(templateId, personalisation),
+                    deadline.Token
+                )
+                .WaitAsync(deadline.Token);
             deadline.Token.ThrowIfCancellationRequested();
             Assert.NotNull(preview);
             Assert.Contains("2026", preview.subject, StringComparison.Ordinal);

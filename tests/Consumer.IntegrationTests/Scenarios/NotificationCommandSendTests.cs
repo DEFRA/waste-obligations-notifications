@@ -1,18 +1,18 @@
 using System.Globalization;
 using System.Net.Http.Json;
 using System.Text;
-using Defra.WasteObligations.Consumer.Consumers;
-using Defra.WasteObligations.Consumer.Submission;
-using Microsoft.AspNetCore.Http;
 using System.Text.Json;
 using Amazon.Runtime;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Submission;
 using Defra.WasteObligations.Consumer.Utils.Health;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -140,10 +140,38 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
     }
 
     [Theory]
-    [InlineData("DirectProducer", "GB-ENG", "cy", "11111111-1111-4111-8111-111111111111", "The Stored Regulator", "the Stored Regulator")]
-    [InlineData("DirectProducer", "GB-WLS", "en", "22222222-2222-4222-8222-222222222222", "Stored Regulator", "Stored Regulator")]
-    [InlineData("ComplianceScheme", "GB-ENG", "cy", "33333333-3333-4333-8333-333333333333", "The Stored Regulator", "the Stored Regulator")]
-    [InlineData("ComplianceScheme", "GB-WLS", "en", "44444444-4444-4444-8444-444444444444", "Stored Regulator", "Stored Regulator")]
+    [InlineData(
+        "DirectProducer",
+        "GB-ENG",
+        "cy",
+        "11111111-1111-4111-8111-111111111111",
+        "The Stored Regulator",
+        "the Stored Regulator"
+    )]
+    [InlineData(
+        "DirectProducer",
+        "GB-WLS",
+        "en",
+        "22222222-2222-4222-8222-222222222222",
+        "Stored Regulator",
+        "Stored Regulator"
+    )]
+    [InlineData(
+        "ComplianceScheme",
+        "GB-ENG",
+        "cy",
+        "33333333-3333-4333-8333-333333333333",
+        "The Stored Regulator",
+        "the Stored Regulator"
+    )]
+    [InlineData(
+        "ComplianceScheme",
+        "GB-WLS",
+        "en",
+        "44444444-4444-4444-8444-444444444444",
+        "Stored Regulator",
+        "Stored Regulator"
+    )]
     public async Task WhenSubmissionIsConsumed_ShouldSendOriginalAuditAndStoredOrganisationValues(
         string registrationType,
         string country,
@@ -155,44 +183,92 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
     {
         const string declarationId = "0123456789abcdef01234567";
         var organisationId = Guid.NewGuid();
-        var declaration = JsonSerializer.SerializeToElement(new
-        {
-            id = declarationId,
-            version = 3,
-            status = "Cancelled",
-            obligationYear = 2027,
-            submitterName = "Incorrect declaration name",
-            organisation = new
+        var declaration = JsonSerializer.SerializeToElement(
+            new
             {
-                id = organisationId,
-                registrationType,
-                businessCountry = country,
-                regulator = "Stored Regulator",
-                regulatorEmail = "stored-regulator@example.com",
-            },
-            audit = new[]
-            {
-                new { action = "Submitted", timestamp = "2026-10-01T12:34:56.123Z", user = new { email = " Original.Submitter@Example.com ", name = "Original Submitter", locale } },
-                new { action = "Submitted", timestamp = "2026-10-02T12:34:56Z", user = new { email = "later@example.com", name = "Later Actor", locale = "en" } },
-                new { action = "Cancelled", timestamp = "2026-10-03T12:34:56Z", user = new { email = "cancelled@example.com", name = "Cancellation Actor", locale = "en" } },
-            },
-        });
-        await using var fixture = await DeliveryFixture.Create(declaration: declaration, organisationId: organisationId);
+                id = declarationId,
+                version = 3,
+                status = "Cancelled",
+                obligationYear = 2027,
+                submitterName = "Incorrect declaration name",
+                organisation = new
+                {
+                    id = organisationId,
+                    registrationType,
+                    businessCountry = country,
+                    regulator = "Stored Regulator",
+                    regulatorEmail = "stored-regulator@example.com",
+                },
+                audit = new[]
+                {
+                    new
+                    {
+                        action = "Submitted",
+                        timestamp = "2026-10-01T12:34:56.123Z",
+                        user = new
+                        {
+                            email = " Original.Submitter@Example.com ",
+                            name = "Original Submitter",
+                            locale,
+                        },
+                    },
+                    new
+                    {
+                        action = "Submitted",
+                        timestamp = "2026-10-02T12:34:56Z",
+                        user = new
+                        {
+                            email = "later@example.com",
+                            name = "Later Actor",
+                            locale = "en",
+                        },
+                    },
+                    new
+                    {
+                        action = "Cancelled",
+                        timestamp = "2026-10-03T12:34:56Z",
+                        user = new
+                        {
+                            email = "cancelled@example.com",
+                            name = "Cancellation Actor",
+                            locale = "en",
+                        },
+                    },
+                },
+            }
+        );
+        await using var fixture = await DeliveryFixture.Create(
+            declaration: declaration,
+            organisationId: organisationId
+        );
         var key = $"submission:{organisationId:D}:{declarationId}";
-        await fixture.Sqs.SendMessageAsync(new SendMessageRequest
-        {
-            QueueUrl = fixture.AnalyticsQueueUrl,
-            MessageBody = JsonSerializer.Serialize(new
+        await fixture.Sqs.SendMessageAsync(
+            new SendMessageRequest
             {
-                eventId = "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-                entityId = "cdec_" + declarationId,
-                entity = "compliance_declaration",
-                eventType = "submission.created",
-                schemaVersion = "compliance_declaration_v1.3",
-                version = 2,
-                after = new { organisation = new { id = organisationId, businessCountry = "GB-SCT", regulator = "Current organisation regulator" } },
-            }),
-        }, TestContext.Current.CancellationToken);
+                QueueUrl = fixture.AnalyticsQueueUrl,
+                MessageBody = JsonSerializer.Serialize(
+                    new
+                    {
+                        eventId = "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                        entityId = "cdec_" + declarationId,
+                        entity = "compliance_declaration",
+                        eventType = "submission.created",
+                        schemaVersion = "compliance_declaration_v1.3",
+                        version = 2,
+                        after = new
+                        {
+                            organisation = new
+                            {
+                                id = organisationId,
+                                businessCountry = "GB-SCT",
+                                regulator = "Current organisation regulator",
+                            },
+                        },
+                    }
+                ),
+            },
+            TestContext.Current.CancellationToken
+        );
         await WaitForAsync(async () =>
         {
             Assert.Equal(1, fixture.Sqs.AcceptedDeleteAttempts);
@@ -201,7 +277,10 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
         });
         Assert.Equal(1, fixture.DeclarationReadCount);
         var record = await fixture.Record(key);
-        Assert.Equal(new DateTime(2026, 10, 1, 12, 34, 56, 123, DateTimeKind.Utc), record["actionOccurredAtUtc"].ToUniversalTime());
+        Assert.Equal(
+            new DateTime(2026, 10, 1, 12, 34, 56, 123, DateTimeKind.Utc),
+            record["actionOccurredAtUtc"].ToUniversalTime()
+        );
         var request = Assert.Single(await fixture.NotifyRequests(key));
         Assert.Equal("original.submitter@example.com", request.GetProperty("email_address").GetString());
         Assert.Equal(templateId, request.GetProperty("template_id").GetString());
@@ -215,11 +294,14 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
         Assert.Equal("Original Submitter", values.GetProperty("user").GetString());
         foreach (var queue in new[] { fixture.AnalyticsQueueUrl, fixture.QueueUrl })
         {
-            var attributes = await fixture.Sqs.GetQueueAttributesAsync(new GetQueueAttributesRequest
-            {
-                QueueUrl = queue,
-                AttributeNames = ["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
-            }, TestContext.Current.CancellationToken);
+            var attributes = await fixture.Sqs.GetQueueAttributesAsync(
+                new GetQueueAttributesRequest
+                {
+                    QueueUrl = queue,
+                    AttributeNames = ["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
+                },
+                TestContext.Current.CancellationToken
+            );
             Assert.Equal("0", attributes.Attributes["ApproximateNumberOfMessages"]);
             Assert.Equal("0", attributes.Attributes["ApproximateNumberOfMessagesNotVisible"]);
         }
@@ -255,7 +337,12 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                 )
             );
 
-        public static async Task<DeliveryFixture> Create(bool shortBudget = false, bool failFirstDelete = false, JsonElement? declaration = null, Guid? organisationId = null)
+        public static async Task<DeliveryFixture> Create(
+            bool shortBudget = false,
+            bool failFirstDelete = false,
+            JsonElement? declaration = null,
+            Guid? organisationId = null
+        )
         {
             var fixture = new DeliveryFixture();
             try
@@ -334,10 +421,12 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                 }
                 if (declaration is { } body)
                 {
-                    fixture.AnalyticsQueueUrl = (await fixture.Sqs.CreateQueueAsync(new CreateQueueRequest
-                    {
-                        QueueName = $"submission_analytics_{suffix}",
-                    }, token)).QueueUrl;
+                    fixture.AnalyticsQueueUrl = (
+                        await fixture.Sqs.CreateQueueAsync(
+                            new CreateQueueRequest { QueueName = $"submission_analytics_{suffix}" },
+                            token
+                        )
+                    ).QueueUrl;
                     fixture.Sqs.AnalyticsQueueUrl = fixture.AnalyticsQueueUrl;
                     var dependencyBuilder = WebApplication.CreateBuilder();
                     dependencyBuilder.Logging.ClearProviders();
@@ -345,13 +434,22 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                     var dependency = dependencyBuilder.Build();
                     fixture._declarationHost = dependency;
                     dependency.MapGet("/health", () => Results.Ok());
-                    dependency.MapGet($"/organisations/{organisationId:D}/compliance-declarations/0123456789abcdef01234567", (HttpRequest request) =>
-                    {
-                        Assert.Equal("Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes("submission-client:synthetic-read-secret")), request.Headers.Authorization.ToString());
-                        Interlocked.Increment(ref fixture._declarationReadCount);
+                    dependency.MapGet(
+                        $"/organisations/{organisationId:D}/compliance-declarations/0123456789abcdef01234567",
+                        (HttpRequest request) =>
+                        {
+                            Assert.Equal(
+                                "Basic "
+                                    + Convert.ToBase64String(
+                                        Encoding.UTF8.GetBytes("submission-client:synthetic-read-secret")
+                                    ),
+                                request.Headers.Authorization.ToString()
+                            );
+                            Interlocked.Increment(ref fixture._declarationReadCount);
 
-                        return Results.Json(body);
-                    });
+                            return Results.Json(body);
+                        }
+                    );
                     await dependency.StartAsync(token);
                     values["AnalyticsEventConsumer:QueueUrl"] = fixture.AnalyticsQueueUrl;
                     values["AnalyticsEventConsumer:ProcessingEnabled"] = "true";
@@ -426,7 +524,8 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                 .Find(new BsonDocument("notificationKey", Digest.CreateIdempotencyKeyDigest(key)))
                 .SingleAsync(TestContext.Current.CancellationToken);
 
-        public Task<JsonElement[]> NotifyRequests(NotificationCommand command) => NotifyRequests(command.IdempotencyKey);
+        public Task<JsonElement[]> NotifyRequests(NotificationCommand command) =>
+            NotifyRequests(command.IdempotencyKey);
 
         public async Task<JsonElement[]> NotifyRequests(string key)
         {
