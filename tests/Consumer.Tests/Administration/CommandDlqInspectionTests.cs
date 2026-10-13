@@ -1833,9 +1833,15 @@ public sealed class CommandDlqInspectionTests
             };
             if (ProductionLogs is { } capture)
             {
-                values["Serilog:Using:0"] = typeof(AdminRequestLogCaptureSinkExtensions).Assembly.GetName().Name;
-                values["Serilog:WriteTo:1:Name"] = "CaptureAdminRequests";
-                values["Serilog:WriteTo:1:Args:captureId"] = capture.Id;
+                var captureValues = new Dictionary<string, string?>
+                {
+                    ["Serilog:Using:0"] = typeof(AdminRequestLogCaptureSinkExtensions).Assembly.GetName().Name,
+                    ["Serilog:WriteTo:1:Name"] = "CaptureAdminRequests",
+                    ["Serilog:WriteTo:1:Args:captureId"] = capture.Id,
+                };
+                builder.ConfigureAppConfiguration((_, configuration) =>
+                    configuration.AddInMemoryCollection(captureValues)
+                );
             }
             if (emptyAcl)
                 foreach (
