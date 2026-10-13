@@ -120,9 +120,27 @@ identifier filters. Sort newest first with Mongo ObjectId as a stable tie-breake
 and use bounded opaque cursors bound to the search filters. Unchanged-dataset
 traversal is stable; concurrent updates have no snapshot guarantee. Reuse the
 existing bounded administration dependency timeout and fixed safe failures.
-Search performs no queue, Notify or evidence-write operations. No additional
-index or migration is introduced in this increment; database operation timeout
-bounds scans, and deployment query volume may require separately reviewed indexes.
+Search performs no queue, Notify or evidence-write operations. Forward migration
+002 adds four full, visible, nonunique indexes: descending recording time/ObjectId,
+and exact Notify ID, parent key or outcome followed by that same descending pair.
+They support bounded ordered listing and the selected exact filters without
+changing the critical unique notification-key index or using query hints.
+
+Migration 002 is noncritical. Its failure does not gate delivery readiness; check
+optional migration completion before relying on efficient administration search.
+Reject incompatible owned indexes without replacing them, confirm index-build
+completion before recording migration history, and remove only owned names on
+rollback. Index builds consume resources and may continue after a client timeout;
+monitor completion and investigate conflicts before retrying. The four indexes
+increase storage and maintenance on delivery-state writes. No data backfill or
+new configuration is introduced.
+
+Real-reader command capture and execution-statistics tests check representative
+unhinted ordered plans for listing, recording ranges, Notify/parent/outcome filters,
+combined filters, unique-key lookup and tied-timestamp continuation. This is not a
+performance guarantee for every filter combination or data distribution. Combined
+filters can retain residual filtering, and skew can increase examined keys/documents;
+the bounded administration timeout remains applicable.
 
 ### Inspection recovery guidance and correlation
 

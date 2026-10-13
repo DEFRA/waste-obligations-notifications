@@ -512,6 +512,22 @@ historical snapshot. Empty searches return an empty records array and null curso
 Dependency work uses the existing administration timeout; failures return a fixed
 503 response without dependency details, and request cancellation propagates.
 
+Optional forward migration 002 adds four full, visible, nonunique search indexes:
+recording time/ObjectId descending, and exact Notify ID, parent key or outcome
+followed by the same descending pair. The critical unique notification-key index
+continues to guard delivery identity. Search uses no index hints. Integration
+tests check representative query plans for bounded ordered reads; combined filters can retain
+residual filtering, and skew may increase examined records. No universal
+performance guarantee is implied.
+
+The search-index migration does not gate critical delivery readiness. Investigate
+optional migration failures and confirm completion before relying on efficient
+search. Builds consume resources, can outlive a client timeout, and require
+monitoring. The four indexes add storage and delivery-state write maintenance.
+Incompatible owned definitions are preserved and rejected; rollback drops only
+these owned search indexes. No data backfill, payload or configuration change is
+required.
+
 Summaries include opaque identity, retained outcome/type, business-action and
 recording timestamps, and available acceptance, lease, template and Notify
 correlation. Recipient/immutable digests, attempt owners and email payloads are
