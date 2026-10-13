@@ -988,7 +988,10 @@ public sealed class CommandDlqInspectionTests
     [Theory]
     [InlineData("missing", HttpStatusCode.Unauthorized)]
     [InlineData("read", HttpStatusCode.Forbidden)]
-    public async Task WhenSearchCallerIsNotAdmin_ShouldDenyBeforeReadingEvidence(string condition, HttpStatusCode status)
+    public async Task WhenSearchCallerIsNotAdmin_ShouldDenyBeforeReadingEvidence(
+        string condition,
+        HttpStatusCode status
+    )
     {
         await using var factory = new InspectionApplicationFactory();
         using var client = factory.CreateClient();
