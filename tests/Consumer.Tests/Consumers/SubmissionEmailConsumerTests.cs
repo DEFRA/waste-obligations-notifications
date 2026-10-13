@@ -454,7 +454,6 @@ public sealed class SubmissionEmailConsumerTests
         bool unsupportedEncoding
     )
     {
-        using var harness = new Harness("{}", (_, _) => throw new InvalidOperationException(PrivateFailure));
         var message = CreateMessage(
             EventBody()
                 .Replace(EventId, PrivateFailure, StringComparison.Ordinal)
@@ -467,10 +466,11 @@ public sealed class SubmissionEmailConsumerTests
                 ["Content-Encoding"] = new() { StringValue = PrivateFailure },
             };
         }
-        harness
-            .Sqs.Configure()
-            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
-            .Returns(new ReceiveMessageResponse { Messages = [message] });
+        using var harness = new Harness(
+            "{}",
+            (_, _) => throw new InvalidOperationException(PrivateFailure),
+            message: message
+        );
 
         await harness.Start();
         await harness.Logger.Warning.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
@@ -557,7 +557,8 @@ public sealed class SubmissionEmailConsumerTests
         public Harness(
             string body,
             Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> read,
-            int readTimeoutSeconds = 10
+            int readTimeoutSeconds = 10,
+            Message? message = null
         )
         {
             var receiveCount = 0;
@@ -566,7 +567,7 @@ public sealed class SubmissionEmailConsumerTests
                 {
                     if (Interlocked.Increment(ref receiveCount) == 1)
                     {
-                        return new ReceiveMessageResponse { Messages = [CreateMessage(body)] };
+                        return new ReceiveMessageResponse { Messages = [message ?? CreateMessage(body)] };
                     }
                     await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
 
