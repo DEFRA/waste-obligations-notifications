@@ -148,7 +148,7 @@ public class AnalyticsEventConsumerTests
     [InlineData(true)]
     [InlineData(false)]
     public async Task Start_WhenReceiveSucceeds_ShouldImmediatelyReceiveOneMessageDespiteRemovedBatchOverride(
-        bool containsMessage
+        bool hasMessage
     )
     {
         var configuration = new ConfigurationBuilder()
@@ -173,7 +173,7 @@ public class AnalyticsEventConsumerTests
                 {
                     if (Interlocked.Increment(ref receivedCount) == 1)
                     {
-                        return new ReceiveMessageResponse { Messages = containsMessage ? [CreateMessage(Body())] : [] };
+                        return new ReceiveMessageResponse { Messages = hasMessage ? [CreateMessage(Body())] : [] };
                     }
                     nextReceive.TrySetResult();
                     await Task.Delay(Timeout.InfiniteTimeSpan, call.ArgAt<CancellationToken>(1));
@@ -202,7 +202,7 @@ public class AnalyticsEventConsumerTests
                 Arg.Any<CancellationToken>()
             );
         await sqsClient
-            .Received(containsMessage ? 1 : 0)
+            .Received(hasMessage ? 1 : 0)
             .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
         Assert.DoesNotContain(logger.Messages, message => message == "Analytics event consumption failed");
     }
