@@ -22,41 +22,38 @@ public static class CommandDlqRecoveryGuidance
             {
                 "delivery-accepted" =>
                     "Notify acceptance is recorded; this does not confirm recipient delivery. Check Notify by "
-                    + "notification ID/reference and check any replacement's progress. If still processing, wait. "
-                    + "If delivered, redrive only to clean up the terminal queue copy without another send. "
-                    + "If Notify later reports delivery failed, investigate; the record remains accepted and "
-                    + "redrive still performs terminal-copy cleanup only. Explicit resend is unavailable. "
-                    + "An empty replacement lookup does not prove queue absence or failed publication.",
-                "active-claim" =>
-                    Unconfirmed
+                        + "notification ID/reference and check any replacement's progress. If still processing, wait. "
+                        + "If delivered, redrive only to clean up the terminal queue copy without another send. "
+                        + "If Notify later reports delivery failed, investigate; the record remains accepted and "
+                        + "redrive still performs terminal-copy cleanup only. Explicit resend is unavailable. "
+                        + "An empty replacement lookup does not prove queue absence or failed publication.",
+                "active-claim" => Unconfirmed
                     + "An unexpired lease owns the attempt, but is not proof that its process is running. "
                     + "Wait and inspect again; selected redrive and discard are unavailable while the lease is active.",
-                "expired-claim" =>
-                    Unconfirmed
+                "expired-claim" => Unconfirmed
                     + "The lease has expired. After investigation, redrive to retry or discard to abandon "
                     + "further attempts. Abandonment does not undo an earlier uncertain request.",
                 "unrecorded" =>
                     "No matching delivery record was found. Investigate and fix the processing failure before "
-                    + "redrive, or discard if further attempts are no longer required. No record does not prove "
-                    + "queue absence or that Notify was never called.",
+                        + "redrive, or discard if further attempts are no longer required. No record does not prove "
+                        + "queue absence or that Notify was never called.",
                 "delivery-suppressed" =>
                     "Confirm the handover policy deliberately suppressed Notifications sending; the legacy sender "
-                    + "may have sent. Redrive only cleans up the terminal queue copy. Ordinary replay cannot undo "
-                    + "suppression, and explicit resend cannot override it.",
+                        + "may have sent. Redrive only cleans up the terminal queue copy. Ordinary replay cannot undo "
+                        + "suppression, and explicit resend cannot override it.",
                 "delivery-abandoned" =>
                     "Confirm the previous operator decision remains appropriate. Discard performs idempotent "
-                    + "terminal-copy cleanup. Abandonment does not prove an earlier uncertain request failed. "
-                    + "Explicit resend cannot override abandonment.",
+                        + "terminal-copy cleanup. Abandonment does not prove an earlier uncertain request failed. "
+                        + "Explicit resend cannot override abandonment.",
                 "immutable-conflict" =>
                     "The identity exists with different immutable email details. Escalate to engineering to "
-                    + "investigate the producer/evidence mismatch; ordinary replay will not repair it. "
-                    + "No selected recovery or removal action is available.",
+                        + "investigate the producer/evidence mismatch; ordinary replay will not repair it. "
+                        + "No selected recovery or removal action is available.",
                 "invalid-or-unsupported-command" =>
                     "Command inputs cannot be trusted. Escalate to engineering to investigate format, encoding "
-                    + "or schema compatibility. Inspect again after repair. No selected recovery or removal "
-                    + "action is available.",
-                _ =>
-                    "The stored outcome is unrecognised. Escalate to engineering to investigate compatibility "
+                        + "or schema compatibility. Inspect again after repair. No selected recovery or removal "
+                        + "action is available.",
+                _ => "The stored outcome is unrecognised. Escalate to engineering to investigate compatibility "
                     + "or damaged evidence before permitting another email. No selected recovery or removal "
                     + "action is available.",
             }

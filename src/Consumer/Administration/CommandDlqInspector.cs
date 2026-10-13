@@ -125,9 +125,11 @@ public sealed class CommandDlqInspector(
                         state.Record is { } record ? Summarise(record) : null,
                         state.Record?.NotifyNotificationId,
                         state.Record?.NotifyReference
-                            ?? (state.Classification is "unrecorded" or "active-claim" or "expired-claim"
-                                ? digest.CreateNotifyReference(command.IdempotencyKey)
-                                : null),
+                            ?? (
+                                state.Classification is "unrecorded" or "active-claim" or "expired-claim"
+                                    ? digest.CreateNotifyReference(command.IdempotencyKey)
+                                    : null
+                            ),
                         RecordLinks(digest.CreateIdempotencyKeyDigest(command.IdempotencyKey))
                     )
                 );
