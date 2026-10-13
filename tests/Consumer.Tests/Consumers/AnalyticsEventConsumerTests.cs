@@ -168,19 +168,17 @@ public class AnalyticsEventConsumerTests
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
             .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
-            .Returns(
-                async call =>
+            .Returns(async call =>
+            {
+                if (Interlocked.Increment(ref receivedCount) == 1)
                 {
-                    if (Interlocked.Increment(ref receivedCount) == 1)
-                    {
-                        return new ReceiveMessageResponse { Messages = hasMessage ? [CreateMessage(Body())] : [] };
-                    }
-                    nextReceive.TrySetResult();
-                    await Task.Delay(Timeout.InfiniteTimeSpan, call.ArgAt<CancellationToken>(1));
-
-                    return new ReceiveMessageResponse();
+                    return new ReceiveMessageResponse { Messages = hasMessage ? [CreateMessage(Body())] : [] };
                 }
-            );
+                nextReceive.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.ArgAt<CancellationToken>(1));
+
+                return new ReceiveMessageResponse();
+            });
         sqsClient
             .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
             .Returns(new DeleteMessageResponse());
@@ -219,28 +217,26 @@ public class AnalyticsEventConsumerTests
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
             .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
-            .Returns(
-                async call =>
+            .Returns(async call =>
+            {
+                var count = Interlocked.Increment(ref receivedCount);
+                if (count == 1)
                 {
-                    var count = Interlocked.Increment(ref receivedCount);
-                    if (count == 1)
-                    {
-                        failedAt = Stopwatch.GetTimestamp();
-                        if (dependencyCancelled)
-                            throw new OperationCanceledException("Dependency timed out");
-                        throw new InvalidOperationException("Dependency failed");
-                    }
-                    if (count == 2)
-                    {
-                        retryDelay = Stopwatch.GetElapsedTime(failedAt);
-
-                        return new ReceiveMessageResponse { Messages = [CreateMessage(Body())] };
-                    }
-                    await Task.Delay(Timeout.InfiniteTimeSpan, call.ArgAt<CancellationToken>(1));
-
-                    return new ReceiveMessageResponse();
+                    failedAt = Stopwatch.GetTimestamp();
+                    if (dependencyCancelled)
+                        throw new OperationCanceledException("Dependency timed out");
+                    throw new InvalidOperationException("Dependency failed");
                 }
-            );
+                if (count == 2)
+                {
+                    retryDelay = Stopwatch.GetElapsedTime(failedAt);
+
+                    return new ReceiveMessageResponse { Messages = [CreateMessage(Body())] };
+                }
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.ArgAt<CancellationToken>(1));
+
+                return new ReceiveMessageResponse();
+            });
         sqsClient
             .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
             .Returns(new DeleteMessageResponse())
