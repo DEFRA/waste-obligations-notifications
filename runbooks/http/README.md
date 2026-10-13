@@ -40,15 +40,17 @@ records cannot authorise selected actions. See the
 Inspection now provides `operatorGuidance`, `availableActions` with HTTP method,
 endpoint and purpose, matching `deliveryRecord` evidence and available Notify
 correlation. Follow encoded `links.deliveryRecord`/`links.resends` to retained
-lookup, and a replacement's `links.sourceRecord` to its parent. Selection tokens
-and current evidence are still checked when an action runs.
+lookup, and a replacement's `links.sourceRecord` to its parent. Actions are
+classification-specific recommendations. Redrive validates the selection and
+command content; discard additionally checks current delivery evidence.
 
 - Accepted: check Notify and replacement progress. Wait while processing. Recorded
   acceptance is not recipient delivery; even a later delivery failure leaves the
   record accepted. Selected redrive only cleans up the terminal queue copy.
   Explicit resend is unavailable.
 - Active claim: wait and inspect again. A lease does not prove its process is
-  running; selected redrive/discard remain unavailable while active.
+  running. Selected redrive is not offered while active; discard refuses active
+  claims.
 - Expired claim: investigate with the original Notify reference. For confirmed
   rejection, fix the cause (including credentials if applicable) before redrive.
   For a lost response, check Notify; discard if delivered to prevent further

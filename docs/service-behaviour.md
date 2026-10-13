@@ -285,8 +285,9 @@ schema version, idempotency key, notification type, action timestamp, normalised
 recipient address, template ID and personalisation, plus SQS message ID, timestamps,
 receive count, current delivery classification, recipient digest and selection token.
 Each entry also includes `operatorGuidance` and `availableActions` (method,
-endpoint and description). Actions refer only to implemented operations and
-remain subject to current selection/evidence checks; the inspection snapshot
+endpoint and description). Actions are classification-specific recommendations
+for implemented operations. Redrive validates the current selection and command
+content; discard also checks current delivery evidence. The inspection snapshot
 does not authorise a later action. Matching retained evidence appears in
 `deliveryRecord` using the search-summary shape, with available Notify ID/reference
 also exposed at the item level. Conflicting evidence is never returned as a
@@ -303,12 +304,12 @@ recipient delivery. The implemented recovery choices are:
 | Classification | Guidance and available actions |
 | --- | --- |
 | `delivery-accepted` | Check Notify and any replacement's progress. Recorded acceptance does not prove recipient delivery. Wait if processing; redrive cleans up a terminal queue copy without another send. Later delivery failure leaves acceptance intact. Explicit resend is unavailable. Inspect/redrive only. |
-| `active-claim` | Wait and inspect again. The lease does not prove the owning process is running. No selected redrive/discard while active. |
+| `active-claim` | Wait and inspect again. The lease does not prove the owning process is running. Selected redrive is not offered while active; discard refuses active claims. |
 | `expired-claim` | Check Notify using the original reference. If delivered, discard to stop further attempts; if processing, wait. If rejection is confirmed, fix its cause, including credentials where relevant, before redrive. An inconclusive lookup retains duplicate risk. Inspect/redrive/discard. |
 | `unrecorded` | Investigate and fix the processing failure before redrive, or discard if further attempts are no longer required. Redrive/discard. |
 | `delivery-suppressed` | Confirm the handover policy; the legacy sender may have sent. Redrive only cleans up the terminal copy and cannot undo suppression. Inspect/redrive. |
 | `delivery-abandoned` | Confirm the prior decision; discard performs idempotent cleanup. Abandonment does not prove an earlier uncertain request failed. Discard only. |
-| `immutable-conflict`, invalid/unsupported, unknown state | Escalate to engineering. No selected recovery or removal action. |
+| `immutable-conflict`, invalid/unsupported, unknown state | Escalate to engineering. No selected recovery or removal action is offered. |
 
 Pending evidence cannot distinguish rejection, a lost response, a crash before
 sending or failed acceptance persistence. Absence in Notify is not proof that no

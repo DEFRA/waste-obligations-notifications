@@ -29,7 +29,8 @@ public static class CommandDlqRecoveryGuidance
                         + "An empty replacement lookup does not prove queue absence or failed publication.",
                 "active-claim" => Unconfirmed
                     + "An unexpired lease owns the attempt, but is not proof that its process is running. "
-                    + "Wait and inspect again; selected redrive and discard are unavailable while the lease is active.",
+                    + "Wait and inspect again. Selected redrive is not offered while the lease is active; "
+                    + "discard refuses active claims.",
                 "expired-claim" => Unconfirmed
                     + "The lease has expired. After investigation, redrive to retry or discard to abandon "
                     + "further attempts. Abandonment does not undo an earlier uncertain request.",
@@ -48,14 +49,14 @@ public static class CommandDlqRecoveryGuidance
                 "immutable-conflict" =>
                     "The identity exists with different immutable email details. Escalate to engineering to "
                         + "investigate the producer/evidence mismatch; ordinary replay will not repair it. "
-                        + "No selected recovery or removal action is available.",
+                        + "No selected recovery or removal action is offered for this classification.",
                 "invalid-or-unsupported-command" =>
                     "Command inputs cannot be trusted. Escalate to engineering to investigate format, encoding "
                         + "or schema compatibility. Inspect again after repair. No selected recovery or removal "
                         + "action is available.",
                 _ => "The stored outcome is unrecognised. Escalate to engineering to investigate compatibility "
                     + "or damaged evidence before permitting another email. No selected recovery or removal "
-                    + "action is available.",
+                    + "action is offered for this classification.",
             }
         );
 
