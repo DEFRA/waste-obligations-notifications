@@ -1839,8 +1839,8 @@ public sealed class CommandDlqInspectionTests
                     ["Serilog:WriteTo:1:Name"] = "CaptureAdminRequests",
                     ["Serilog:WriteTo:1:Args:captureId"] = capture.Id,
                 };
-                builder.ConfigureAppConfiguration((_, configuration) =>
-                    configuration.AddInMemoryCollection(captureValues)
+                builder.ConfigureAppConfiguration(
+                    (_, configuration) => configuration.AddInMemoryCollection(captureValues)
                 );
             }
             if (emptyAcl)
