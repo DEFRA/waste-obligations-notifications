@@ -116,6 +116,23 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
             Assert.Equal(continuationKeys, continuation.Result.Records.Select(record => record.NotificationKey));
             Assert.NotNull(continuation.Result.NextCursor);
             AssertOrderedBounded(continuation.Explain);
+            var newerNonmatches = Enumerable
+                .Range(1, 1000)
+                .Select(index =>
+                    Record(
+                        index + 3000,
+                        "v1:newer-nonmatch-" + index.ToString(CultureInfo.InvariantCulture),
+                        time.AddMinutes(2).AddMilliseconds(index),
+                        "delivery-suppressed",
+                        index % 2 == 0 ? "nonmatching-notify-id" : null,
+                        index % 3 == 0 ? "v1:nonmatching-parent" : null
+                    )
+                );
+            await records.InsertManyAsync(newerNonmatches, cancellationToken: token);
+            Assert.Equal(2041, await records.CountDocumentsAsync(new BsonDocument(), cancellationToken: token));
+            var notifyQuery = new DeliveryRecordSearchQuery { PageSize = 5, NotifyNotificationId = NotifyId };
+            var parentQuery = new DeliveryRecordSearchQuery { PageSize = 5, ResendOfNotificationKey = ParentKey };
+            var outcomeQuery = new DeliveryRecordSearchQuery { PageSize = 5, Outcome = AcceptedOutcome };
             var filtered = new[]
             {
                 new DeliveryRecordSearchQuery
@@ -124,9 +141,9 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
                     RecordedFromUtc = time,
                     RecordedToUtc = time.AddTicks(1),
                 },
-                new DeliveryRecordSearchQuery { PageSize = 5, NotifyNotificationId = NotifyId },
-                new DeliveryRecordSearchQuery { PageSize = 5, ResendOfNotificationKey = ParentKey },
-                new DeliveryRecordSearchQuery { PageSize = 5, Outcome = AcceptedOutcome },
+                notifyQuery,
+                parentQuery,
+                outcomeQuery,
                 new DeliveryRecordSearchQuery
                 {
                     PageSize = 5,
@@ -144,6 +161,62 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
                 Assert.Equal(filteredKeys, actual.Result.Records.Select(record => record.NotificationKey));
                 Assert.NotNull(actual.Result.NextCursor);
                 AssertOrderedBounded(actual.Explain);
+                if (query == notifyQuery)
+                {
+                    var notifyContinuation = await SearchAndExplain(
+                        reader,
+                        database,
+                        commands,
+                        notifyQuery with
+                        {
+                            Cursor = actual.Result.NextCursor,
+                        },
+                        token
+                    );
+                    string[] notifyContinuationKeys =
+                    [
+                        "v1:target-35",
+                        "v1:target-34",
+                        "v1:target-33",
+                        "v1:target-32",
+                        "v1:target-31",
+                    ];
+                    Assert.Equal(
+                        notifyContinuationKeys,
+                        notifyContinuation.Result.Records.Select(record => record.NotificationKey)
+                    );
+                    Assert.NotNull(notifyContinuation.Result.NextCursor);
+                    AssertOrderedBounded(notifyContinuation.Explain);
+                }
+            }
+            var controls = new[]
+            {
+                (Index: "notifyNotificationId_recordedAtUtc_id_desc", Query: notifyQuery),
+                (Index: "resendOfNotificationKey_recordedAtUtc_id_desc", Query: parentQuery),
+                (Index: "outcome_recordedAtUtc_id_desc", Query: outcomeQuery),
+            };
+            foreach (var (index, query) in controls)
+            {
+                await records.Indexes.DropOneAsync(index, token);
+                var degraded = await SearchAndExplain(reader, database, commands, query, token);
+                Assert.Equal(filteredKeys, degraded.Result.Records.Select(record => record.NotificationKey));
+                Assert.NotNull(degraded.Result.NextCursor);
+                var stages = WinningStages(degraded.Explain).ToArray();
+                Assert.True(
+                    stages.Contains("COLLSCAN")
+                        || stages.Contains("SORT")
+                        || degraded.Explain["executionStats"]["totalKeysExamined"].ToInt64() > 24
+                        || degraded.Explain["executionStats"]["totalDocsExamined"].ToInt64() > 12,
+                    "Removing the filter index must expose a scan, blocking sort or examined-work regression."
+                );
+                await new NotificationDeliveryRecordSearchIndexes().UpAsync(
+                    new MigrationContext(database, null!, token)
+                );
+                var restored = await SearchAndExplain(reader, database, commands, query, token);
+                Assert.Equal(filteredKeys, restored.Result.Records.Select(record => record.NotificationKey));
+                Assert.Equal(degraded.Result.NextCursor, restored.Result.NextCursor);
+                Assert.NotNull(restored.Result.NextCursor);
+                AssertOrderedBounded(restored.Explain);
             }
             var exact = await SearchAndExplain(
                 reader,
