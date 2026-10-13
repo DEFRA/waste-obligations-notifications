@@ -11,6 +11,7 @@ using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
 using Elastic.CommonSchema.Serilog;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -1428,20 +1429,26 @@ public sealed class CommandDlqInspectionTests
         Assert.NotEmpty(contexts);
         foreach (var sensitive in new[] { key, notifyId, encodedKey, encodedNotifyId })
         {
-            Assert.All(capture.Events, logEvent =>
-            {
-                Assert.DoesNotContain(sensitive, StructuredLogText(logEvent), StringComparison.Ordinal);
-                Assert.DoesNotContain(sensitive, logEvent.RenderMessage(), StringComparison.Ordinal);
-            });
+            Assert.All(
+                capture.Events,
+                logEvent =>
+                {
+                    Assert.DoesNotContain(sensitive, StructuredLogText(logEvent), StringComparison.Ordinal);
+                    Assert.DoesNotContain(sensitive, logEvent.RenderMessage(), StringComparison.Ordinal);
+                }
+            );
             Assert.All(capture.EcsOutput, output => Assert.DoesNotContain(sensitive, output, StringComparison.Ordinal));
         }
-        Assert.All(contexts, context =>
-        {
-            var url = Assert.IsType<Elastic.CommonSchema.Url>(context!.Url);
-            Assert.Equal("", url.Query);
-            Assert.DoesNotContain("?", url.Full, StringComparison.Ordinal);
-            Assert.DoesNotContain("?", url.Original, StringComparison.Ordinal);
-        });
+        Assert.All(
+            contexts,
+            context =>
+            {
+                var url = Assert.IsType<Elastic.CommonSchema.Url>(context!.Url);
+                Assert.Equal("", url.Query);
+                Assert.DoesNotContain("?", url.Full, StringComparison.Ordinal);
+                Assert.DoesNotContain("?", url.Original, StringComparison.Ordinal);
+            }
+        );
         Assert.Empty(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
@@ -1487,13 +1494,20 @@ public sealed class CommandDlqInspectionTests
     {
         using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         source.CancelAfter(TimeSpan.FromSeconds(5));
-        while (
-            !capture.Events.Any(logEvent =>
-                logEvent.MessageTemplate.Text.StartsWith("Request finished", StringComparison.Ordinal)
-                && RequestLogPath(logEvent) == path
+        try
+        {
+            while (
+                !capture.Events.Any(logEvent =>
+                    logEvent.MessageTemplate.Text.StartsWith("Request finished", StringComparison.Ordinal)
+                    && RequestLogPath(logEvent) == path
+                )
             )
-        )
-            await Task.Delay(TimeSpan.FromMilliseconds(10), source.Token);
+                await Task.Delay(TimeSpan.FromMilliseconds(10), source.Token);
+        }
+        catch (OperationCanceledException) when (!TestContext.Current.CancellationToken.IsCancellationRequested)
+        {
+            Assert.Fail("Request-finish capture was not observed. " + DescribeLogProperties(capture));
+        }
     }
 
     private static void AssertRequestLogMetadata(AdminRequestLogCapture capture, string path, int status)
@@ -1514,12 +1528,51 @@ public sealed class CommandDlqInspectionTests
     }
 
     private static string? RequestLogPath(LogEvent logEvent) =>
-        ReadLogString(logEvent, "RequestPath") ?? ReadLogString(logEvent, "Path");
+        ReadLogPath(logEvent, "RequestPath")
+        ?? ReadLogPath(logEvent, "Path")
+        ?? (
+            logEvent.Properties.TryGetValue("HttpContext", out var value)
+            && value is ScalarValue { Value: SpecialProperties.HttpContextEnrichments context }
+                ? context.Url?.Path
+                : null
+        );
 
-    private static string? ReadLogString(LogEvent logEvent, string property) =>
-        logEvent.Properties.TryGetValue(property, out var value) && value is ScalarValue { Value: string text }
-            ? text
-            : null;
+    private static string? ReadLogPath(LogEvent logEvent, string property)
+    {
+        if (!logEvent.Properties.TryGetValue(property, out var value) || value is not ScalarValue scalar)
+            return null;
+
+        return scalar.Value switch
+        {
+            string text => text,
+            PathString path => path.Value,
+            _ => null,
+        };
+    }
+
+    private static string DescribeLogProperties(AdminRequestLogCapture capture)
+    {
+        var requestProperties = capture
+            .Events.Where(logEvent => logEvent.MessageTemplate.Text.StartsWith("Request ", StringComparison.Ordinal))
+            .Take(4)
+            .Select(logEvent =>
+                string.Join(
+                    ", ",
+                    logEvent
+                        .Properties.OrderBy(property => property.Key)
+                        .Take(16)
+                        .Select(property => property.Key + ":" + LogPropertyType(property.Value))
+                )
+            );
+
+        return "Captured events: "
+            + capture.Events.Count
+            + "; request property names/types: "
+            + string.Join("; ", requestProperties);
+    }
+
+    private static string LogPropertyType(LogEventPropertyValue value) =>
+        value is ScalarValue scalar ? scalar.Value?.GetType().Name ?? "null" : value.GetType().Name;
 
     private static string StructuredLogText(LogEvent logEvent) =>
         JsonSerializer.Serialize(
