@@ -179,15 +179,14 @@ public sealed class NotifyHealthTests
         {
             builder.UseEnvironment("Testing");
             builder.ConfigureTestServices(ConfigureBoundaries);
-        }
-
-        protected override IHost CreateHost(IHostBuilder builder)
-        {
-            builder.ConfigureHostConfiguration(configuration =>
+            builder.ConfigureAppConfiguration((_, configuration) =>
             {
                 var values = new Dictionary<string, string?>
                 {
                     ["AWS_EMF_ENABLED"] = "false",
+                    ["Acl:Clients:health-fixture:Type"] = "ApiKey",
+                    ["Acl:Clients:health-fixture:Secret"] = "fixture-only",
+                    ["Acl:Clients:health-fixture:Scopes:0"] = "admin",
                     ["AnalyticsEventConsumer:ProcessingEnabled"] = "false",
                     ["AnalyticsEventConsumer:QueueUrl"] = "http://sqs.local/analytics",
                     ["NotificationCommandDelivery:QueueUrl"] = "http://sqs.local/commands.fifo",
@@ -203,8 +202,6 @@ public sealed class NotifyHealthTests
                     values["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = cutover;
                 configuration.AddInMemoryCollection(values);
             });
-
-            return base.CreateHost(builder);
         }
 
         private void ConfigureBoundaries(IServiceCollection services)

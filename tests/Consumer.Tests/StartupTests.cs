@@ -43,6 +43,9 @@ public class ConsumerWebApplicationFactory : WebApplicationFactory<Program>
                 new Dictionary<string, string?>
                 {
                     ["AWS_EMF_ENABLED"] = "false",
+                    ["Acl:Clients:startup-fixture:Type"] = "ApiKey",
+                    ["Acl:Clients:startup-fixture:Secret"] = "fixture-only",
+                    ["Acl:Clients:startup-fixture:Scopes:0"] = "admin",
                     ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["CommandDlqAdministration:QueueUrl"] = "http://sqs.local/commands-dlq.fifo",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
