@@ -35,6 +35,10 @@ original recipient-lane position.
   Read `/organisations/{id}/compliance-declarations/{bare ObjectId}` with Basic
   service credentials authorised for Read. Require matching declaration and
   organisation identities and an equal or newer declaration version.
+- Event IDs are correlation values, not a submission acceptance or replay-identity
+  constraint. Recognised event/entity identifiers are logged directly; other
+  identifiers use opaque hashes. Declaration entity IDs must still match the read
+  contract when producing a submitted email.
 - Always use the first exact `Submitted` audit's email, name and explicit UTC
   timestamp, including when the latest declaration is Accepted or Cancelled.
   Persisted organisation country, registration type, regulator and regulator email

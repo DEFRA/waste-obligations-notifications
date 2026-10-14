@@ -11,6 +11,27 @@ namespace Defra.WasteObligations.Consumer.Tests.Consumers;
 
 public class ServiceCollectionExtensionsTests
 {
+    [Theory]
+    [InlineData(null)]
+    [InlineData("appsettings.json")]
+    [InlineData("appsettings.Development.json")]
+    public void WhenSubmissionOptionsUseDefaults_ShouldPreserveEachLegacyTemplateMapping(string? settingsFile)
+    {
+        var options = new SubmissionOptions();
+        if (settingsFile is not null)
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddJsonFile(Path.Combine(RepositoryRoot(), "src", "Consumer", settingsFile))
+                .Build();
+            options = configuration.GetSection(SubmissionOptions.SectionName).Get<SubmissionOptions>()!;
+        }
+
+        Assert.Equal("5f64e3bd-d454-4a45-a9c6-9409bf940d7a", options.DirectEnglishTemplateId);
+        Assert.Equal("b3223b0b-a467-40c1-9150-f78b76d11fd8", options.DirectWelshTemplateId);
+        Assert.Equal("b103685d-de8a-4ea9-abc8-d244ca26841b", options.SchemeEnglishTemplateId);
+        Assert.Equal("95d8c2aa-a229-4ecb-9774-78ec06d0cbac", options.SchemeWelshTemplateId);
+    }
+
     [Fact]
     public void AddAnalyticsEventConsumer_ShouldRegisterTheConsumerAndOptions()
     {
@@ -149,6 +170,19 @@ public class ServiceCollectionExtensionsTests
 
         Assert.Equal(1, result.GetProperty("version").GetInt32());
         Assert.Equal(1, handler.RequestCount);
+    }
+
+    private static string RepositoryRoot()
+    {
+        for (
+            var directory = new DirectoryInfo(AppContext.BaseDirectory);
+            directory is not null;
+            directory = directory.Parent
+        )
+            if (File.Exists(Path.Combine(directory.FullName, "waste-obligations-notifications.slnx")))
+                return directory.FullName;
+
+        throw new InvalidOperationException("Repository root was not found for submission configuration.");
     }
 
     private sealed class ReadHandler(Func<HttpRequestMessage, HttpResponseMessage> read) : HttpMessageHandler

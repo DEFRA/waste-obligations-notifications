@@ -91,14 +91,6 @@ jobs:
           docker compose up -d --wait
           dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj --no-restore
           dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/Consumer.IntegrationTests -- --report-trx --report-trx-filename Consumer.IntegrationTests.trx
-      - name: Require all four Notify submission previews
-        env:
-          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
-          NOTIFY_PREVIEWS_REQUIRED: "1"
-        run: |
-          rm -rf TestResults/NotifySubmissionPreviews
-          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifySubmissionPreviews -- --filter-class '*NotifySubmissionPreviewTests' --report-trx --report-trx-filename NotifySubmissionPreviews.trx
-          python3 scripts/require-notify-previews.py TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx
       - name: Docker Compose logs
         if: ${{ always() && steps.prerequisites.outcome == 'success' }}
         run: docker compose logs
@@ -124,6 +116,14 @@ jobs:
             aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c \
             image --input /scan/image.tar --exit-code 1 --severity HIGH,CRITICAL \
             --scanners vuln,secret --format json --output /reports/trivy.json
+      - name: Require all four Notify submission previews
+        env:
+          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
+          NOTIFY_PREVIEWS_REQUIRED: "1"
+        run: |
+          rm -rf TestResults/NotifySubmissionPreviews
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifySubmissionPreviews -- --filter-class '*NotifySubmissionPreviewTests' --report-trx --report-trx-filename NotifySubmissionPreviews.trx
+          python3 scripts/require-notify-previews.py TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx
       - name: Upload CI reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

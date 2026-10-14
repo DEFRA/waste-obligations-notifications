@@ -29,6 +29,74 @@ public sealed class SubmittedEmailConsumerTests
     private static readonly JsonSerializerOptions s_webOptions = new(JsonSerializerDefaults.Web);
 
     [Theory]
+    [InlineData("01jz8rxbmty2k15sjb3pcfn3d5")]
+    [InlineData("3b9b504c-31b9-4a56-bb99-d3c46b16e6af")]
+    public async Task WhenSubmissionEventIdHasAnotherFormat_ShouldPublishAndAcknowledge(string eventId)
+    {
+        using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
+
+        await fixture.Run([Event(eventId)]);
+
+        Assert.Single(fixture.Reads);
+        Assert.Single(fixture.Publications);
+        Assert.Equal(1, fixture.Deletions);
+        fixture.AssertSafeLogs();
+    }
+
+    [Fact]
+    public async Task WhenOutOfScopeIdentifiersAreUnrecognised_ShouldLogOpaqueCorrelationsAndAcknowledge()
+    {
+        const string eventId = "private-event-correlation";
+        const string entityId = "private-entity-correlation";
+        var body = JsonSerializer.Serialize(new { eventId, entityId, entity = "organisation", eventType = "updated" });
+        using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
+
+        await fixture.Run([body]);
+
+        Assert.Empty(fixture.Reads);
+        Assert.Empty(fixture.Publications);
+        Assert.Equal(1, fixture.Deletions);
+        var consumed = Assert.Single(
+            fixture.Logs.Entries,
+            entry => entry.Level == LogLevel.Information && entry.Text.StartsWith("Consumed analytics event", StringComparison.Ordinal)
+        );
+        Assert.Matches("Consumed analytics event opaque-[0-9a-f]{16} for opaque-[0-9a-f]{16}", consumed.Text);
+        Assert.All(fixture.Logs.Entries, entry =>
+        {
+            Assert.DoesNotContain(eventId, entry.Text, StringComparison.Ordinal);
+            Assert.DoesNotContain(entityId, entry.Text, StringComparison.Ordinal);
+        });
+        fixture.AssertSafeLogs();
+    }
+
+    [Theory]
+    [InlineData("\"compliance_declaration\"", "\"cancellation.created\"")]
+    [InlineData("\"organisation\"", "\"submission.created\"")]
+    [InlineData("5", "\"submission.created\"")]
+    [InlineData("{}", "\"submission.created\"")]
+    [InlineData("null", "\"submission.created\"")]
+    [InlineData("\"compliance_declaration\"", "5")]
+    [InlineData("\"compliance_declaration\"", "{}")]
+    [InlineData("\"compliance_declaration\"", "null")]
+    public async Task WhenEventIsOutsideSubmissionScope_ShouldAcknowledgeWithoutReadingOrPublishing(
+        string entity,
+        string eventType
+    )
+    {
+        var body = Event("01JZ8RXBMTY2K15SJB3PCFN3D5")
+            .Replace("\"entity\":\"compliance_declaration\"", $"\"entity\":{entity}", StringComparison.Ordinal)
+            .Replace("\"eventType\":\"submission.created\"", $"\"eventType\":{eventType}", StringComparison.Ordinal);
+        using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
+
+        await fixture.Run([body]);
+
+        Assert.Empty(fixture.Reads);
+        Assert.Empty(fixture.Publications);
+        Assert.Equal(1, fixture.Deletions);
+        fixture.AssertSafeLogs();
+    }
+
+    [Theory]
     [InlineData(
         "DirectProducer",
         "GB-ENG",

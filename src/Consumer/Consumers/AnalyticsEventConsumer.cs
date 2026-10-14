@@ -100,21 +100,24 @@ public sealed class AnalyticsEventConsumer(
             messageId = SafeTransportCorrelation(message.MessageId);
             using var document = JsonDocument.Parse(ReadBody(message));
             var root = document.RootElement;
-            eventId = SafeEventId(ReadRequiredString(root, "eventId"));
+            var rawEventId = ReadRequiredString(root, "eventId");
+            eventId = SafeEventId(rawEventId) ?? OpaqueCorrelation(rawEventId);
             var rawEntityId = ReadRequiredString(root, "entityId");
-            entityId = SafeEntityId(rawEntityId);
+            var declarationEntityId = SafeEntityId(rawEntityId);
+            entityId = declarationEntityId ?? OpaqueCorrelation(rawEntityId);
             if (
                 root.TryGetProperty("entity", out var entity)
+                && entity.ValueKind == JsonValueKind.String
                 && entity.GetString() == "compliance_declaration"
                 && root.TryGetProperty("eventType", out var eventType)
+                && eventType.ValueKind == JsonValueKind.String
                 && eventType.GetString() == "submission.created"
             )
             {
                 stage = "validate-event";
                 var id = rawEntityId;
                 if (
-                    eventId is null
-                    || entityId is null
+                    declarationEntityId is null
                     || ReadRequiredString(root, "schemaVersion") != "compliance_declaration_v1.3"
                 )
                     throw new SubmissionProcessingException("invalid-event-data");
@@ -247,12 +250,14 @@ public sealed class AnalyticsEventConsumer(
         if (Guid.TryParseExact(value, "D", out var id))
             return id.ToString("D");
 
-        return "opaque-"
+        return OpaqueCorrelation(value);
+    }
+
+    private static string OpaqueCorrelation(string value) =>
+        "opaque-"
             + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)))[
                 ..16
             ];
-    }
-
     private void EnsureRemaining(long receivedAt, int budgetSeconds)
     {
         if (
