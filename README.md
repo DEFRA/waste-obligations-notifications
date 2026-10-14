@@ -1,13 +1,14 @@
 # Waste Obligations Notifications
 
-A CDP consumer service for analytics events and notification commands published by Waste Obligations.
+A CDP service that consumes Waste Obligations analytics events and delivers email notification commands.
 
 ## Scope
 
 The service receives every message from its service-owned SQS subscription to the
-`waste_obligations_analytics_events` SNS topic. It logs the analytics event ID and
-entity ID, then deletes the successfully processed message. It deliberately does
-not send notifications, persist data, or act on the event payload.
+`waste_obligations_analytics_events` SNS topic. It enriches compliance-declaration
+submission events through the Waste Obligations read API and publishes submitted-email
+commands before acknowledging them. Other valid analytics messages retain their
+log-and-delete behaviour. Analytics does not send email directly or persist events.
 
 With the default null cutover, the command consumer durably suppresses every
 valid command and deletes it without Notify. With a supplied boundary, it

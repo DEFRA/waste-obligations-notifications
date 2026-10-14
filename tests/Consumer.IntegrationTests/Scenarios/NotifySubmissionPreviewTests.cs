@@ -46,7 +46,7 @@ public sealed class NotifySubmissionPreviewTests
         string body;
         try
         {
-            var client = new NotificationClient(key!);
+            var client = new NotificationClient(key);
             var preview = await client.GenerateTemplatePreviewAsync(
                 template,
                 new Dictionary<string, object>
