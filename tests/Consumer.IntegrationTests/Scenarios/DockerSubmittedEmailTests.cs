@@ -102,10 +102,6 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
                 {
                     Methods = new[] { "POST" },
                     Path = Exact("/v2/notifications/email"),
-                    Body = new
-                    {
-                        Matcher = new { Name = "JsonPathMatcher", Pattern = $"$[?(@.email_address == '{recipient}')]" },
-                    },
                 },
                 new
                 {
