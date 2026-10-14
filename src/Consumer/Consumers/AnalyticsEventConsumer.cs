@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
-using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
@@ -98,35 +97,24 @@ public sealed class AnalyticsEventConsumer(
         try
         {
             messageId = SafeTransportCorrelation(message.MessageId);
-            using var document = JsonDocument.Parse(ReadBody(message));
-            var root = document.RootElement;
-            var rawEventId = ReadRequiredString(root, "eventId");
-            eventId = SafeEventId(rawEventId) ?? OpaqueCorrelation(rawEventId);
-            var rawEntityId = ReadRequiredString(root, "entityId");
-            var declarationEntityId = SafeEntityId(rawEntityId);
-            entityId = declarationEntityId ?? OpaqueCorrelation(rawEntityId);
-            if (
-                root.TryGetProperty("entity", out var entity)
-                && entity.ValueKind == JsonValueKind.String
-                && entity.GetString() == "compliance_declaration"
-                && root.TryGetProperty("eventType", out var eventType)
-                && eventType.ValueKind == JsonValueKind.String
-                && eventType.GetString() == "submission.created"
-            )
+            var analyticsEvent = AnalyticsEvent.Parse(ReadBody(message));
+            eventId = SafeEventId(analyticsEvent.EventId) ?? OpaqueCorrelation(analyticsEvent.EventId);
+            var declarationEntityId = SafeEntityId(analyticsEvent.EntityId);
+            entityId = declarationEntityId ?? OpaqueCorrelation(analyticsEvent.EntityId);
+            if (analyticsEvent.IsSubmission)
             {
                 stage = "validate-event";
-                var id = rawEntityId;
                 if (
                     declarationEntityId is null
-                    || ReadRequiredString(root, "schemaVersion") != "compliance_declaration_v1.3"
+                    || analyticsEvent.SchemaVersion != "compliance_declaration_v1.3"
+                    || analyticsEvent.Version is not > 0
+                    || analyticsEvent.OrganisationId is null
+                    || analyticsEvent.OrganisationId == Guid.Empty
                 )
                     throw new SubmissionProcessingException("invalid-event-data");
-                var version = root.GetProperty("version").GetInt32();
-                var organisationId = Guid.Parse(
-                    ReadRequiredString(root.GetProperty("after").GetProperty("organisation"), "id")
-                );
-                if (version < 1 || organisationId == Guid.Empty)
-                    throw new SubmissionProcessingException("invalid-event-data");
+                var id = analyticsEvent.EntityId;
+                var version = analyticsEvent.Version.Value;
+                var organisationId = analyticsEvent.OrganisationId.Value;
                 EnsureRemaining(
                     receivedAt,
                     options.Value.ReadTimeoutSeconds
@@ -282,16 +270,6 @@ public sealed class AnalyticsEventConsumer(
             throw new TimeoutException("Analytics dependency exceeded its timeout.");
 
         return result;
-    }
-
-    private static string ReadRequiredString(JsonElement element, string propertyName)
-    {
-        if (!element.TryGetProperty(propertyName, out var property) || string.IsNullOrWhiteSpace(property.GetString()))
-        {
-            throw new InvalidDataException($"Analytics event is missing required property '{propertyName}'.");
-        }
-
-        return property.GetString()!;
     }
 
     private static string ReadBody(Message message)
