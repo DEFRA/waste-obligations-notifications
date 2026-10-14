@@ -2,9 +2,11 @@ using System.Net;
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Submission;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Tests.Consumers;
@@ -61,32 +63,32 @@ public class ServiceCollectionExtensionsTests
     {
         var configuration = CreateConfiguration();
         configuration["AnalyticsEventConsumer:ProcessingEnabled"] = "false";
-        configuration["Submission:BaseAddress"] = null;
-        configuration["Submission:ClientId"] = null;
-        configuration["Submission:ClientSecret"] = null;
+        configuration["WasteObligations:BaseAddress"] = null;
+        configuration["WasteObligations:Username"] = null;
+        configuration["WasteObligations:Password"] = null;
         var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
         using var provider = services.BuildServiceProvider();
 
-        Assert.False(provider.GetRequiredService<IOptions<SubmissionOptions>>().Value.HasReadAccess);
+        Assert.False(provider.GetRequiredService<IOptions<WasteObligationsOptions>>().Value.HasReadAccess);
     }
 
     [Fact]
     public void WhenAnalyticsIsEnabledWithoutReadCredentials_ShouldRejectConfiguration()
     {
         var configuration = CreateConfiguration();
-        configuration["Submission:ClientSecret"] = null;
+        configuration["WasteObligations:Password"] = null;
         var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
         using var provider = services.BuildServiceProvider();
 
         Assert.Throws<OptionsValidationException>(() =>
-            provider.GetRequiredService<IOptions<SubmissionOptions>>().Value
+            provider.GetRequiredService<IOptions<WasteObligationsOptions>>().Value
         );
     }
 
     [Theory]
     [InlineData("BaseAddress", "ftp://declarations.test")]
     [InlineData("BaseAddress", "http://declarations.test")]
-    [InlineData("ClientId", "test:read-client")]
+    [InlineData("Username", "test:read-client")]
     [InlineData("DirectEnglishTemplateId", "not-a-template-uuid")]
     [InlineData("DirectEnglishTemplateId", "{5f64e3bd-d454-4a45-a9c6-9409bf940d7a}")]
     [InlineData("DirectWelshTemplateId", "not-a-template-uuid")]
@@ -95,13 +97,18 @@ public class ServiceCollectionExtensionsTests
     public void WhenSubmissionConfigurationIsInvalid_ShouldRejectAnalyticsStartup(string property, string value)
     {
         var configuration = CreateConfiguration();
-        configuration[$"Submission:{property}"] = value;
+        var readSetting = property is "BaseAddress" or "Username";
+        configuration[$"{(readSetting ? "WasteObligations" : "Submission")}:{property}"] = value;
         var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
         using var provider = services.BuildServiceProvider();
 
         Assert.Throws<OptionsValidationException>(() =>
-            provider.GetRequiredService<IOptions<SubmissionOptions>>().Value
-        );
+        {
+            if (readSetting)
+                _ = provider.GetRequiredService<IOptions<WasteObligationsOptions>>().Value;
+            else
+                _ = provider.GetRequiredService<IOptions<SubmissionOptions>>().Value;
+        });
     }
 
     [Theory]
@@ -132,9 +139,11 @@ public class ServiceCollectionExtensionsTests
         const string organisationId = "fbf1ba88-cd09-42f6-aad5-0ddfc29e5765";
         const string declarationId = "65f1f6570bb08052a8a27b01";
         var configuration = CreateConfiguration();
-        configuration["Submission:BaseAddress"] = address;
+        configuration["WasteObligations:BaseAddress"] = address;
         using var handler = new ReadHandler(request =>
         {
+            Assert.Equal(address.StartsWith("https", StringComparison.Ordinal) ? HttpVersion.Version20 : HttpVersion.Version11, request.Version);
+            Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, request.VersionPolicy);
             Assert.Equal(
                 $"/api/organisations/{organisationId}/compliance-declarations/{declarationId}",
                 request.RequestUri!.AbsolutePath
@@ -148,19 +157,114 @@ public class ServiceCollectionExtensionsTests
         });
         var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
         services
-            .AddHttpClient<IDeclarationReadClient, DeclarationReadClient>()
+            .AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
             .ConfigurePrimaryHttpMessageHandler(() => handler);
         using var provider = services.BuildServiceProvider();
-        var reader = provider.GetRequiredService<IDeclarationReadClient>();
+        var reader = provider.GetRequiredService<IWasteObligationsClient>();
 
-        var result = await reader.Read(
+        var result = await reader.ReadDeclaration(
             Guid.Parse(organisationId),
             declarationId,
             TestContext.Current.CancellationToken
         );
 
-        Assert.Equal(1, result.GetProperty("version").GetInt32());
+        Assert.Equal(1, result!.Version);
         Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task WhenDeclarationIsNotFound_ShouldReturnNullWithoutRetrying()
+    {
+        using var handler = new ReadHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+        var services = new ServiceCollection().AddAnalyticsEventConsumer(CreateConfiguration());
+        services.AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+        var reader = provider.GetRequiredService<IWasteObligationsClient>();
+
+        var result = await reader.ReadDeclaration(Guid.NewGuid(), "65f1f6570bb08052a8a27b01", TestContext.Current.CancellationToken);
+
+        Assert.Null(result);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task WhenDeclarationReadHasTransientFailure_ShouldRetryGetAndReturnData()
+    {
+        var attempts = 0;
+        using var handler = new ReadHandler(_ =>
+        {
+            attempts++;
+
+            return attempts == 1
+                ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"version\":1}") };
+        });
+        var services = new ServiceCollection().AddAnalyticsEventConsumer(CreateConfiguration());
+        services.AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+        var reader = provider.GetRequiredService<IWasteObligationsClient>();
+
+        var result = await reader.ReadDeclaration(Guid.NewGuid(), "65f1f6570bb08052a8a27b01", TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, result!.Version);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task WhenTransientReadExceptionContainsPrivateData_ShouldRetryWithoutLoggingIt()
+    {
+        const string privateData = "secret-basic-password private-recipient@example.test cdec_private-id";
+        var attempts = 0;
+        using var logs = new CapturedLogs();
+        using var handler = new ReadHandler(_ =>
+        {
+            attempts++;
+            if (attempts == 1)
+                throw new HttpRequestException(privateData);
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"version\":1}") };
+        });
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(logs));
+        services.AddAnalyticsEventConsumer(CreateConfiguration());
+        services.AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+        var reader = provider.GetRequiredService<IWasteObligationsClient>();
+
+        var result = await reader.ReadDeclaration(Guid.NewGuid(), "65f1f6570bb08052a8a27b01", TestContext.Current.CancellationToken);
+        provider.GetRequiredService<ILogger<AnalyticsEventConsumer>>().LogWarning("Fixed analytics retry diagnostic");
+
+        Assert.Equal(1, result!.Version);
+        Assert.Equal(2, handler.RequestCount);
+        Assert.Contains("Fixed analytics retry diagnostic", logs.Messages);
+        Assert.All(logs.Messages, message =>
+        {
+            Assert.DoesNotContain("secret-basic-password", message, StringComparison.Ordinal);
+            Assert.DoesNotContain("private-recipient@example.test", message, StringComparison.Ordinal);
+            Assert.DoesNotContain("cdec_private-id", message, StringComparison.Ordinal);
+        });
+    }
+
+    private sealed class CapturedLogs : ILoggerProvider
+    {
+        public List<string> Messages { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new CapturedLogger(Messages);
+
+        public void Dispose() { }
+    }
+
+    private sealed class CapturedLogger(List<string> messages) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            messages.Add(formatter(state, exception) + exception);
     }
 
     private static string RepositoryRoot()
@@ -195,9 +299,9 @@ public class ServiceCollectionExtensionsTests
     {
         var values = new Dictionary<string, string?>
         {
-            ["Submission:BaseAddress"] = "https://declarations.test",
-            ["Submission:ClientId"] = "test-read-client",
-            ["Submission:ClientSecret"] = "test-read-secret",
+            ["WasteObligations:BaseAddress"] = "https://declarations.test",
+            ["WasteObligations:Username"] = "test-read-client",
+            ["WasteObligations:Password"] = "test-read-secret",
             [$"{AnalyticsEventConsumerOptions.SectionName}:QueueUrl"] =
                 "http://localhost:4566/000000000000/analytics-events",
             [$"{AnalyticsEventConsumerOptions.SectionName}:ProcessingEnabled"] = "true",

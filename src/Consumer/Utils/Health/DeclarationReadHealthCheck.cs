@@ -1,5 +1,5 @@
 using Defra.WasteObligations.Consumer.Consumers;
-using Defra.WasteObligations.Consumer.Submission;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
@@ -7,7 +7,7 @@ namespace Defra.WasteObligations.Consumer.Utils.Health;
 
 public sealed class DeclarationReadHealthCheck(
     IOptions<AnalyticsEventConsumerOptions> options,
-    IDeclarationReadClient client
+    IWasteObligationsClient client
 ) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(

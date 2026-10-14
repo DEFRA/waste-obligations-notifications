@@ -101,20 +101,23 @@ public sealed class AnalyticsEventConsumer(
             eventId = SafeEventId(analyticsEvent.EventId) ?? OpaqueCorrelation(analyticsEvent.EventId);
             var declarationEntityId = SafeEntityId(analyticsEvent.EntityId);
             entityId = declarationEntityId ?? OpaqueCorrelation(analyticsEvent.EntityId);
+
             if (analyticsEvent.IsSubmission)
             {
                 stage = "validate-event";
                 if (
                     declarationEntityId is null
-                    || analyticsEvent.SchemaVersion != "compliance_declaration_v1.3"
+                    || !analyticsEvent.SupportsSubmissionSchema
                     || analyticsEvent.Version is not > 0
                     || analyticsEvent.OrganisationId is null
                     || analyticsEvent.OrganisationId == Guid.Empty
                 )
                     throw new SubmissionProcessingException("invalid-event-data");
+
                 var id = analyticsEvent.EntityId;
                 var version = analyticsEvent.Version.Value;
                 var organisationId = analyticsEvent.OrganisationId.Value;
+
                 EnsureRemaining(
                     receivedAt,
                     options.Value.ReadTimeoutSeconds
@@ -130,6 +133,7 @@ public sealed class AnalyticsEventConsumer(
                     options.Value.ReadTimeoutSeconds,
                     stoppingToken
                 );
+
                 EnsureRemaining(receivedAt, options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
                 stage = "publish-command";
                 await RunBounded(
@@ -142,6 +146,7 @@ public sealed class AnalyticsEventConsumer(
                     stoppingToken
                 );
                 published = true;
+
                 if (logger.IsEnabled(LogLevel.Information))
                 {
                     logger.LogInformation(

@@ -1,5 +1,6 @@
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -24,6 +25,7 @@ public static class ServiceCollectionExtensions
             )
             .ValidateOnStart();
 
+        services.AddWasteObligationsClient(configuration);
         services.AddSubmittedEmailProducer(configuration);
         services.AddAWSService<IAmazonSQS>();
         services.AddHostedService<AnalyticsEventConsumer>();

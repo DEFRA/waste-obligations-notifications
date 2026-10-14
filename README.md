@@ -137,16 +137,20 @@ share the `AnalyticsEventConsumer__` environment prefix. Each receive requests
 explicit visibility; increasing batching requires a reviewed budget change.
 
 Before this image reaches an environment with analytics processing already enabled,
-provision the Submission read address, credentials and Read ACL. Alternatively,
+provision the Waste Obligations read address, credentials and Read ACL. Alternatively,
 confirm `AnalyticsEventConsumer__ProcessingEnabled=false` before deployment.
 Missing read configuration with processing enabled rejects startup for the whole
 host, including command delivery and DLQ administration.
 
-Configure `Submission__BaseAddress`, `Submission__ClientId` and
-`Submission__ClientSecret` for Waste Obligations Basic Read access. Disabled analytics
+Configure `WasteObligations__BaseAddress`, `WasteObligations__Username` and
+`WasteObligations__Password` for Waste Obligations Basic Read access. Disabled analytics
 needs no read credentials. Local development values are synthetic examples, not a
-running declaration API. `DeclarationRead` extended health checks connectivity only;
-validate the deployed Read ACL and MO-562 version/identity response before activation.
+running declaration API. HTTPS requests prefer HTTP/2 with HTTP/1.1 fallback.
+The service client retries transient GET failures up to twice with exponential
+jitter, within a ten-second total and three-second attempt timeout; the analytics
+read budget and cancellation still bound the complete operation. `DeclarationRead` extended health calls `health/authorized` with Basic credentials;
+successful authentication does not prove the deployed Read ACL or MO-562
+version/identity response; validate both before activation.
 Compose disables analytics processing because it has no declaration API. The
 submitted-email integration scenarios enable their own hosts with a controlled
 declaration endpoint. To process submissions locally, configure a reachable Read
@@ -581,6 +585,12 @@ including an action at or after the new boundary. Delete matching replays withou
 changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.
 
 ## Submitted-email verification and local Notify credentials
+
+`DockerSubmittedEmailTests` publishes to an isolated SNS topic and waits for the
+Docker consumer to read a WireMock declaration, publish a command and receive a
+WireMock Notify acceptance. Its second consumer, queues and database are isolated
+from the default Compose consumer. The four hosted scenarios retain detailed
+variant and replay assertions.
 
 The isolated integration suite exercises all four direct/scheme and English/Welsh
 variants from hosted analytics consumption through the real declaration client,

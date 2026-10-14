@@ -8,6 +8,7 @@ using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Submission;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Utils.Health;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -155,9 +156,9 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                     ["AnalyticsEventConsumer:ProcessingEnabled"] = "true",
                     ["AnalyticsEventConsumer:WaitTimeSeconds"] = "1",
                     ["AnalyticsEventConsumer:PollIntervalSeconds"] = "1",
-                    ["Submission:BaseAddress"] = "https://declaration.test/",
-                    ["Submission:ClientId"] = "isolated-reader",
-                    ["Submission:ClientSecret"] = "synthetic-read-secret",
+                    ["WasteObligations:BaseAddress"] = "https://declaration.test/",
+                    ["WasteObligations:Username"] = "isolated-reader",
+                    ["WasteObligations:Password"] = "synthetic-read-secret",
                     ["Submission:DirectEnglishTemplateId"] = "11111111-1111-4111-8111-111111111111",
                     ["Submission:DirectWelshTemplateId"] = "22222222-2222-4222-8222-222222222222",
                     ["Submission:SchemeEnglishTemplateId"] = "33333333-3333-4333-8333-333333333333",
@@ -179,7 +180,7 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                 builder.Services.AddAnalyticsEventConsumer(builder.Configuration);
                 builder.Services.AddNotificationCommandDelivery(builder.Configuration);
                 builder
-                    .Services.AddHttpClient<IDeclarationReadClient, DeclarationReadClient>()
+                    .Services.AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
                     .ConfigurePrimaryHttpMessageHandler(() => fixture.Reads);
                 builder.Services.AddSingleton<IAmazonSQS>(fixture.Sqs);
                 builder.Services.AddSingleton<IMongoClient>(fixture._mongo);

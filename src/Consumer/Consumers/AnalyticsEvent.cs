@@ -12,7 +12,16 @@ public sealed record AnalyticsEvent(
     Guid? OrganisationId
 )
 {
+    private const string SchemaPrefix = "compliance_declaration_v";
+    private static readonly System.Version s_minimumSchema = new(1, 0);
+
     public bool IsSubmission => Entity == "compliance_declaration" && EventType == "submission.created";
+
+    public bool SupportsSubmissionSchema =>
+        SchemaVersion is { } schema
+        && schema.StartsWith(SchemaPrefix, StringComparison.Ordinal)
+        && System.Version.TryParse(schema[SchemaPrefix.Length..], out var version)
+        && version >= s_minimumSchema;
 
     public static AnalyticsEvent Parse(string body)
     {

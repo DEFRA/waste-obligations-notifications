@@ -16,6 +16,12 @@
 - Never alter shared queues, topics, or deployed CDP configuration from a test.
   Local Compose may create and own its isolated resources.
 - Keep credentials out of source control and logs.
+- Use small typed boundary models for consumed event fields and downstream DTOs.
+  Keep transport parsing separate from domain decisions and preserve optional
+  fields and out-of-scope acknowledgement contracts.
+- Separate key statements with blank lines at logical boundaries: validation,
+  dependency calls, publication and acknowledgement. Apply this readability check
+  across the complete diff, alongside CSharpier formatting.
 
 ## Build guidance for agents
 

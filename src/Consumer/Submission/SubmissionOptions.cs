@@ -6,10 +6,6 @@ public sealed record SubmissionOptions
 {
     public const string SectionName = "Submission";
 
-    public string BaseAddress { get; init; } = "set-automatically-when-deployed";
-    public string ClientId { get; init; } = "set-automatically-when-deployed";
-    public string ClientSecret { get; init; } = "set-automatically-when-deployed";
-
     [Required]
     public string DirectEnglishTemplateId { get; init; } = "5f64e3bd-d454-4a45-a9c6-9409bf940d7a";
 
@@ -26,14 +22,4 @@ public sealed record SubmissionOptions
         new[] { DirectEnglishTemplateId, DirectWelshTemplateId, SchemeEnglishTemplateId, SchemeWelshTemplateId }.All(
             value => Guid.TryParseExact(value, "D", out var id) && id != Guid.Empty
         );
-
-    public bool HasReadAccess =>
-        Uri.TryCreate(BaseAddress, UriKind.Absolute, out var uri)
-        && (uri.Scheme == "https" || (uri.Scheme == "http" && uri.IsLoopback))
-        && Configured(ClientId)
-        && Configured(ClientSecret)
-        && !ClientId.Contains(':');
-
-    private static bool Configured(string value) =>
-        !string.IsNullOrWhiteSpace(value) && !value.StartsWith("set-automatically", StringComparison.Ordinal);
 }

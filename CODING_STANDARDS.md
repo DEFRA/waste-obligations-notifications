@@ -29,6 +29,10 @@ and validation steps belong in [CONTRIBUTING.md](CONTRIBUTING.md).
 - Declare a variable close to where it is used. Use constants for values that
   share a meaning across uses; inline one-off values. Keep related conditions
   together when that remains clear.
+- Use blank lines between logical groups, particularly validation and awaited
+  side effects, so processing order is easy to follow. Model the fields consumed
+  from external payloads with small typed records rather than passing JSON trees
+  through domain logic.
 
 CSharpier owns C# formatting; `.editorconfig` defines editor settings and naming
 preferences. See [CONTRIBUTING.md](CONTRIBUTING.md) for formatting and checks.

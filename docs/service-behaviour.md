@@ -30,7 +30,8 @@ original recipient-lane position.
   `Content-Encoding: gzip+base64` are supported. Any other declared encoding is
   a processing failure.
 - For `entity: compliance_declaration`, `eventType: submission.created`, require
-  `schemaVersion: compliance_declaration_v1.3`, a positive integer entity `version`,
+  a `compliance_declaration_v` schema version of at least `1.0` (the first
+  schema with organisation identity), a positive integer entity `version`,
   `entityId: cdec_<ObjectId>` and `after.organisation.id` as a nonempty UUID.
   Read `/organisations/{id}/compliance-declarations/{bare ObjectId}` with Basic
   service credentials authorised for Read. Require matching declaration and
@@ -427,7 +428,7 @@ The four `declaration-submitted-direct-en`, `declaration-submitted-direct-cy`,
 existing bounded delivery metrics, with no second metric mechanism.
 
 Before this image reaches an environment with analytics processing already enabled,
-provision the Submission read address, credentials and Read ACL. Alternatively,
+provision the Waste Obligations read address, credentials and Read ACL. Alternatively,
 confirm `AnalyticsEventConsumer__ProcessingEnabled=false` before deployment.
 Missing read configuration with processing enabled rejects startup for the whole
 host, including command delivery and DLQ administration.
@@ -438,11 +439,17 @@ host, including command delivery and DLQ administration.
   queue, with its own redrive policy. Never reuse the producer queue.
 - `AnalyticsEventConsumer__QueueUrl` and
   `AnalyticsEventConsumer__ProcessingEnabled` are deployment-owned settings.
-- `Submission__BaseAddress`, `Submission__ClientId` and `Submission__ClientSecret`
+- `WasteObligations__BaseAddress`, `WasteObligations__Username` and `WasteObligations__Password`
   provide deployment-owned Read access. Credentials and an HTTPS service address (HTTP is allowed only for loopback
-  local development and fixtures) are validated when analytics processing is enabled. The extended DeclarationRead
-  health check checks service health only; it does not prove the Read ACL or DTO contract.
-  Disabled analytics requires no declaration-read credentials.
+  local development and fixtures) are validated when analytics processing is enabled. The extended downstream health check calls `health/authorized` with Basic
+  credentials, proving service authentication; it does not prove the Read scope
+  or declaration DTO contract.
+  Disabled analytics requires no declaration-read credentials. HTTPS requests
+  prefer HTTP/2 with protocol fallback. The client retries transient GET failures
+  at most twice with exponential jitter, bounded by a ten-second total and
+  three-second attempt timeout; the outer read/health cancellation budget wins.
+  Unsafe methods are not retried. A 404 returns no declaration; the submission
+  producer decides to retain the event for recovery.
 - The four `Submission__DirectEnglishTemplateId`, `Submission__DirectWelshTemplateId`,
   `Submission__SchemeEnglishTemplateId`, `Submission__SchemeWelshTemplateId` values
   are validated as nonempty canonical hyphenated UUIDs at startup. Checked-in defaults are not proof of
@@ -460,6 +467,10 @@ host, including command delivery and DLQ administration.
   do not configure CDP access.
 
 ## Behaviour verification
+
+The Docker submission happy path publishes through an isolated SNS topic to the
+actual container consumer, uses WireMock HTTP responses for Waste Obligations and
+Notify, and waits for the outgoing send and durable command acceptance.
 
 Unit tests cover parsing, validation, logging, deletion, and failure behaviour.
 Compose-backed integration tests cover health and SNS-to-SQS-to-consumer wiring.

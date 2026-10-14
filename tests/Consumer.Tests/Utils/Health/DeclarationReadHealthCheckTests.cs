@@ -1,6 +1,6 @@
 using System.Net;
 using Defra.WasteObligations.Consumer.Consumers;
-using Defra.WasteObligations.Consumer.Submission;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Utils.Health;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -29,7 +29,7 @@ public sealed class DeclarationReadHealthCheckTests
         using var handler = new Handler(
             (request, token) =>
             {
-                Assert.Equal("/api/health", request.RequestUri!.AbsolutePath);
+                Assert.Equal("/api/health/authorized", request.RequestUri!.AbsolutePath);
                 Assert.Equal("Basic dGVzdC1jbGllbnQ6dGVzdC1zZWNyZXQ=", request.Headers.Authorization!.ToString());
                 Assert.True(token.CanBeCanceled);
 
@@ -86,9 +86,9 @@ public sealed class DeclarationReadHealthCheckTests
                     QueueUrl = "http://sqs.test/analytics",
                 }
             ),
-            new DeclarationReadClient(
+            new WasteObligationsClient(
                 client,
-                Options.Create(new SubmissionOptions { ClientId = "test-client", ClientSecret = "test-secret" })
+                Options.Create(new WasteObligationsOptions { Username = "test-client", Password = "test-secret" })
             )
         );
 

@@ -7,6 +7,7 @@ using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -256,7 +257,7 @@ public class AnalyticsEventConsumerTests
             logger ?? new RecordingLogger<AnalyticsEventConsumer>(),
             StartedApplication(),
             new SubmittedEmailProducer(
-                Substitute.For<IDeclarationReadClient>(),
+                Substitute.For<IWasteObligationsClient>(),
                 Options.Create(new SubmissionOptions())
             ),
             new NotificationCommandPublisher(
