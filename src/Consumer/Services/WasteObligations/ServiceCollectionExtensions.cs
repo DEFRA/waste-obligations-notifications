@@ -1,3 +1,4 @@
+using System.Net;
 using Defra.WasteObligations.Consumer.Consumers;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
@@ -62,4 +63,3 @@ public static class ServiceCollectionExtensions
         return services;
     }
 }
-using System.Net;
