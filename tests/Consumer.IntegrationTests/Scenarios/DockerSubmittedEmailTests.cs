@@ -98,11 +98,7 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
             await Stub(
                 wireMock,
                 notifyMapping,
-                new
-                {
-                    Methods = new[] { "POST" },
-                    Path = Exact("/v2/notifications/email"),
-                },
+                new { Methods = new[] { "POST" }, Path = Exact("/v2/notifications/email") },
                 new
                 {
                     id = Guid.NewGuid(),
