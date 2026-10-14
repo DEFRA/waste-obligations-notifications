@@ -22,10 +22,34 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 public sealed class SubmittedEmailSendTests : IntegrationTestBase
 {
     [Theory]
-    [InlineData("DirectProducer", "GB-ENG", "11111111-1111-4111-8111-111111111111", "The Stored Regulator", "the Stored Regulator")]
-    [InlineData("DirectProducer", "GB-WLS", "22222222-2222-4222-8222-222222222222", "Stored Regulator", "Stored Regulator")]
-    [InlineData("ComplianceScheme", "GB-ENG", "33333333-3333-4333-8333-333333333333", "The Stored Regulator", "the Stored Regulator")]
-    [InlineData("ComplianceScheme", "GB-WLS", "44444444-4444-4444-8444-444444444444", "Stored Regulator", "Stored Regulator")]
+    [InlineData(
+        "DirectProducer",
+        "GB-ENG",
+        "11111111-1111-4111-8111-111111111111",
+        "The Stored Regulator",
+        "the Stored Regulator"
+    )]
+    [InlineData(
+        "DirectProducer",
+        "GB-WLS",
+        "22222222-2222-4222-8222-222222222222",
+        "Stored Regulator",
+        "Stored Regulator"
+    )]
+    [InlineData(
+        "ComplianceScheme",
+        "GB-ENG",
+        "33333333-3333-4333-8333-333333333333",
+        "The Stored Regulator",
+        "the Stored Regulator"
+    )]
+    [InlineData(
+        "ComplianceScheme",
+        "GB-WLS",
+        "44444444-4444-4444-8444-444444444444",
+        "Stored Regulator",
+        "Stored Regulator"
+    )]
     public async Task WhenSubmittedAnalyticsIsHandledAndReplayed_ShouldSendOneOriginalAuditEmail(
         string registration,
         string country,
@@ -96,21 +120,32 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
             {
                 var token = TestContext.Current.CancellationToken;
                 var suffix = Guid.NewGuid().ToString("N");
-                fixture.Sqs.AnalyticsUrl = (await fixture.Sqs.CreateQueueAsync(
-                    new CreateQueueRequest
-                    {
-                        QueueName = $"submission_analytics_{suffix}",
-                        Attributes = new() { ["VisibilityTimeout"] = "90" },
-                    }, token
-                )).QueueUrl;
-                fixture.Sqs.CommandUrl = (await fixture.Sqs.CreateQueueAsync(
-                    new CreateQueueRequest
-                    {
-                        QueueName = $"submission_commands_{suffix}.fifo",
-                        Attributes = new() { ["FifoQueue"] = "true", ["VisibilityTimeout"] = "120" },
-                    }, token
-                )).QueueUrl;
-                fixture.Reads = new DeclarationHandler(fixture._organisationId, fixture._declarationId, registration, country);
+                fixture.Sqs.AnalyticsUrl = (
+                    await fixture.Sqs.CreateQueueAsync(
+                        new CreateQueueRequest
+                        {
+                            QueueName = $"submission_analytics_{suffix}",
+                            Attributes = new() { ["VisibilityTimeout"] = "90" },
+                        },
+                        token
+                    )
+                ).QueueUrl;
+                fixture.Sqs.CommandUrl = (
+                    await fixture.Sqs.CreateQueueAsync(
+                        new CreateQueueRequest
+                        {
+                            QueueName = $"submission_commands_{suffix}.fifo",
+                            Attributes = new() { ["FifoQueue"] = "true", ["VisibilityTimeout"] = "120" },
+                        },
+                        token
+                    )
+                ).QueueUrl;
+                fixture.Reads = new DeclarationHandler(
+                    fixture._organisationId,
+                    fixture._declarationId,
+                    registration,
+                    country
+                );
                 var values = new Dictionary<string, string?>
                 {
                     ["AWS_EMF_ENABLED"] = "false",
@@ -141,7 +176,8 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                 builder.Configuration.AddInMemoryCollection(values);
                 builder.Services.AddAnalyticsEventConsumer(builder.Configuration);
                 builder.Services.AddNotificationCommandDelivery(builder.Configuration);
-                builder.Services.AddHttpClient<IDeclarationReadClient, DeclarationReadClient>()
+                builder
+                    .Services.AddHttpClient<IDeclarationReadClient, DeclarationReadClient>()
                     .ConfigurePrimaryHttpMessageHandler(() => fixture.Reads);
                 builder.Services.AddSingleton<IAmazonSQS>(fixture.Sqs);
                 builder.Services.AddSingleton<IMongoClient>(fixture._mongo);
@@ -167,34 +203,43 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
             }
         }
 
-        public async Task SendAnalytics() => await Sqs.SendMessageAsync(
-            new SendMessageRequest
-            {
-                QueueUrl = Sqs.AnalyticsUrl,
-                MessageBody = $$$"""
+        public async Task SendAnalytics() =>
+            await Sqs.SendMessageAsync(
+                new SendMessageRequest
+                {
+                    QueueUrl = Sqs.AnalyticsUrl,
+                    MessageBody = $$$"""
                     {"eventId":"01K5A7M9Q2X6F4N8C0V3B1D5E7","entityId":"cdec_{{{_declarationId}}}","entity":"compliance_declaration","eventType":"submission.created","operation":"create","version":1,"schemaVersion":"compliance_declaration_v1.3","sequence":1,"occurredAt":"2026-09-20T11:12:13Z","recordedAt":"2026-09-20T11:12:14Z","actor":"2be16023-4b2b-4e6c-960a-0bc1a1162a84","after":{"organisation":{"id":"{{{_organisationId}}}","businessCountry":"GB-WLS","registrationType":"ComplianceScheme","regulator":"Changed Snapshot Regulator","regulatorEmail":"snapshot@example.test"},"submitterName":"Changed Snapshot Submitter"}}
                     """,
-            }, TestContext.Current.CancellationToken
-        );
+                },
+                TestContext.Current.CancellationToken
+            );
 
-        public async Task SendPublishedReplay() => await Sqs.SendMessageAsync(
-            new SendMessageRequest
-            {
-                QueueUrl = Sqs.CommandUrl,
-                MessageBody = Sqs.PublishedBody!,
-                MessageGroupId = Sqs.PublishedLane!,
-                MessageDeduplicationId = Guid.NewGuid().ToString("N"),
-            }, TestContext.Current.CancellationToken
-        );
+        public async Task SendPublishedReplay() =>
+            await Sqs.SendMessageAsync(
+                new SendMessageRequest
+                {
+                    QueueUrl = Sqs.CommandUrl,
+                    MessageBody = Sqs.PublishedBody!,
+                    MessageGroupId = Sqs.PublishedLane!,
+                    MessageDeduplicationId = Guid.NewGuid().ToString("N"),
+                },
+                TestContext.Current.CancellationToken
+            );
 
-        public async Task<BsonDocument> Record() => await _mongo.GetDatabase(_databaseName)
-            .GetCollection<BsonDocument>("NotificationDeliveryRecord")
-            .Find(new BsonDocument("notificationKey", Digest.CreateIdempotencyKeyDigest(Key)))
-            .SingleAsync(TestContext.Current.CancellationToken);
+        public async Task<BsonDocument> Record() =>
+            await _mongo
+                .GetDatabase(_databaseName)
+                .GetCollection<BsonDocument>("NotificationDeliveryRecord")
+                .Find(new BsonDocument("notificationKey", Digest.CreateIdempotencyKeyDigest(Key)))
+                .SingleAsync(TestContext.Current.CancellationToken);
 
         public async Task<JsonElement[]> NotifyRequests()
         {
-            var requests = await _http.GetFromJsonAsync<JsonElement[]>("/test/requests", TestContext.Current.CancellationToken);
+            var requests = await _http.GetFromJsonAsync<JsonElement[]>(
+                "/test/requests",
+                TestContext.Current.CancellationToken
+            );
             var reference = Digest.CreateNotifyReference(Key);
 
             return requests!.Where(request => request.GetProperty("reference").GetString() == reference).ToArray();
@@ -205,7 +250,11 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
             foreach (var url in new[] { Sqs.AnalyticsUrl, Sqs.CommandUrl })
             {
                 var response = await Sqs.GetQueueAttributesAsync(
-                    new GetQueueAttributesRequest { QueueUrl = url, AttributeNames = ["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"] },
+                    new GetQueueAttributesRequest
+                    {
+                        QueueUrl = url,
+                        AttributeNames = ["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
+                    },
                     TestContext.Current.CancellationToken
                 );
                 Assert.Equal("0", response.Attributes["ApproximateNumberOfMessages"]);
@@ -243,13 +292,23 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
         public int CommandDeletions => Volatile.Read(ref _commandDeletions);
         public int ConfirmedPublications => Volatile.Read(ref _confirmedPublications);
 
-        public ObservingSqsClient() : base(new BasicAWSCredentials("test", "test"),
-            new AmazonSQSConfig { ServiceURL = "http://localhost:4566", AuthenticationRegion = "eu-west-2" }) { }
+        public ObservingSqsClient()
+            : base(
+                new BasicAWSCredentials("test", "test"),
+                new AmazonSQSConfig { ServiceURL = "http://localhost:4566", AuthenticationRegion = "eu-west-2" }
+            ) { }
 
-        public override async Task<SendMessageResponse> SendMessageAsync(SendMessageRequest request, CancellationToken cancellationToken = default)
+        public override async Task<SendMessageResponse> SendMessageAsync(
+            SendMessageRequest request,
+            CancellationToken cancellationToken = default
+        )
         {
             var response = await base.SendMessageAsync(request, cancellationToken);
-            if (request.QueueUrl == CommandUrl && request.MessageDeduplicationId?.StartsWith("compliance-declaration:", StringComparison.Ordinal) == true)
+            if (
+                request.QueueUrl == CommandUrl
+                && request.MessageDeduplicationId?.StartsWith("compliance-declaration:", StringComparison.Ordinal)
+                    == true
+            )
             {
                 Assert.Equal(HttpStatusCode.OK, response.HttpStatusCode);
                 Assert.False(string.IsNullOrWhiteSpace(response.MessageId));
@@ -261,7 +320,11 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
             return response;
         }
 
-        public override async Task<DeleteMessageResponse> DeleteMessageAsync(string queueUrl, string receiptHandle, CancellationToken cancellationToken = default)
+        public override async Task<DeleteMessageResponse> DeleteMessageAsync(
+            string queueUrl,
+            string receiptHandle,
+            CancellationToken cancellationToken = default
+        )
         {
             if (queueUrl == AnalyticsUrl)
                 Assert.True(ConfirmedPublications > AnalyticsDeletions);
@@ -275,35 +338,53 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
         }
     }
 
-    private sealed class DeclarationHandler(Guid organisationId, string declarationId, string registration, string country) : HttpMessageHandler
+    private sealed class DeclarationHandler(
+        Guid organisationId,
+        string declarationId,
+        string registration,
+        string country
+    ) : HttpMessageHandler
     {
         private int _declarationReads;
         public int DeclarationReads => Volatile.Read(ref _declarationReads);
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        )
         {
             Assert.Equal(HttpMethod.Get, request.Method);
-            Assert.Equal($"/organisations/{organisationId:D}/compliance-declarations/{declarationId}", request.RequestUri!.AbsolutePath);
+            Assert.Equal(
+                $"/organisations/{organisationId:D}/compliance-declarations/{declarationId}",
+                request.RequestUri!.AbsolutePath
+            );
             Assert.Equal("Basic", request.Headers.Authorization?.Scheme);
-            Assert.Equal("aXNvbGF0ZWQtcmVhZGVyOnN5bnRoZXRpYy1yZWFkLXNlY3JldA==", request.Headers.Authorization?.Parameter);
+            Assert.Equal(
+                "aXNvbGF0ZWQtcmVhZGVyOnN5bnRoZXRpYy1yZWFkLXNlY3JldA==",
+                request.Headers.Authorization?.Parameter
+            );
             Interlocked.Increment(ref _declarationReads);
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent($$$"""
-                    {
-                      "id":"{{{declarationId}}}","version":2,"created":"2026-09-20T11:12:13Z","updated":"2026-10-01T12:00:00Z","status":"Cancelled","obligationYear":2026,
-                      "organisation":{"id":"{{{organisationId}}}","name":"Stored Organisation","registrationType":"{{{registration}}}","businessCountry":"{{{country}}}","complianceSchemeName":"Stored Scheme","schemeOperatorName":"Stored Operator","referenceNumber":"SYNTHETIC-001","address":{"addressLine1":"1 Test Street","town":"Test Town","postcode":"TE1 1ST","country":"GB"},"regulator":"Stored Regulator","regulatorEmail":"stored-regulator@example.test"},
-                      "obligations":[{"material":"Plastic","recyclingTarget":0.5,"tonnages":{"material":100,"awaitingAcceptance":0,"accepted":50,"outstanding":0,"obligated":50},"status":"Met"}],
-                      "obligationStatus":"Met","submitterName":"Changed Current Submitter","isRegulation43Compliant":true,"obligationCoveragePercentage":50,
-                      "audit":[
-                        {"action":"Submitted","timestamp":"2026-09-20T11:12:13Z","user":{"id":"5bd7385b-042e-464a-bba8-b9dcc0dce677","email":" Original.Submitter@Example.Test ","name":"Original Submitter","locale":"cy"}},
-                        {"action":"Submitted","timestamp":"2026-09-21T12:00:00Z","user":{"id":"09fec9fa-b22d-4571-869e-68c5e0effe3e","email":"second@example.test","name":"Second Submitter","locale":"en"}},
-                        {"action":"Cancelled","timestamp":"2026-10-01T12:00:00Z","user":{"id":"2be16023-4b2b-4e6c-960a-0bc1a1162a84","email":"later@example.test","name":"Later Actor","locale":"en"}}
-                      ]
-                    }
-                    """),
-            });
+            return Task.FromResult(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $$$"""
+                        {
+                          "id":"{{{declarationId}}}","version":2,"created":"2026-09-20T11:12:13Z","updated":"2026-10-01T12:00:00Z","status":"Cancelled","obligationYear":2026,
+                          "organisation":{"id":"{{{organisationId}}}","name":"Stored Organisation","registrationType":"{{{registration}}}","businessCountry":"{{{country}}}","complianceSchemeName":"Stored Scheme","schemeOperatorName":"Stored Operator","referenceNumber":"SYNTHETIC-001","address":{"addressLine1":"1 Test Street","town":"Test Town","postcode":"TE1 1ST","country":"GB"},"regulator":"Stored Regulator","regulatorEmail":"stored-regulator@example.test"},
+                          "obligations":[{"material":"Plastic","recyclingTarget":0.5,"tonnages":{"material":100,"awaitingAcceptance":0,"accepted":50,"outstanding":0,"obligated":50},"status":"Met"}],
+                          "obligationStatus":"Met","submitterName":"Changed Current Submitter","isRegulation43Compliant":true,"obligationCoveragePercentage":50,
+                          "audit":[
+                            {"action":"Submitted","timestamp":"2026-09-20T11:12:13Z","user":{"id":"5bd7385b-042e-464a-bba8-b9dcc0dce677","email":" Original.Submitter@Example.Test ","name":"Original Submitter","locale":"cy"}},
+                            {"action":"Submitted","timestamp":"2026-09-21T12:00:00Z","user":{"id":"09fec9fa-b22d-4571-869e-68c5e0effe3e","email":"second@example.test","name":"Second Submitter","locale":"en"}},
+                            {"action":"Cancelled","timestamp":"2026-10-01T12:00:00Z","user":{"id":"2be16023-4b2b-4e6c-960a-0bc1a1162a84","email":"later@example.test","name":"Later Actor","locale":"en"}}
+                          ]
+                        }
+                        """
+                    ),
+                }
+            );
         }
     }
 }

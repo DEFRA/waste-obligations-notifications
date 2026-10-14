@@ -32,8 +32,8 @@ public sealed class NotifySubmissionPreviewTests
             .AddJsonFile(Path.Combine(root, "src/Consumer/appsettings.json"))
             .AddEnvironmentVariables()
             .Build();
-        var options = configuration.GetSection(SubmissionOptions.SectionName).Get<SubmissionOptions>()
-            ?? new SubmissionOptions();
+        var options =
+            configuration.GetSection(SubmissionOptions.SectionName).Get<SubmissionOptions>() ?? new SubmissionOptions();
         var template = mapping switch
         {
             "DirectEnglishTemplateId" => options.DirectEnglishTemplateId,
@@ -63,19 +63,31 @@ public sealed class NotifySubmissionPreviewTests
         }
         catch (Exception)
         {
-            Assert.Fail("Notify submission preview failed; check credential, template access and provider availability.");
+            Assert.Fail(
+                "Notify submission preview failed; check credential, template access and provider availability."
+            );
             return;
         }
         // Boolean assertions keep rendered content and provider responses out of reports.
         Assert.True(subject.Contains("2026", StringComparison.Ordinal), "Preview subject must contain the year.");
-        Assert.True(subject.Contains("Regulator", StringComparison.Ordinal), "Preview subject must contain the regulator.");
+        Assert.True(
+            subject.Contains("Regulator", StringComparison.Ordinal),
+            "Preview subject must contain the regulator."
+        );
         foreach (var value in new[] { "2026", "Regulator", "regulator@email.com", "Submitter Name" })
-            Assert.True(body.Contains(value, StringComparison.Ordinal), "Preview body is missing required personalisation.");
+            Assert.True(
+                body.Contains(value, StringComparison.Ordinal),
+                "Preview body is missing required personalisation."
+            );
     }
 
     private static string RepositoryRoot()
     {
-        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        for (
+            var directory = new DirectoryInfo(AppContext.BaseDirectory);
+            directory is not null;
+            directory = directory.Parent
+        )
             if (File.Exists(Path.Combine(directory.FullName, "waste-obligations-notifications.slnx")))
                 return directory.FullName;
         throw new InvalidOperationException("Repository root was not found for Notify preview configuration.");
