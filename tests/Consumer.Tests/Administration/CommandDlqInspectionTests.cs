@@ -1787,7 +1787,14 @@ public sealed class CommandDlqInspectionTests
             builder.UseEnvironment("Testing");
             builder.ConfigureTestServices(services =>
             {
-                if (!productionLogging)
+                if (productionLogging)
+                    services.AddSingleton<ILoggerFactory>(serviceProvider =>
+                        new Serilog.Extensions.Logging.SerilogLoggerFactory(
+                            serviceProvider.GetRequiredService<Serilog.ILogger>(),
+                            dispose: false
+                        )
+                    );
+                else
                     services.AddSingleton<ILoggerFactory>(_ =>
                         LoggerFactory.Create(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(Logs))
                     );
