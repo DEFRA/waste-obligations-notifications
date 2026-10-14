@@ -40,127 +40,149 @@ public sealed class AnalyticsEventConsumer(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            string? eventId = null;
-            string? entityId = null;
-            string? messageId = null;
-            var stage = "receive";
-            var published = false;
             try
             {
                 var receivedAt = Stopwatch.GetTimestamp();
-                var response = await RunBounded(
-                    token =>
-                        sqsClient.ReceiveMessageAsync(
-                            new ReceiveMessageRequest
-                            {
-                                QueueUrl = options.Value.QueueUrl,
-                                // One read, publish and delete budget per receive; batching requires review.
-                                MaxNumberOfMessages = 1,
-                                VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
-                                MessageAttributeNames = ["All"],
-                                WaitTimeSeconds = options.Value.WaitTimeSeconds,
-                            },
-                            token
-                        ),
-                    options.Value.ReceiveTimeoutSeconds,
-                    stoppingToken
-                );
-
+                var response = await ReceiveEvents(stoppingToken);
                 foreach (var message in response.Messages ?? [])
-                {
-                    messageId = SafeTransportCorrelation(message.MessageId);
-                    stage = "parse";
-                    using var document = JsonDocument.Parse(ReadBody(message));
-                    var root = document.RootElement;
-                    eventId = SafeEventId(ReadRequiredString(root, "eventId"));
-                    var rawEntityId = ReadRequiredString(root, "entityId");
-                    entityId = SafeEntityId(rawEntityId);
-                    if (
-                        root.TryGetProperty("entity", out var entity)
-                        && entity.GetString() == "compliance_declaration"
-                        && root.TryGetProperty("eventType", out var eventType)
-                        && eventType.GetString() == "submission.created"
-                    )
-                    {
-                        stage = "validate-event";
-                        var id = rawEntityId;
-                        if (
-                            eventId is null
-                            || entityId is null
-                            || ReadRequiredString(root, "schemaVersion") != "compliance_declaration_v1.3"
-                        )
-                            throw new SubmissionProcessingException("invalid-event-data");
-                        var version = root.GetProperty("version").GetInt32();
-                        var organisationId = Guid.Parse(
-                            ReadRequiredString(root.GetProperty("after").GetProperty("organisation"), "id")
-                        );
-                        if (version < 1 || organisationId == Guid.Empty)
-                            throw new SubmissionProcessingException("invalid-event-data");
-                        EnsureRemaining(
-                            receivedAt,
-                            options.Value.ReadTimeoutSeconds
-                                + options.Value.PublishTimeoutSeconds
-                                + options.Value.DeleteTimeoutSeconds
-                        );
-                        // The enclosing catch reads this stage when the awaited read throws, before the next assignment.
-#pragma warning disable S1854 // Sonar does not account for this exceptional path through the awaited call.
-                        stage = "read-declaration";
-#pragma warning restore S1854
-                        var command = await RunBounded(
-                            token => producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token),
-                            options.Value.ReadTimeoutSeconds,
-                            stoppingToken
-                        );
-                        EnsureRemaining(
-                            receivedAt,
-                            options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds
-                        );
-                        stage = "publish-command";
-                        await RunBounded(
-                            async token =>
-                            {
-                                await publisher.Publish(command, token);
-                                return true;
-                            },
-                            options.Value.PublishTimeoutSeconds,
-                            stoppingToken
-                        );
-                        published = true;
-                        logger.LogInformation(
-                            "Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}",
-                            eventId,
-                            entityId,
-                            digest.CreateNotifyReference(command.IdempotencyKey),
-                            command.NotificationType,
-                            command.TemplateId,
-                            command.ActionOccurredAtUtc
-                        );
-                    }
-
-                    if (logger.IsEnabled(LogLevel.Information))
-                    {
-                        logger.LogInformation("Consumed analytics event {EventId} for {EntityId}", eventId, entityId);
-                    }
-
-                    stage = "acknowledge";
-                    EnsureRemaining(receivedAt, options.Value.DeleteTimeoutSeconds);
-                    await RunBounded(
-                        token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
-                        options.Value.DeleteTimeoutSeconds,
-                        stoppingToken
-                    );
-                }
+                    await ProcessMessage(message, receivedAt, stoppingToken);
             }
             catch (Exception) when (stoppingToken.IsCancellationRequested)
             {
                 return;
             }
-            catch (Exception exception)
+            catch (Exception)
             {
-                LogFailure(exception);
-                LogRetry(exception, stage, published, messageId, eventId, entityId);
                 await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
             }
+        }
+    }
+
+    private async Task<ReceiveMessageResponse> ReceiveEvents(CancellationToken stoppingToken)
+    {
+        try
+        {
+            return await RunBounded(
+                token =>
+                    sqsClient.ReceiveMessageAsync(
+                        new ReceiveMessageRequest
+                        {
+                            QueueUrl = options.Value.QueueUrl,
+                            // One read, publish and delete budget per receive; batching requires review.
+                            MaxNumberOfMessages = 1,
+                            VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
+                            MessageAttributeNames = ["All"],
+                            WaitTimeSeconds = options.Value.WaitTimeSeconds,
+                        },
+                        token
+                    ),
+                options.Value.ReceiveTimeoutSeconds,
+                stoppingToken
+            );
+        }
+        catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+        {
+            LogFailure(exception);
+            LogRetry(exception, "receive", false, null, null, null);
+            throw;
+        }
+    }
+
+    private async Task ProcessMessage(Message message, long receivedAt, CancellationToken stoppingToken)
+    {
+        string? eventId = null;
+        string? entityId = null;
+        string? messageId = null;
+        var stage = "parse";
+        var published = false;
+        try
+        {
+            messageId = SafeTransportCorrelation(message.MessageId);
+            using var document = JsonDocument.Parse(ReadBody(message));
+            var root = document.RootElement;
+            eventId = SafeEventId(ReadRequiredString(root, "eventId"));
+            var rawEntityId = ReadRequiredString(root, "entityId");
+            entityId = SafeEntityId(rawEntityId);
+            if (
+                root.TryGetProperty("entity", out var entity)
+                && entity.GetString() == "compliance_declaration"
+                && root.TryGetProperty("eventType", out var eventType)
+                && eventType.GetString() == "submission.created"
+            )
+            {
+                stage = "validate-event";
+                var id = rawEntityId;
+                if (
+                    eventId is null
+                    || entityId is null
+                    || ReadRequiredString(root, "schemaVersion") != "compliance_declaration_v1.3"
+                )
+                    throw new SubmissionProcessingException("invalid-event-data");
+                var version = root.GetProperty("version").GetInt32();
+                var organisationId = Guid.Parse(
+                    ReadRequiredString(root.GetProperty("after").GetProperty("organisation"), "id")
+                );
+                if (version < 1 || organisationId == Guid.Empty)
+                    throw new SubmissionProcessingException("invalid-event-data");
+                EnsureRemaining(
+                    receivedAt,
+                    options.Value.ReadTimeoutSeconds
+                        + options.Value.PublishTimeoutSeconds
+                        + options.Value.DeleteTimeoutSeconds
+                );
+                // The enclosing catch reads this stage when the awaited read throws, before the next assignment.
+#pragma warning disable S1854 // Sonar does not account for this exceptional path through the awaited call.
+                stage = "read-declaration";
+#pragma warning restore S1854
+                var command = await RunBounded(
+                    token => producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token),
+                    options.Value.ReadTimeoutSeconds,
+                    stoppingToken
+                );
+                EnsureRemaining(receivedAt, options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
+                stage = "publish-command";
+                await RunBounded(
+                    async token =>
+                    {
+                        await publisher.Publish(command, token);
+                        return true;
+                    },
+                    options.Value.PublishTimeoutSeconds,
+                    stoppingToken
+                );
+                published = true;
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    logger.LogInformation(
+                        "Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}",
+                        eventId,
+                        entityId,
+                        digest.CreateNotifyReference(command.IdempotencyKey),
+                        command.NotificationType,
+                        command.TemplateId,
+                        command.ActionOccurredAtUtc
+                    );
+                }
+            }
+
+            if (logger.IsEnabled(LogLevel.Information))
+            {
+                logger.LogInformation("Consumed analytics event {EventId} for {EntityId}", eventId, entityId);
+            }
+
+            stage = "acknowledge";
+            EnsureRemaining(receivedAt, options.Value.DeleteTimeoutSeconds);
+            await RunBounded(
+                token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
+                options.Value.DeleteTimeoutSeconds,
+                stoppingToken
+            );
+        }
+        catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+        {
+            LogFailure(exception);
+            LogRetry(exception, stage, published, messageId, eventId, entityId);
+            throw;
         }
     }
 

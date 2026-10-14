@@ -20,17 +20,31 @@ def local_key(root):
     return None
 
 
-def main():
-    if len(sys.argv) < 2:
-        sys.exit("Usage: python3 scripts/with-notify-env.py COMMAND [ARG ...]")
+def notify_environment(root):
     environment = os.environ.copy()
-    key = local_key(Path(__file__).resolve().parent.parent)
+    key = local_key(root)
     if key is not None:
         environment.setdefault("GOVUKNOTIFY_APIKEY", key)
         # .NET configuration names are case insensitive; Compose uses uppercase.
         if not any(name.casefold() == "notify__apikey" for name in environment):
             environment["Notify__ApiKey"] = key
-    return subprocess.call(sys.argv[1:], env=environment)
+    return environment
+
+
+def main():
+    # Select a fixed operation; never forward caller-supplied executable or arguments.
+    if len(sys.argv) != 2 or sys.argv[1] not in ("run", "preview"):
+        sys.exit("Usage: python3 scripts/with-notify-env.py {run|preview}")
+    root = Path(__file__).resolve().parent.parent
+    commands = {
+        "run": ["dotnet", "run", "--project", "src/Consumer"],
+        "preview": [
+            "dotnet", "test", "--test-modules",
+            "tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll",
+            "--no-build", "--", "--filter-class", "*NotifySubmissionPreviewTests",
+        ],
+    }
+    return subprocess.run(commands[sys.argv[1]], cwd=root, env=notify_environment(root), check=False).returncode
 
 
 if __name__ == "__main__":

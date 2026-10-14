@@ -26,6 +26,8 @@ public sealed class SubmittedEmailConsumerTests
     private const string SchemeEnglish = "33333333-3333-4333-8333-333333333333";
     private const string SchemeWelsh = "44444444-4444-4444-8444-444444444444";
 
+    private static readonly JsonSerializerOptions s_webOptions = new(JsonSerializerDefaults.Web);
+
     [Theory]
     [InlineData(
         "DirectProducer",
@@ -104,10 +106,7 @@ public sealed class SubmittedEmailConsumerTests
         await fixture.Run([Event("01JZ8RXBMTY2K15SJB3PCFN3D5")]);
 
         var request = Assert.Single(fixture.Publications);
-        var command = JsonSerializer.Deserialize<NotificationCommand>(
-            request.MessageBody,
-            new JsonSerializerOptions(JsonSerializerDefaults.Web)
-        )!;
+        var command = JsonSerializer.Deserialize<NotificationCommand>(request.MessageBody, s_webOptions)!;
         Assert.Equal("compliance-declaration:65f1f6570bb08052a8a27b01:submitted:v1", command.IdempotencyKey);
         Assert.Equal(template, command.TemplateId);
         Assert.Equal(type, command.NotificationType);
@@ -147,6 +146,12 @@ public sealed class SubmittedEmailConsumerTests
     [InlineData("country", "invalid-declaration-data")]
     [InlineData("user", "invalid-declaration-data")]
     [InlineData("timestamp", "invalid-declaration-data")]
+    [InlineData("malformed-json", "invalid-declaration-data")]
+    [InlineData("missing-year", "invalid-declaration-data")]
+    [InlineData("wrong-year-type", "invalid-declaration-data")]
+    [InlineData("invalid-organisation", "invalid-declaration-data")]
+    [InlineData("zero-year", "invalid-declaration-data")]
+    [InlineData("negative-year", "invalid-declaration-data")]
     public async Task WhenDeclarationCannotBeUsed_ShouldRetainEventAndWarn(string fault, string reason)
     {
         var body = Declaration();
@@ -163,6 +168,20 @@ public sealed class SubmittedEmailConsumerTests
             "country" => body.Replace("GB-ENG", "", StringComparison.Ordinal),
             "user" => body.Replace(PrivateName, "", StringComparison.Ordinal),
             "timestamp" => body.Replace("2026-09-20T11:12:13Z", "2026-09-20T11:12:13", StringComparison.Ordinal),
+            "malformed-json" => "{",
+            "missing-year" => body.Replace("\"obligationYear\":2025,", "", StringComparison.Ordinal),
+            "wrong-year-type" => body.Replace(
+                "\"obligationYear\":2025",
+                "\"obligationYear\":\"2025\"",
+                StringComparison.Ordinal
+            ),
+            "invalid-organisation" => body.Replace(OrganisationId, "not-a-guid", StringComparison.Ordinal),
+            "zero-year" => body.Replace("\"obligationYear\":2025", "\"obligationYear\":0", StringComparison.Ordinal),
+            "negative-year" => body.Replace(
+                "\"obligationYear\":2025",
+                "\"obligationYear\":-1",
+                StringComparison.Ordinal
+            ),
             _ => body,
         };
         using var fixture = new Fixture(
@@ -182,6 +201,23 @@ public sealed class SubmittedEmailConsumerTests
                 && entry.Text.Contains(reason, StringComparison.Ordinal)
                 && entry.Text.Contains("not acknowledged", StringComparison.Ordinal)
         );
+        fixture.AssertSafeLogs();
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task WhenDeclarationServiceRejectsRead_ShouldRetainEventWithoutPublishing(HttpStatusCode status)
+    {
+        using var fixture = new Fixture(
+            (_, _) => Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(UnsafeDependency) })
+        );
+        await fixture.Run([Event("01JZ8RXBMTY2K15SJB3PCFN3D5")]);
+
+        Assert.Single(fixture.Reads);
+        Assert.Empty(fixture.Publications);
+        Assert.Equal(0, fixture.Deletions);
+        Assert.Contains(fixture.Logs.Entries, entry => entry.Level == LogLevel.Warning);
         fixture.AssertSafeLogs();
     }
 
@@ -285,6 +321,41 @@ public sealed class SubmittedEmailConsumerTests
             entry =>
                 entry.Level == LogLevel.Warning && entry.Text.Contains("invalid-event-data", StringComparison.Ordinal)
         );
+    }
+
+    [Theory]
+    [InlineData("schema")]
+    [InlineData("version")]
+    [InlineData("organisation")]
+    public async Task WhenMatchingSubmissionEventIsInvalid_ShouldRetainWithoutReadingOrPublishing(string fault)
+    {
+        var body = Event("01JZ8RXBMTY2K15SJB3PCFN3D5");
+        body = fault switch
+        {
+            "schema" => body.Replace(
+                "compliance_declaration_v1.3",
+                "compliance_declaration_v0",
+                StringComparison.Ordinal
+            ),
+            "version" => body.Replace("\"version\":1", "\"version\":0", StringComparison.Ordinal),
+            "organisation" => body.Replace(OrganisationId, Guid.Empty.ToString("D"), StringComparison.Ordinal),
+            _ => body,
+        };
+        using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
+
+        await fixture.Run([body]);
+
+        Assert.Empty(fixture.Reads);
+        Assert.Empty(fixture.Publications);
+        Assert.Equal(0, fixture.Deletions);
+        Assert.Contains(
+            fixture.Logs.Entries,
+            entry =>
+                entry.Level == LogLevel.Warning
+                && entry.Text.Contains("invalid-event-data", StringComparison.Ordinal)
+                && entry.Text.Contains("not acknowledged", StringComparison.Ordinal)
+        );
+        fixture.AssertSafeLogs();
     }
 
     private static HttpResponseMessage Response(string body) =>

@@ -35,6 +35,12 @@ jobs:
           dotnet-version: 10.0
       - name: Restore and audit dependencies
         run: dotnet restore waste-obligations-notifications.slnx -p:NuGetAudit=true -p:NuGetAuditMode=all
+      - name: Measure Python script coverage
+        run: |
+          python3 -m venv "$RUNNER_TEMP/script-coverage"
+          "$RUNNER_TEMP/script-coverage/bin/python" -m pip install coverage==7.10.7
+          "$RUNNER_TEMP/script-coverage/bin/python" -m coverage run --source=scripts -m unittest discover -s tests/Script.Tests
+          "$RUNNER_TEMP/script-coverage/bin/python" -m coverage xml -o "$GITHUB_WORKSPACE/coverage.Script.Tests.xml"
       - name: Cache SonarCloud packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -58,7 +64,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          ./.sonar/scanner/dotnet-sonarscanner begin /k:"DEFRA_waste-obligations-notifications" /o:"defra" /d:sonar.token="$SONAR_TOKEN" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.cs.vscoveragexml.reportsPaths=coverage*.xml
+          ./.sonar/scanner/dotnet-sonarscanner begin /k:"DEFRA_waste-obligations-notifications" /o:"defra" /d:sonar.token="$SONAR_TOKEN" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.cs.vscoveragexml.reportsPaths=coverage.Consumer.*.xml /d:sonar.python.coverage.reportPaths=coverage.Script.Tests.xml /d:sonar.test.inclusions=tests/**/*.cs,tests/Script.Tests/*.py
           dotnet build --no-incremental --no-restore
           dotnet test --test-modules tests/Consumer.Tests/bin/Debug/net10.0/Consumer.Tests.dll --no-build -- --coverage --coverage-output-format xml --coverage-output "$GITHUB_WORKSPACE/coverage.Consumer.Tests.xml"
           docker compose up -d --wait

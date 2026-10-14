@@ -6,6 +6,8 @@ namespace Defra.WasteObligations.Consumer.Submission;
 
 public sealed class SubmittedEmailProducer(IDeclarationReadClient reader, IOptions<SubmissionOptions> options)
 {
+    private const string InvalidDeclarationData = "invalid-declaration-data";
+
     public async Task<NotificationCommand> Create(
         Guid organisationId,
         string declarationId,
@@ -30,10 +32,10 @@ public sealed class SubmittedEmailProducer(IDeclarationReadClient reader, IOptio
                 .First(entry => Required(entry, "action") == "Submitted");
             var user = submitted.GetProperty("user");
             if (!UtcTimestamp.TryParse(Required(submitted, "timestamp"), out var actionTime))
-                throw new SubmissionProcessingException("invalid-declaration-data");
+                throw new SubmissionProcessingException(InvalidDeclarationData);
             var year = declaration.GetProperty("obligationYear").GetInt32();
             if (year <= 0)
-                throw new SubmissionProcessingException("invalid-declaration-data");
+                throw new SubmissionProcessingException(InvalidDeclarationData);
             var welsh = Required(organisation, "businessCountry") == "GB-WLS";
             var scheme = Required(organisation, "registrationType") == "ComplianceScheme";
             var regulator = Required(organisation, "regulator");
@@ -79,7 +81,7 @@ public sealed class SubmittedEmailProducer(IDeclarationReadClient reader, IOptio
                         or OverflowException
             )
         {
-            throw new SubmissionProcessingException("invalid-declaration-data");
+            throw new SubmissionProcessingException(InvalidDeclarationData);
         }
     }
 
@@ -87,7 +89,7 @@ public sealed class SubmittedEmailProducer(IDeclarationReadClient reader, IOptio
     {
         var value = element.GetProperty(name).GetString();
         if (string.IsNullOrWhiteSpace(value))
-            throw new SubmissionProcessingException("invalid-declaration-data");
+            throw new SubmissionProcessingException(InvalidDeclarationData);
 
         return value;
     }

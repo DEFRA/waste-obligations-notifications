@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 def main():
     try:
         report = ET.parse(Path(sys.argv[1])).getroot()
-        namespace = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+        namespace = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}  # NOSONAR: TRX XML namespace identifier, never an HTTP request.
         counters = report.find("t:ResultSummary/t:Counters", namespace)
         results = report.findall("t:Results/t:UnitTestResult", namespace)
         definitions = report.findall("t:TestDefinitions/t:UnitTest", namespace)

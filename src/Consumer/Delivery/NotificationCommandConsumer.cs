@@ -133,6 +133,25 @@ public sealed class NotificationCommandConsumer(
             );
 
         metrics.RecordOutcome(notificationType, outcome);
+        LogOutcome(message, command, reference, notificationType, outcome, cutover);
+        stoppingToken.ThrowIfCancellationRequested();
+        await RunBounded(
+            token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
+            options.Value.DeleteTimeoutSeconds,
+            stoppingToken,
+            failureReason: NotificationCommandFailureReason.QueueError
+        );
+    }
+
+    private void LogOutcome(
+        Message message,
+        NotificationCommand command,
+        string reference,
+        string notificationType,
+        string outcome,
+        DateTimeOffset? cutover
+    )
+    {
         if (logger.IsEnabled(LogLevel.Information))
             logger.LogInformation(
                 "Notification command outcome {Outcome} ({OutcomeMeaning}) for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}, template {TemplateId}, action {ActionOccurredAtUtc}",
@@ -151,13 +170,6 @@ public sealed class NotificationCommandConsumer(
                 Guid.TryParse(command.TemplateId, out _) ? command.TemplateId : null,
                 command.ActionOccurredAtUtc
             );
-        stoppingToken.ThrowIfCancellationRequested();
-        await RunBounded(
-            token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
-            options.Value.DeleteTimeoutSeconds,
-            stoppingToken,
-            failureReason: NotificationCommandFailureReason.QueueError
-        );
     }
 
     private async Task<string> ProcessPostCutover(

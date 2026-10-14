@@ -1,3 +1,4 @@
+using System.Net;
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Submission;
@@ -62,6 +63,21 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Theory]
+    [InlineData("BaseAddress", "ftp://declarations.test")]
+    [InlineData("ClientId", "test:read-client")]
+    public void WhenReadAccessConfigurationIsInvalid_ShouldRejectAnalyticsStartup(string property, string value)
+    {
+        var configuration = CreateConfiguration();
+        configuration[$"Submission:{property}"] = value;
+        var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<SubmissionOptions>>().Value
+        );
+    }
+
+    [Theory]
     [InlineData("DirectEnglishTemplateId")]
     [InlineData("DirectWelshTemplateId")]
     [InlineData("SchemeEnglishTemplateId")]
@@ -94,6 +110,60 @@ public class ServiceCollectionExtensionsTests
         Assert.Throws<OptionsValidationException>(() =>
             provider.GetRequiredService<IOptions<AnalyticsEventConsumerOptions>>().Value
         );
+    }
+
+    [Theory]
+    [InlineData("http://declarations.test/api")]
+    [InlineData("http://declarations.test/api/")]
+    public async Task WhenReadBaseAddressHasPathPrefix_ShouldPreservePrefixInRegisteredClient(string address)
+    {
+        const string organisationId = "fbf1ba88-cd09-42f6-aad5-0ddfc29e5765";
+        const string declarationId = "65f1f6570bb08052a8a27b01";
+        var configuration = CreateConfiguration();
+        configuration["Submission:BaseAddress"] = address;
+        using var handler = new ReadHandler(request =>
+        {
+            Assert.Equal(
+                $"/api/organisations/{organisationId}/compliance-declarations/{declarationId}",
+                request.RequestUri!.AbsolutePath
+            );
+            Assert.Equal(
+                "Basic dGVzdC1yZWFkLWNsaWVudDp0ZXN0LXJlYWQtc2VjcmV0",
+                request.Headers.Authorization!.ToString()
+            );
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"version\":1}") };
+        });
+        var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
+        services
+            .AddHttpClient<IDeclarationReadClient, DeclarationReadClient>()
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+        var reader = provider.GetRequiredService<IDeclarationReadClient>();
+
+        var result = await reader.Read(
+            Guid.Parse(organisationId),
+            declarationId,
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal(1, result.GetProperty("version").GetInt32());
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    private sealed class ReadHandler(Func<HttpRequestMessage, HttpResponseMessage> read) : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        )
+        {
+            RequestCount++;
+
+            return Task.FromResult(read(request));
+        }
     }
 
     private static IConfiguration CreateConfiguration()
