@@ -11,7 +11,7 @@ public sealed record AnalyticsEventConsumerOptions
 
     public bool ProcessingEnabled { get; init; }
 
-    [Range(0, 20)]
+    [Range(1, 20)]
     public int WaitTimeSeconds { get; init; } = 20;
 
     [Range(1, 300)]

@@ -42,7 +42,8 @@ original recipient-lane position.
 - Always use the first exact `Submitted` audit's email, name and explicit UTC
   timestamp, including when the latest declaration is Accepted or Cancelled.
   Persisted organisation country, registration type, regulator and regulator email
-  determine the command. Only `GB-WLS` selects Welsh; only `ComplianceScheme`
+  determine the command. Only the string `GB-WLS` selects Welsh; absent, null,
+  empty or non-string country values select English. Only `ComplianceScheme`
   selects the scheme templates. Other registration types select direct templates.
   English regulator articles are `The ` and `the `; Welsh has no articles.
   Personalisation has exactly integer `obligationYear` and strings `regulatorLeading`,
@@ -62,7 +63,8 @@ original recipient-lane position.
 - Both normal consumers request one message per receive and process it on each
   host, with no batch-size option. A larger receive requires a reviewed
   processing/visibility budget. Both immediately receive again after success
-  or an empty response; SQS long polling supplies idle waiting. Their poll
+  or an empty response; SQS long polling supplies idle waiting. Analytics requires
+  a 1–20 second wait and rejects zero. Their poll
   intervals are cancellation-aware error backoff only. Dependency timeouts are
   failures; host cancellation stops consumption. The command receive timeout must exceed its long-poll wait and
   bounds that receive without changing the shared SQS client's configuration.
@@ -423,6 +425,12 @@ correlation, without exception text, PII, payloads or raw intended-email keys.
 The four `declaration-submitted-direct-en`, `declaration-submitted-direct-cy`,
 `declaration-submitted-scheme-en`, `declaration-submitted-scheme-cy` categories use
 existing bounded delivery metrics, with no second metric mechanism.
+
+Before this image reaches an environment with analytics processing already enabled,
+provision the Submission read address, credentials and Read ACL. Alternatively,
+confirm `AnalyticsEventConsumer__ProcessingEnabled=false` before deployment.
+Missing read configuration with processing enabled rejects startup for the whole
+host, including command delivery and DLQ administration.
 
 ## Deployment ownership
 

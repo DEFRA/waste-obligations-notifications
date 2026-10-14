@@ -153,7 +153,7 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                     ["AWS_EMF_ENABLED"] = "false",
                     ["AnalyticsEventConsumer:QueueUrl"] = fixture.Sqs.AnalyticsUrl,
                     ["AnalyticsEventConsumer:ProcessingEnabled"] = "true",
-                    ["AnalyticsEventConsumer:WaitTimeSeconds"] = "0",
+                    ["AnalyticsEventConsumer:WaitTimeSeconds"] = "1",
                     ["AnalyticsEventConsumer:PollIntervalSeconds"] = "1",
                     ["Submission:BaseAddress"] = "https://declaration.test/",
                     ["Submission:ClientId"] = "isolated-reader",

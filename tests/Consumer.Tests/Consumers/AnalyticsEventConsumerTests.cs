@@ -249,7 +249,7 @@ public class AnalyticsEventConsumerTests
                 {
                     QueueUrl = QueueUrl,
                     ProcessingEnabled = processingEnabled,
-                    WaitTimeSeconds = 0,
+                    WaitTimeSeconds = 1,
                     PollIntervalSeconds = pollIntervalSeconds,
                 }
             ),

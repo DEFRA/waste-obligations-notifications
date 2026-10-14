@@ -36,7 +36,10 @@ public sealed class SubmittedEmailProducer(IDeclarationReadClient reader, IOptio
             var year = declaration.GetProperty("obligationYear").GetInt32();
             if (year <= 0)
                 throw new SubmissionProcessingException(InvalidDeclarationData);
-            var welsh = Required(organisation, "businessCountry") == "GB-WLS";
+            var welsh =
+                organisation.TryGetProperty("businessCountry", out var country)
+                && country.ValueKind == JsonValueKind.String
+                && country.GetString() == "GB-WLS";
             var scheme = Required(organisation, "registrationType") == "ComplianceScheme";
             var regulator = Required(organisation, "regulator");
             var template = (scheme, welsh) switch

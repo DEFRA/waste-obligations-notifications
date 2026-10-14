@@ -219,12 +219,43 @@ public sealed class SubmittedEmailConsumerTests
     }
 
     [Theory]
+    [InlineData(false, null)]
+    [InlineData(false, "null")]
+    [InlineData(false, "\"\"")]
+    [InlineData(false, "5")]
+    [InlineData(true, null)]
+    [InlineData(true, "null")]
+    [InlineData(true, "\"\"")]
+    [InlineData(true, "5")]
+    public async Task WhenCountryIsAbsentOrNotWelsh_ShouldPublishEnglishAndAcknowledge(bool scheme, string? country)
+    {
+        var body = Declaration(scheme ? "ComplianceScheme" : "DirectProducer")
+            .Replace(
+                "\"businessCountry\":\"GB-ENG\",",
+                country is null ? "" : $"\"businessCountry\":{country},",
+                StringComparison.Ordinal
+            );
+        using var fixture = new Fixture((_, _) => Task.FromResult(Response(body)));
+
+        await fixture.Run([Event("01JZ8RXBMTY2K15SJB3PCFN3D5")]);
+
+        var publication = Assert.Single(fixture.Publications);
+        var command = JsonSerializer.Deserialize<NotificationCommand>(publication.MessageBody, s_webOptions)!;
+        Assert.Equal(scheme ? SchemeEnglish : DirectEnglish, command.TemplateId);
+        Assert.Equal(scheme ? "declaration-submitted-scheme-en" : "declaration-submitted-direct-en", command.NotificationType);
+        Assert.Equal("The Stored Regulator", command.Personalisation.GetProperty("regulatorLeading").GetString());
+        Assert.Equal("the Stored Regulator", command.Personalisation.GetProperty("regulatorInline").GetString());
+        Assert.Single(fixture.Reads);
+        Assert.Equal(1, fixture.Deletions);
+        fixture.AssertSafeLogs();
+    }
+
+    [Theory]
     [InlineData("not-found", "declaration-not-found")]
     [InlineData("older", "older-declaration-version")]
     [InlineData("identity", "identity-mismatch")]
     [InlineData("organisation", "identity-mismatch")]
     [InlineData("audit", "invalid-declaration-data")]
-    [InlineData("country", "invalid-declaration-data")]
     [InlineData("user", "invalid-declaration-data")]
     [InlineData("timestamp", "invalid-declaration-data")]
     [InlineData("malformed-json", "invalid-declaration-data")]
@@ -246,7 +277,6 @@ public sealed class SubmittedEmailConsumerTests
                 StringComparison.Ordinal
             ),
             "audit" => body.Replace("Submitted", "Created", StringComparison.Ordinal),
-            "country" => body.Replace("GB-ENG", "", StringComparison.Ordinal),
             "user" => body.Replace(PrivateName, "", StringComparison.Ordinal),
             "timestamp" => body.Replace("2026-09-20T11:12:13Z", "2026-09-20T11:12:13", StringComparison.Ordinal),
             "malformed-json" => "{",
@@ -583,7 +613,7 @@ public sealed class SubmittedEmailConsumerTests
                     {
                         QueueUrl = "http://sqs.test/analytics",
                         ProcessingEnabled = true,
-                        WaitTimeSeconds = 0,
+                        WaitTimeSeconds = 1,
                         ReadTimeoutSeconds = 1,
                         PollIntervalSeconds = 1,
                     }

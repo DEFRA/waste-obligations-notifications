@@ -105,6 +105,7 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Theory]
+    [InlineData("WaitTimeSeconds", "0")]
     [InlineData("VisibilityTimeoutSeconds", "74")]
     [InlineData("ReceiveTimeoutSeconds", "3")]
     [InlineData("ReadTimeoutSeconds", "0")]

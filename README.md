@@ -129,11 +129,18 @@ failures are retried; an acknowledgement failure after confirmed publication can
 cause a matching replay. Publication and Notify acceptance do not prove delivery.
 
 Analytics has a separate processing budget. `AnalyticsEventConsumer__ReceiveTimeoutSeconds`
-(default 30) must exceed its long poll. `ReadTimeoutSeconds` (20),
+(default 30) must exceed its long poll. `WaitTimeSeconds` must be 1–20 seconds;
+zero is rejected to prevent continuous empty receives. `ReadTimeoutSeconds` (20),
 `PublishTimeoutSeconds` (10), `DeleteTimeoutSeconds` (5) and `SafetyHeadroomSeconds`
 (10), plus receive time, must fit `VisibilityTimeoutSeconds` (90). These settings
 share the `AnalyticsEventConsumer__` environment prefix. Each receive requests
 explicit visibility; increasing batching requires a reviewed budget change.
+
+Before this image reaches an environment with analytics processing already enabled,
+provision the Submission read address, credentials and Read ACL. Alternatively,
+confirm `AnalyticsEventConsumer__ProcessingEnabled=false` before deployment.
+Missing read configuration with processing enabled rejects startup for the whole
+host, including command delivery and DLQ administration.
 
 Configure `Submission__BaseAddress`, `Submission__ClientId` and
 `Submission__ClientSecret` for Waste Obligations Basic Read access. Disabled analytics
