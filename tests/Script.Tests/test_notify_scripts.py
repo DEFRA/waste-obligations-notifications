@@ -98,7 +98,8 @@ class NotifyEnvironmentTests(unittest.TestCase):
 class NotifyPreviewEvidenceTests(unittest.TestCase):
     METHODS = ["DirectEnglish_ShouldRenderSubmission", "DirectWelsh_ShouldRenderSubmission",
                "SchemeEnglish_ShouldRenderSubmission", "SchemeWelsh_ShouldRenderSubmission"]
-    NAMESPACE = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"  # NOSONAR: Canonical TRX namespace identifier, never an HTTP request.
+    # This canonical TRX XML namespace identifies a format; it is not an HTTP endpoint.
+    NAMESPACE = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"  # NOSONAR
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
