@@ -242,7 +242,10 @@ public sealed class SubmittedEmailConsumerTests
         var publication = Assert.Single(fixture.Publications);
         var command = JsonSerializer.Deserialize<NotificationCommand>(publication.MessageBody, s_webOptions)!;
         Assert.Equal(scheme ? SchemeEnglish : DirectEnglish, command.TemplateId);
-        Assert.Equal(scheme ? "declaration-submitted-scheme-en" : "declaration-submitted-direct-en", command.NotificationType);
+        Assert.Equal(
+            scheme ? "declaration-submitted-scheme-en" : "declaration-submitted-direct-en",
+            command.NotificationType
+        );
         Assert.Equal("The Stored Regulator", command.Personalisation.GetProperty("regulatorLeading").GetString());
         Assert.Equal("the Stored Regulator", command.Personalisation.GetProperty("regulatorInline").GetString());
         Assert.Single(fixture.Reads);
