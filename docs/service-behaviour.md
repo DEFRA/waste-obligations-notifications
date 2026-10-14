@@ -7,15 +7,17 @@ implementation scope is described below.
 
 ## Current scope
 
-The analytics consumer logs event and entity IDs and deletes successfully
-processed messages. It does not deliver notifications or persist event data.
+The analytics consumer enriches submitted compliance-declaration events through the
+Waste Obligations read API and publishes submitted-email commands before deleting
+the analytics message. Other valid analytics events retain their log-and-delete
+behaviour. Analytics does not persist event data or send email directly.
 With the default null cutover, the command consumer durably suppresses every
 valid command and deletes it without Notify. With a supplied boundary, it
 records pre-cutover commands as `delivery-suppressed` and
 sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
 Notify acceptance must be recorded before SQS deletion. Matching accepted,
 suppressed, or abandoned records suppress duplicates regardless of the current
-cutover. Analytics does not yet create notification commands. Configured Basic or OAuth
+cutover. Configured Basic or OAuth
 administrators can inspect command-DLQ batches, redrive selected commands or discard one command-DLQ message. Redrive does not restore a command's
 original recipient-lane position.
 
@@ -27,8 +29,29 @@ original recipient-lane position.
 - Preserve the analytics-event transport contract: raw JSON and
   `Content-Encoding: gzip+base64` are supported. Any other declared encoding is
   a processing failure.
-- Do not filter analytics events by event type or entity type. Log a parsed
-  event's `eventId` and `entityId` before deleting its SQS message.
+- For `entity: compliance_declaration`, `eventType: submission.created`, require
+  `schemaVersion: compliance_declaration_v1.3`, a positive integer entity `version`,
+  `entityId: cdec_<ObjectId>` and `after.organisation.id` as a nonempty UUID.
+  Read `/organisations/{id}/compliance-declarations/{bare ObjectId}` with Basic
+  service credentials authorised for Read. Require matching declaration and
+  organisation identities and an equal or newer declaration version.
+- Always use the first exact `Submitted` audit's email, name and explicit UTC
+  timestamp, including when the latest declaration is Accepted or Cancelled.
+  Persisted organisation country, registration type, regulator and regulator email
+  determine the command. Only `GB-WLS` selects Welsh; only `ComplianceScheme`
+  selects the scheme templates. Other registration types select direct templates.
+  English regulator articles are `The ` and `the `; Welsh has no articles.
+  Personalisation has exactly integer `obligationYear` and strings `regulatorLeading`,
+  `regulatorInline`, `regulatorEmail`, `user`.
+- The stable intended-email key is `compliance-declaration:{bare ObjectId}:submitted:v1`;
+  event IDs and later entity versions do not create a new intended email. No producer
+  ledger is introduced. The shared publisher normalises recipients and uses the
+  shared digest for recipient lanes; delivery's terminal evidence suppresses replay.
+- Matching events are deleted only after confirmed command publication. A missing
+  declaration, older version, missing required data, read or unconfirmed publication
+  failure leaves the event for retry. After confirmed publication, uncertain deletion
+  can cause replay and is diagnosed as acknowledgement uncertainty. Other valid
+  events continue to log their safe event/entity correlation and acknowledge.
 - Delete an SQS message only after all work needed to make it terminal has
   succeeded. Parsing, validation, persistence, or processing failures must
   leave the message in the queue for its redrive policy.
@@ -39,6 +62,10 @@ original recipient-lane position.
   intervals are cancellation-aware error backoff only. Dependency timeouts are
   failures; host cancellation stops consumption. The command receive timeout must exceed its long-poll wait and
   bounds that receive without changing the shared SQS client's configuration.
+  Analytics independently validates its single-message budget: 30 seconds receive,
+  20 read, 10 publish, 5 delete and 10 headroom fit its explicit 90-second visibility.
+  Each dependency is bounded; remaining visibility is checked before processing
+  stages. The command lease/visibility budget does not cover analytics work.
   A disabled analytics consumer logs once and awaits cancellation.
 - Apply the logging restrictions in [coding standards](../CODING_STANDARDS.md).
 
@@ -48,8 +75,8 @@ Producer wire fields, timestamp precision and exact FIFO lane calculation are
 specified in the [producer contract](notification-command-producer-contract.md).
 
 - Keep notification delivery separate from the analytics-event path. Analytics
-  consumption does not deliver notifications, mutate business data, transform
-  payloads, or persist event data.
+  consumption produces commands but does not send email, mutate business data,
+  or persist event data.
 - Validate commands before publishing or consuming them. Normalise a recipient
   only where the command contract requires it.
 - Consume commands unconditionally after successful startup readiness. Null
@@ -380,12 +407,34 @@ Command queue/DLQ/Mongo and Notify extended health run on every host, including
 with null cutover. Critical migrations gate `/health`; both consumers and
 administration start after its first successful anonymous response completes.
 
+## Submitted-email diagnostics
+
+Confirmed publication logs safe event/entity correlation, an opaque Notify reference,
+configured UUID template, bounded variant and original action time. Delivery outcome
+logs use the same reference and distinguish unset-cutover suppression, actions before
+cutover, durably recorded Notify acceptance and matching terminal duplicates. None
+claims recipient delivery. Unsafe arbitrary template strings are omitted from delivery
+logs. Retry warnings use fixed stage/reason values and available safe SQS/event/entity
+correlation, without exception text, PII, payloads or raw intended-email keys.
+The four `declaration-submitted-direct-en`, `declaration-submitted-direct-cy`,
+`declaration-submitted-scheme-en`, `declaration-submitted-scheme-cy` categories use
+existing bounded delivery metrics, with no second metric mechanism.
+
 ## Deployment ownership
 
 - The analytics queue must be a separate SNS subscription from the producer
   queue, with its own redrive policy. Never reuse the producer queue.
 - `AnalyticsEventConsumer__QueueUrl` and
   `AnalyticsEventConsumer__ProcessingEnabled` are deployment-owned settings.
+- `Submission__BaseAddress`, `Submission__ClientId` and `Submission__ClientSecret`
+  provide deployment-owned Read access. Credentials and an HTTP service address
+  are validated when analytics processing is enabled. The extended DeclarationRead
+  health check checks service health only; it does not prove the Read ACL or DTO contract.
+  Disabled analytics requires no declaration-read credentials.
+- The four `Submission__DirectEnglishTemplateId`, `Submission__DirectWelshTemplateId`,
+  `Submission__SchemeEnglishTemplateId`, `Submission__SchemeWelshTemplateId` values
+  are validated as nonempty UUIDs at startup. Checked-in defaults are not proof of
+  deployed Notify account access or effective overrides.
 - Command queue, MongoDB, cutover, digest-secret and `AWS_EMF_*` settings are also
   deployment-owned. Local Compose settings do not configure CDP environments.
   Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
@@ -399,8 +448,8 @@ administration start after its first successful anonymous response completes.
 Unit tests cover parsing, validation, logging, deletion, and failure behaviour.
 Compose-backed integration tests cover health and SNS-to-SQS-to-consumer wiring.
 Test that stored command evidence and logs do not disclose protected identifiers,
-addresses, templates, or personalisation. Analytics event and entity IDs are
-logged as required by the analytics contract above.
+addresses, unsafe arbitrary template text, or personalisation. Validated analytics
+event/entity IDs and configured UUID templates are logged as required above.
 
 ## Initial deployment and cutover
 
@@ -414,6 +463,11 @@ messages. Existing suppressed evidence is terminal when a
 future cutover is configured. A non-null cutover requires explicit UTC and the
 same millisecond precision as command identity. Other configuration requirements
 remain in force.
+
+Before activation verify the deployed MO-562 response/version contract, Read credential/ACL,
+effective template configuration/access and queue redrive policies. Null-cutover
+submission production supports terminal dry-run suppression; live shared handover
+remains gated on both submission and cancellation producers.
 
 After the producer dry run, configure Notifications with a future X first.
 Verify every active Notifications host has X and the post-cutover delivery

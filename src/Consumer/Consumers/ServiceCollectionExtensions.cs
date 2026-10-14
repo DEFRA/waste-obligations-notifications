@@ -1,4 +1,5 @@
 using Amazon.SQS;
+using Defra.WasteObligations.Consumer.Submission;
 using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -17,8 +18,10 @@ public static class ServiceCollectionExtensions
             .AddOptions<AnalyticsEventConsumerOptions>()
             .Bind(configuration.GetRequiredSection(AnalyticsEventConsumerOptions.SectionName))
             .ValidateDataAnnotations()
+            .Validate(options => options.HasValidProcessingBudget, "Analytics receive timeout must exceed long polling and visibility must cover receive, read, publish, delete and headroom")
             .ValidateOnStart();
 
+        services.AddSubmittedEmailProducer(configuration);
         services.AddAWSService<IAmazonSQS>();
         services.AddHostedService<AnalyticsEventConsumer>();
 

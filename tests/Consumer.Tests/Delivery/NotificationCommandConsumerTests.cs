@@ -128,6 +128,9 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
                 Arg.Any<CancellationToken>()
             );
+        Assert.Contains(logger.Messages, message => message.Contains(
+            suppressed ? cutover is null ? "suppressed because cutover is unset" : "suppressed because action precedes cutover"
+                : "email request accepted by Notify; acceptance recorded", StringComparison.Ordinal));
         await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
         await notify
             .Received(suppressed ? 0 : 1)
@@ -549,12 +552,15 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 Arg.Any<CancellationToken>()
             )
             .Returns(SuppressionClaimResult.TerminalDuplicate);
-        var subject = CreateSubject(sqsClient, recordStore);
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        var subject = CreateSubject(sqsClient, recordStore, logger);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
         await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
+        Assert.Contains(logger.Messages, message => message.Contains("terminal-duplicate (matching terminal evidence; no new request or suppression)", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("would request", StringComparison.Ordinal));
         await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
     }
 

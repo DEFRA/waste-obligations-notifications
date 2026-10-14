@@ -76,6 +76,17 @@ API.
 
 ## Consequences
 
+The submitted-email analytics producer enriches a `submission.created` event by
+reading its declaration before using the shared publisher. One declaration
+creation represents one submitted-email intention: use the declaration identity
+for the intended-email key, independent of event ID and later entity versions.
+A transport replay or later Accepted/Cancelled state must preserve the original
+first Submitted audit and stored submission fields. The delivery evidence remains
+the replay boundary; this adds no producer ledger or alternate send mechanism.
+The current read/version and mapping contracts are in
+[service behaviour](../service-behaviour.md). Cancellation production and shared
+cutover activation retain their separate scope.
+
 The delivery service is source-independent: it does not consume a raw analytics
 event as its email-delivery contract and does not choose recipients, templates,
 or notification policy. Analytics-driven and scheduled components publish the

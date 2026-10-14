@@ -120,6 +120,57 @@ processing/visibility budget. Analytics immediately receives again after success
 or an empty response. `AnalyticsEventConsumer__PollIntervalSeconds` controls
 cancellation-aware error backoff only; SQS long polling supplies idle waiting.
 
+Submitted compliance-declaration events read the persisted declaration and publish
+commands using the first `Submitted` audit and stored organisation fields. Latest
+Accepted/Cancelled status does not replace the original submission. Outside-scope
+events retain their existing acknowledgement behaviour. Read/validation/publication
+failures are retried; an acknowledgement failure after confirmed publication can
+cause a matching replay. Publication and Notify acceptance do not prove delivery.
+
+Analytics has a separate processing budget. `AnalyticsEventConsumer__ReceiveTimeoutSeconds`
+(default 30) must exceed its long poll. `ReadTimeoutSeconds` (20),
+`PublishTimeoutSeconds` (10), `DeleteTimeoutSeconds` (5) and `SafetyHeadroomSeconds`
+(10), plus receive time, must fit `VisibilityTimeoutSeconds` (90). These settings
+share the `AnalyticsEventConsumer__` environment prefix. Each receive requests
+explicit visibility; increasing batching requires a reviewed budget change.
+
+Configure `Submission__BaseAddress`, `Submission__ClientId` and
+`Submission__ClientSecret` for Waste Obligations Basic Read access. Disabled analytics
+needs no read credentials. Local development values are synthetic examples, not a
+running declaration API. `DeclarationRead` extended health checks connectivity only;
+validate the deployed Read ACL and MO-562 version/identity response before activation.
+
+The four overridable UUID mappings are:
+
+| Environment setting | Default template |
+| --- | --- |
+| `Submission__DirectEnglishTemplateId` | `5f64e3bd-d454-4a45-a9c6-9409bf940d7a` |
+| `Submission__DirectWelshTemplateId` | `b3223b0b-a467-40c1-9150-f78b76d11fd8` |
+| `Submission__SchemeEnglishTemplateId` | `b103685d-de8a-4ea9-abc8-d244ca26841b` |
+| `Submission__SchemeWelshTemplateId` | `95d8c2aa-a229-4ecb-9774-78ec06d0cbac` |
+
+Only persisted `GB-WLS` selects Welsh, and `ComplianceScheme` selects scheme.
+The five fields are integer `obligationYear` and strings `regulatorLeading`,
+`regulatorInline`, `regulatorEmail`, `user`. English regulator articles are `The `
+and `the `; Welsh preserves the stored regulator without articles. Original audit
+recipient/name/time take precedence over current actor, locale or submitter name.
+
+Publication logs connect safe analytics IDs to the opaque Notify reference, template,
+variant and original action time. Delivery logs distinguish null/before-cutover
+suppression, recorded Notify acceptance and terminal duplicate without claiming a
+new send for a duplicate. Retry warnings name a fixed stage/reason and acknowledge
+uncertain deletion accurately, without dependency text or PII. Existing metrics allow
+four bounded categories: `declaration-submitted-direct-en`,
+`declaration-submitted-direct-cy`, `declaration-submitted-scheme-en`,
+`declaration-submitted-scheme-cy`. Keep these in the deployed
+`NotificationCommandDelivery__DiagnosticNotificationTypes__0` (and subsequent indices)
+allowlist to distinguish variants.
+
+Use null cutover for the producer dry run: commands are published and terminally
+suppressed. Read ACL/deployed DTO, effective template overrides/account access and
+queue redrive policies remain activation prerequisites. Shared live handover remains
+gated on both submitted and cancellation producers.
+
 `NotificationCommandDelivery` is deployment-owned. Every host consumes commands
 after successful startup readiness; there is no command-processing enablement
 flag. Before deployment, provide the FIFO queue URL, optional cutover, distinct

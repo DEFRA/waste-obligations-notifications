@@ -3,6 +3,9 @@ using System.Text;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Consumers;
+using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Submission;
 using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -251,8 +254,35 @@ public class AnalyticsEventConsumerTests
                 }
             ),
             logger ?? new RecordingLogger<AnalyticsEventConsumer>(),
-            StartedApplication()
+            StartedApplication(),
+            new SubmittedEmailProducer(Substitute.For<IDeclarationReadClient>(), Options.Create(new SubmissionOptions())),
+            new NotificationCommandPublisher(sqsClient, DeliveryOptions(), new NotificationCommandDigest(DeliveryOptions())),
+            new NotificationCommandDigest(DeliveryOptions())
         );
+
+    private static IOptions<NotificationCommandDeliveryOptions> DeliveryOptions() => Options.Create(new NotificationCommandDeliveryOptions
+    {
+        QueueUrl = "http://sqs.test/commands.fifo",
+        EvidenceDigestSecret = "test-evidence-secret",
+        RecipientLaneSecret = "test-lane-secret",
+    });
+
+    [Fact]
+    public async Task Stop_WhenBackingOffFailedEvent_ShouldStopWithoutAnotherReceive()
+    {
+        var sqsClient = Substitute.For<IAmazonSQS>();
+        sqsClient.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<ReceiveMessageResponse>(new HttpRequestException("unsafe dependency detail")));
+        var logger = new RecordingLogger<AnalyticsEventConsumer>();
+        using var subject = CreateSubject(sqsClient, logger, pollIntervalSeconds: 300);
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Analytics event consumption failed", TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.False(subject.ExecuteTask!.IsFaulted);
+        await sqsClient.Received(1).ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>());
+        Assert.Empty(logger.Exceptions);
+    }
 
     private static ApplicationStartup StartedApplication()
     {
