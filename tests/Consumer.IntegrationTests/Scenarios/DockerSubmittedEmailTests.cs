@@ -27,7 +27,9 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
             Options.Create(
                 new NotificationCommandDeliveryOptions
                 {
+                    QueueUrl = "http://floci:4566/000000000000/submission_e2e_commands.fifo",
                     EvidenceDigestSecret = "development-only-evidence-digest-secret",
+                    RecipientLaneSecret = "development-only-recipient-lane-secret",
                 }
             )
         );

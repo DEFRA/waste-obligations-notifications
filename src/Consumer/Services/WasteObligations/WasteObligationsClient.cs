@@ -9,7 +9,11 @@ namespace Defra.WasteObligations.Consumer.Services.WasteObligations;
 public sealed class WasteObligationsClient(HttpClient client, IOptions<WasteObligationsOptions> options)
     : IWasteObligationsClient
 {
-    public async Task<Declaration?> ReadDeclaration(Guid organisationId, string declarationId, CancellationToken cancellationToken)
+    public async Task<Declaration?> ReadDeclaration(
+        Guid organisationId,
+        string declarationId,
+        CancellationToken cancellationToken
+    )
     {
         using var request = CreateRequest($"organisations/{organisationId:D}/compliance-declarations/{declarationId}");
         using var response = await client.SendAsync(request, cancellationToken);

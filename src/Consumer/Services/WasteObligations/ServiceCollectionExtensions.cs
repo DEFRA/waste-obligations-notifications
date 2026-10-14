@@ -36,8 +36,11 @@ public static class ServiceCollectionExtensions
                             address.Path += "/";
 
                         client.BaseAddress = address.Uri;
+                        client.DefaultRequestVersion =
+                            address.Scheme == Uri.UriSchemeHttps ? HttpVersion.Version20 : HttpVersion.Version11;
                     }
 
+                    client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
                     client.Timeout = Timeout.InfiniteTimeSpan;
                 }
             )
@@ -59,3 +62,4 @@ public static class ServiceCollectionExtensions
         return services;
     }
 }
+using System.Net;
