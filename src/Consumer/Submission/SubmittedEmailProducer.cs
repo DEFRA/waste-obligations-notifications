@@ -22,18 +22,16 @@ public sealed class SubmittedEmailProducer(IWasteObligationsClient reader, IOpti
             if (declaration is null)
                 throw new SubmissionProcessingException("declaration-not-found");
 
-            var organisation = declaration.Organisation
-                ?? throw new SubmissionProcessingException(InvalidDeclarationData);
-            if (
-                Required(declaration.Id) != declarationId
-                || Guid.Parse(Required(organisation.Id)) != organisationId
-            )
+            var organisation =
+                declaration.Organisation ?? throw new SubmissionProcessingException(InvalidDeclarationData);
+            if (Required(declaration.Id) != declarationId || Guid.Parse(Required(organisation.Id)) != organisationId)
                 throw new SubmissionProcessingException("identity-mismatch");
 
             if (declaration.Version < eventVersion)
                 throw new SubmissionProcessingException("older-declaration-version");
 
-            var submitted = declaration.Audit?.First(entry => Required(entry.Action) == "Submitted")
+            var submitted =
+                declaration.Audit?.First(entry => Required(entry.Action) == "Submitted")
                 ?? throw new SubmissionProcessingException(InvalidDeclarationData);
             var user = submitted.User ?? throw new SubmissionProcessingException(InvalidDeclarationData);
             if (!UtcTimestamp.TryParse(Required(submitted.Timestamp), out var actionTime))

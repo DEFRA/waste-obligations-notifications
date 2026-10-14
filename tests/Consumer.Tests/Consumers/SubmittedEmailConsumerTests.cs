@@ -6,9 +6,9 @@ using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
-using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -49,7 +49,9 @@ public sealed class SubmittedEmailConsumerTests
     [InlineData("1.2")]
     [InlineData("1.4")]
     [InlineData("2.0")]
-    public async Task WhenSubmissionSchemaContainsOrganisationIdentity_ShouldPublishForMinimumAndLaterSchemas(string schema)
+    public async Task WhenSubmissionSchemaContainsOrganisationIdentity_ShouldPublishForMinimumAndLaterSchemas(
+        string schema
+    )
     {
         using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
         var body = Event("01JZ8RXBMTY2K15SJB3PCFN3D5")
@@ -563,7 +565,13 @@ public sealed class SubmittedEmailConsumerTests
                 BaseAddress = new Uri("https://declarations.test/"),
                 Timeout = Timeout.InfiniteTimeSpan,
             };
-            _producer = new SubmittedEmailProducer(new WasteObligationsClient(_http, Options.Create(new WasteObligationsOptions { Username = "test-client", Password = "test-secret" })), submission);
+            _producer = new SubmittedEmailProducer(
+                new WasteObligationsClient(
+                    _http,
+                    Options.Create(new WasteObligationsOptions { Username = "test-client", Password = "test-secret" })
+                ),
+                submission
+            );
             var delivery = Options.Create(
                 new NotificationCommandDeliveryOptions
                 {

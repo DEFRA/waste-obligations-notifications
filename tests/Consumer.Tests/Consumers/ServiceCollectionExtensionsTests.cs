@@ -1,8 +1,8 @@
 using System.Net;
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Consumers;
-using Defra.WasteObligations.Consumer.Submission;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
+using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -142,7 +142,10 @@ public class ServiceCollectionExtensionsTests
         configuration["WasteObligations:BaseAddress"] = address;
         using var handler = new ReadHandler(request =>
         {
-            Assert.Equal(address.StartsWith("https", StringComparison.Ordinal) ? HttpVersion.Version20 : HttpVersion.Version11, request.Version);
+            Assert.Equal(
+                address.StartsWith("https", StringComparison.Ordinal) ? HttpVersion.Version20 : HttpVersion.Version11,
+                request.Version
+            );
             Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, request.VersionPolicy);
             Assert.Equal(
                 $"/api/organisations/{organisationId}/compliance-declarations/{declarationId}",
@@ -177,12 +180,17 @@ public class ServiceCollectionExtensionsTests
     {
         using var handler = new ReadHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
         var services = new ServiceCollection().AddAnalyticsEventConsumer(CreateConfiguration());
-        services.AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
+        services
+            .AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
             .ConfigurePrimaryHttpMessageHandler(() => handler);
         using var provider = services.BuildServiceProvider();
         var reader = provider.GetRequiredService<IWasteObligationsClient>();
 
-        var result = await reader.ReadDeclaration(Guid.NewGuid(), "65f1f6570bb08052a8a27b01", TestContext.Current.CancellationToken);
+        var result = await reader.ReadDeclaration(
+            Guid.NewGuid(),
+            "65f1f6570bb08052a8a27b01",
+            TestContext.Current.CancellationToken
+        );
 
         Assert.Null(result);
         Assert.Equal(1, handler.RequestCount);
@@ -201,12 +209,17 @@ public class ServiceCollectionExtensionsTests
                 : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"version\":1}") };
         });
         var services = new ServiceCollection().AddAnalyticsEventConsumer(CreateConfiguration());
-        services.AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
+        services
+            .AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
             .ConfigurePrimaryHttpMessageHandler(() => handler);
         using var provider = services.BuildServiceProvider();
         var reader = provider.GetRequiredService<IWasteObligationsClient>();
 
-        var result = await reader.ReadDeclaration(Guid.NewGuid(), "65f1f6570bb08052a8a27b01", TestContext.Current.CancellationToken);
+        var result = await reader.ReadDeclaration(
+            Guid.NewGuid(),
+            "65f1f6570bb08052a8a27b01",
+            TestContext.Current.CancellationToken
+        );
 
         Assert.Equal(1, result!.Version);
         Assert.Equal(2, handler.RequestCount);
@@ -229,23 +242,31 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(logs));
         services.AddAnalyticsEventConsumer(CreateConfiguration());
-        services.AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
+        services
+            .AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
             .ConfigurePrimaryHttpMessageHandler(() => handler);
         using var provider = services.BuildServiceProvider();
         var reader = provider.GetRequiredService<IWasteObligationsClient>();
 
-        var result = await reader.ReadDeclaration(Guid.NewGuid(), "65f1f6570bb08052a8a27b01", TestContext.Current.CancellationToken);
+        var result = await reader.ReadDeclaration(
+            Guid.NewGuid(),
+            "65f1f6570bb08052a8a27b01",
+            TestContext.Current.CancellationToken
+        );
         provider.GetRequiredService<ILogger<AnalyticsEventConsumer>>().LogWarning("Fixed analytics retry diagnostic");
 
         Assert.Equal(1, result!.Version);
         Assert.Equal(2, handler.RequestCount);
         Assert.Contains("Fixed analytics retry diagnostic", logs.Messages);
-        Assert.All(logs.Messages, message =>
-        {
-            Assert.DoesNotContain("secret-basic-password", message, StringComparison.Ordinal);
-            Assert.DoesNotContain("private-recipient@example.test", message, StringComparison.Ordinal);
-            Assert.DoesNotContain("cdec_private-id", message, StringComparison.Ordinal);
-        });
+        Assert.All(
+            logs.Messages,
+            message =>
+            {
+                Assert.DoesNotContain("secret-basic-password", message, StringComparison.Ordinal);
+                Assert.DoesNotContain("private-recipient@example.test", message, StringComparison.Ordinal);
+                Assert.DoesNotContain("cdec_private-id", message, StringComparison.Ordinal);
+            }
+        );
     }
 
     private sealed class CapturedLogs : ILoggerProvider
@@ -259,12 +280,18 @@ public class ServiceCollectionExtensionsTests
 
     private sealed class CapturedLogger(List<string> messages) : ILogger
     {
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
 
         public bool IsEnabled(LogLevel logLevel) => true;
 
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-            messages.Add(formatter(state, exception) + exception);
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        ) => messages.Add(formatter(state, exception) + exception);
     }
 
     private static string RepositoryRoot()

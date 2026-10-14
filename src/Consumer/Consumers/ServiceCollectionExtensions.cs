@@ -1,6 +1,6 @@
 using Amazon.SQS;
-using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
+using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 

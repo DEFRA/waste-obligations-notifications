@@ -1,4 +1,3 @@
-
 namespace Defra.WasteObligations.Consumer.Submission;
 
 public static class ServiceCollectionExtensions
