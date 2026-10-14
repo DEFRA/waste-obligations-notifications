@@ -563,3 +563,59 @@ deployment deadline. Metrics and startup logging remain available for diagnosis.
 Suppression recorded with an unset cutover remains terminal after configuration,
 including an action at or after the new boundary. Delete matching replays without
 changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.
+
+## Submitted-email verification and local Notify credentials
+
+The isolated integration suite exercises all four direct/scheme and English/Welsh
+variants from hosted analytics consumption through the real declaration client,
+producer, SQS publisher, command consumer and Mongo claims to the Compose Notify
+HTTP fixture. Only the external declaration HTTP response is controlled. The
+scenarios verify the original audit recipient, configured template and all five
+personalisation fields, acceptance before successful deletion, and terminal replay
+suppression. Compose continues to use its generated dummy key and fixture endpoint.
+
+The four `NotifySubmissionPreviewTests` use the genuine GOV.UK Notify preview API;
+they render synthetic personalisation without sending emails. They read the
+`Submission` template mappings from `src/Consumer/appsettings.json` and process
+`Submission__DirectEnglishTemplateId`, `Submission__DirectWelshTemplateId`,
+`Submission__SchemeEnglishTemplateId` and `Submission__SchemeWelshTemplateId`
+overrides. PR, main and hotfix checks supply the Actions `GOVUKNOTIFY_APIKEY` secret
+only to a dedicated preview process. Required mode fails on missing credentials,
+provider errors or incorrect rendering, and a fresh TRX guard requires all four
+cases to execute and pass with zero skips. Publishing depends on that build job.
+Normal isolated integration execution in CI has no provider key and explicitly
+skips previews; it does not substitute for the required step.
+
+For local previews, create the Git-ignored root `.env` (also excluded from Docker
+build inputs) with a placeholder replaced privately:
+
+```dotenv
+GovukNotify_ApiKey=replace-with-your-private-notify-key
+```
+
+Direct preview execution reads this fallback when `GOVUKNOTIFY_APIKEY` is absent:
+
+```bash
+dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build -- --filter-class '*NotifySubmissionPreviewTests'
+```
+
+Without a key, local previews report explicit skips. To require provider execution
+locally, set `NOTIFY_PREVIEWS_REQUIRED=1`. No credential, rendered email or provider
+exception text is written to the preview reports.
+
+For a local consumer using real Notify, the wrapper supplies the same `.env`
+fallback independently to `GOVUKNOTIFY_APIKEY` and `Notify__ApiKey`. Explicit
+process destination settings take precedence, including an explicitly empty value
+and uppercase `NOTIFY__APIKEY`. The wrapper parses only the named value; it never
+executes `.env` content or prints the key. Pass any command and arguments after it:
+
+```bash
+Notify__BaseAddress=https://api.notifications.service.gov.uk \
+  python3 scripts/with-notify-env.py dotnet run --project src/Consumer
+```
+
+Set that base address explicitly when using Development settings, which otherwise
+point at the isolated fixture. This command is a real Notify runtime configuration;
+normal `docker compose up --build -d --wait` remains the isolated fixture setup.
+Declaration Read access, effective template access, cutover and both producer
+readiness remain deployment prerequisites described above.

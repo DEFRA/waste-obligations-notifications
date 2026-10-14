@@ -499,3 +499,19 @@ deployment deadline. Metrics and startup logging remain available for diagnosis.
 Suppression recorded with an unset cutover remains terminal after configuration,
 including an action at or after the new boundary. Delete matching replays without
 changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.
+
+The four submitted-email variants have isolated full-path integration coverage from
+analytics consumption through declaration HTTP enrichment, confirmed FIFO command
+publication, Mongo-backed delivery and the outgoing Compose Notify HTTP request.
+Successful acceptance/deletion and handled replay are verified against independently
+chosen expected recipient, template and five personalisation values.
+
+PR, main and hotfix validation additionally requires four genuine Notify submission
+previews, using configured mappings and synthetic personalisation. Previewing sends
+no email. Missing credentials, provider failure, incorrect rendering, missing report,
+skipped cases or fewer than four passed cases fail required validation and block
+publishing. Isolated service tests keep the fixture endpoint and dummy key. Local
+previews explicitly skip without credentials; the ignored root `.env` convention
+and runtime fallback wrapper are documented in the README. Preview credentials and
+rendered content are never reported. Preview success proves template access/rendering
+for those effective mappings, rather than deployed Read ACL or cutover readiness.

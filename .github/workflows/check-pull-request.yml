@@ -91,6 +91,14 @@ jobs:
           docker compose up -d --wait
           dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj --no-restore
           dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/Consumer.IntegrationTests -- --report-trx --report-trx-filename Consumer.IntegrationTests.trx
+      - name: Require all four Notify submission previews
+        env:
+          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
+          NOTIFY_PREVIEWS_REQUIRED: "1"
+        run: |
+          rm -rf TestResults/NotifySubmissionPreviews
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifySubmissionPreviews -- --filter-class '*NotifySubmissionPreviewTests' --report-trx --report-trx-filename NotifySubmissionPreviews.trx
+          python3 scripts/require-notify-previews.py TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx
       - name: Docker Compose logs
         if: ${{ always() && steps.prerequisites.outcome == 'success' }}
         run: docker compose logs
@@ -220,6 +228,7 @@ jobs:
             printf '| CI report download | %s |\n' "$(step_summary "$REPORT_DOWNLOAD")"
             printf '| Unit tests | %s |\n' "$(test_summary TestResults/Consumer.Tests/Consumer.Tests.trx)"
             printf '| Integration tests | %s |\n' "$(test_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx)"
+            printf '| Notify submission previews | %s |\n' "$(test_summary TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx)"
             printf '| Docker image | %s |\n' "$(step_summary "$DOCKER_BUILD")"
             printf '| Trivy (Critical/High) | %s |\n' "$(trivy_summary)"
             echo
