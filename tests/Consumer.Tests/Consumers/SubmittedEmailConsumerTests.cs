@@ -48,7 +48,15 @@ public sealed class SubmittedEmailConsumerTests
     {
         const string eventId = "private-event-correlation";
         const string entityId = "private-entity-correlation";
-        var body = JsonSerializer.Serialize(new { eventId, entityId, entity = "organisation", eventType = "updated" });
+        var body = JsonSerializer.Serialize(
+            new
+            {
+                eventId,
+                entityId,
+                entity = "organisation",
+                eventType = "updated",
+            }
+        );
         using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
 
         await fixture.Run([body]);
@@ -58,14 +66,19 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Equal(1, fixture.Deletions);
         var consumed = Assert.Single(
             fixture.Logs.Entries,
-            entry => entry.Level == LogLevel.Information && entry.Text.StartsWith("Consumed analytics event", StringComparison.Ordinal)
+            entry =>
+                entry.Level == LogLevel.Information
+                && entry.Text.StartsWith("Consumed analytics event", StringComparison.Ordinal)
         );
         Assert.Matches("Consumed analytics event opaque-[0-9a-f]{16} for opaque-[0-9a-f]{16}", consumed.Text);
-        Assert.All(fixture.Logs.Entries, entry =>
-        {
-            Assert.DoesNotContain(eventId, entry.Text, StringComparison.Ordinal);
-            Assert.DoesNotContain(entityId, entry.Text, StringComparison.Ordinal);
-        });
+        Assert.All(
+            fixture.Logs.Entries,
+            entry =>
+            {
+                Assert.DoesNotContain(eventId, entry.Text, StringComparison.Ordinal);
+                Assert.DoesNotContain(entityId, entry.Text, StringComparison.Ordinal);
+            }
+        );
         fixture.AssertSafeLogs();
     }
 

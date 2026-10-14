@@ -255,9 +255,8 @@ public sealed class AnalyticsEventConsumer(
 
     private static string OpaqueCorrelation(string value) =>
         "opaque-"
-            + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)))[
-                ..16
-            ];
+        + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..16];
+
     private void EnsureRemaining(long receivedAt, int budgetSeconds)
     {
         if (
