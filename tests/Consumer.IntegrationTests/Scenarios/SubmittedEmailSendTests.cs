@@ -83,16 +83,18 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
         // A handled replay is acknowledged after confirmed publication. FIFO may deduplicate
         // that publication; a fresh transport copy also exercises the Mongo terminal guard.
         await fixture.SendAnalytics();
-        await WaitForAsync(() =>
+        await WaitForAsync(async () =>
         {
             Assert.Equal(2, fixture.Sqs.AnalyticsDeletions);
             Assert.Equal(2, fixture.Sqs.ConfirmedPublications);
-            return Task.CompletedTask;
+            await fixture.AssertQueuesEmpty();
         });
+        Assert.Single(await fixture.NotifyRequests());
+        var deletedBeforeTransportCopy = fixture.Sqs.CommandDeletions;
         await fixture.SendPublishedReplay();
         await WaitForAsync(async () =>
         {
-            Assert.Equal(2, fixture.Sqs.CommandDeletions);
+            Assert.Equal(deletedBeforeTransportCopy + 1, fixture.Sqs.CommandDeletions);
             await fixture.AssertQueuesEmpty();
         });
         Assert.Single(await fixture.NotifyRequests());
