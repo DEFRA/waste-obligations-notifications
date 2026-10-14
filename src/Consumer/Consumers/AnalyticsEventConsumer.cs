@@ -83,7 +83,10 @@ public sealed class AnalyticsEventConsumer(
                         if (version < 1 || organisationId == Guid.Empty)
                             throw new SubmissionProcessingException("invalid-event-data");
                         EnsureRemaining(receivedAt, options.Value.ReadTimeoutSeconds + options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
+                        // The enclosing catch reads this stage when the awaited read throws, before the next assignment.
+#pragma warning disable S1854 // Sonar does not account for this exceptional path through the awaited call.
                         stage = "read-declaration";
+#pragma warning restore S1854
                         var command = await RunBounded(token => producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token), options.Value.ReadTimeoutSeconds, stoppingToken);
                         EnsureRemaining(receivedAt, options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
                         stage = "publish-command";
@@ -127,13 +130,21 @@ public sealed class AnalyticsEventConsumer(
 
     private void LogRetry(Exception exception, string stage, bool published, string? messageId, string? eventId, string? entityId)
     {
-        var reason = exception is SubmissionProcessingException failure ? failure.Reason
-            : exception is TimeoutException or OperationCanceledException ? "dependency-timeout"
-            : stage == "publish-command" ? "unconfirmed-publication"
-            : stage is "parse" or "validate-event" ? "invalid-event-data"
-            : "dependency-failure";
-        logger.LogWarning("Analytics processing at {Stage} failed ({FailureReason}) for SQS message {MessageId}, event {EventId}, entity {EntityId}: {AcknowledgementStatus}", stage, reason, messageId, eventId, entityId,
-            stage == "acknowledge" ? (published ? "command publication confirmed; acknowledgement uncertain; possible queue retry" : "acknowledgement uncertain; possible queue retry") : "not acknowledged; left for queue retry/recovery");
+        var reason = exception switch
+        {
+            SubmissionProcessingException failure => failure.Reason,
+            TimeoutException or OperationCanceledException => "dependency-timeout",
+            _ when stage == "publish-command" => "unconfirmed-publication",
+            _ when stage is "parse" or "validate-event" => "invalid-event-data",
+            _ => "dependency-failure",
+        };
+        var acknowledgementStatus = (stage, published) switch
+        {
+            ("acknowledge", true) => "command publication confirmed; acknowledgement uncertain; possible queue retry",
+            ("acknowledge", false) => "acknowledgement uncertain; possible queue retry",
+            _ => "not acknowledged; left for queue retry/recovery",
+        };
+        logger.LogWarning("Analytics processing at {Stage} failed ({FailureReason}) for SQS message {MessageId}, event {EventId}, entity {EntityId}: {AcknowledgementStatus}", stage, reason, messageId, eventId, entityId, acknowledgementStatus);
     }
 
     private static string? SafeEventId(string value) => value.Length == 26 && value[0] <= '7'
@@ -142,9 +153,15 @@ public sealed class AnalyticsEventConsumer(
     private static string? SafeEntityId(string value) => value.Length == 29
         && value.StartsWith("cdec_", StringComparison.Ordinal) && value[5..].All(char.IsAsciiHexDigit) ? value : null;
 
-    private static string? SafeTransportCorrelation(string? value) => string.IsNullOrEmpty(value) ? null
-        : Guid.TryParseExact(value, "D", out var id) ? id.ToString("D")
-        : "opaque-" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..16];
+    private static string? SafeTransportCorrelation(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return null;
+        if (Guid.TryParseExact(value, "D", out var id))
+            return id.ToString("D");
+
+        return "opaque-" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..16];
+    }
 
     private void EnsureRemaining(long receivedAt, int budgetSeconds)
     {

@@ -164,17 +164,17 @@ public sealed class SubmittedEmailConsumerTests
 
     private static HttpResponseMessage Response(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
 
-    private static string Event(string eventId) => $$"""
-        {"eventId":"{{eventId}}","entityId":"cdec_{{DeclarationId}}","entity":"compliance_declaration","eventType":"submission.created","operation":"create","version":1,"schemaVersion":"compliance_declaration_v1.3","occurredAt":"2026-09-20T11:12:13Z","recordedAt":"2026-09-20T11:12:14Z","sequence":1,"after":{"organisation":{"id":"{{OrganisationId}}","businessCountry":"GB-WLS","registrationType":"ComplianceScheme","regulator":"Current changed regulator","regulatorEmail":"current-regulator@example.test"}},"actor":"2be16023-4b2b-4e6c-960a-0bc1a1162a84"}
+    private static string Event(string eventId) => $$$"""
+        {"eventId":"{{{eventId}}}","entityId":"cdec_{{{DeclarationId}}}","entity":"compliance_declaration","eventType":"submission.created","operation":"create","version":1,"schemaVersion":"compliance_declaration_v1.3","occurredAt":"2026-09-20T11:12:13Z","recordedAt":"2026-09-20T11:12:14Z","sequence":1,"after":{"organisation":{"id":"{{{OrganisationId}}}","businessCountry":"GB-WLS","registrationType":"ComplianceScheme","regulator":"Current changed regulator","regulatorEmail":"current-regulator@example.test"}},"actor":"2be16023-4b2b-4e6c-960a-0bc1a1162a84"}
         """;
 
-    private static string Declaration(string registration = "DirectProducer", string country = "GB-ENG", int version = 1, string status = "Cancelled") => $$"""
+    private static string Declaration(string registration = "DirectProducer", string country = "GB-ENG", int version = 1, string status = "Cancelled") => $$$"""
         {
-          "id":"{{DeclarationId}}", "version": {{version}}, "status":"{{status}}", "obligationYear":2025,
-          "organisation":{"id":"{{OrganisationId}}","businessCountry":"{{country}}","registrationType":"{{registration}}","regulator":"Stored Regulator","regulatorEmail":"stored-regulator@example.test"},
+          "id":"{{{DeclarationId}}}", "version": {{{version}}}, "status":"{{{status}}}", "obligationYear":2025,
+          "organisation":{"id":"{{{OrganisationId}}}","businessCountry":"{{{country}}}","registrationType":"{{{registration}}}","regulator":"Stored Regulator","regulatorEmail":"stored-regulator@example.test"},
           "submitterName":"changed current submitter", "updated":"2026-10-01T12:00:00Z",
           "audit":[
-            {"action":"Submitted","timestamp":"2026-09-20T11:12:13Z","user":{"id":"5bd7385b-042e-464a-bba8-b9dcc0dce677","email":"{{PrivateEmail}}","name":"{{PrivateName}}","locale":"cy"}},
+            {"action":"Submitted","timestamp":"2026-09-20T11:12:13Z","user":{"id":"5bd7385b-042e-464a-bba8-b9dcc0dce677","email":"{{{PrivateEmail}}}","name":"{{{PrivateName}}}","locale":"cy"}},
             {"action":"Submitted","timestamp":"2026-09-21T12:00:00Z","user":{"id":"09fec9fa-b22d-4571-869e-68c5e0effe3e","email":"second-submit@example.test","name":"second submitter","locale":"en"}},
             {"action":"Cancelled","timestamp":"2026-10-01T12:00:00Z","user":{"id":"2be16023-4b2b-4e6c-960a-0bc1a1162a84","email":"later-actor@example.test","name":"later actor","locale":"en"}}
           ]

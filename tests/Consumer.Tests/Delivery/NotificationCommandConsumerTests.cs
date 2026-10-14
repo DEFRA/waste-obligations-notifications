@@ -128,9 +128,13 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
                 Arg.Any<CancellationToken>()
             );
-        Assert.Contains(logger.Messages, message => message.Contains(
-            suppressed ? cutover is null ? "suppressed because cutover is unset" : "suppressed because action precedes cutover"
-                : "email request accepted by Notify; acceptance recorded", StringComparison.Ordinal));
+        var outcomeMeaning = (suppressed, cutover) switch
+        {
+            (true, null) => "suppressed because cutover is unset",
+            (true, _) => "suppressed because action precedes cutover",
+            _ => "email request accepted by Notify; acceptance recorded",
+        };
+        Assert.Contains(logger.Messages, message => message.Contains(outcomeMeaning, StringComparison.Ordinal));
         await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
         await notify
             .Received(suppressed ? 0 : 1)

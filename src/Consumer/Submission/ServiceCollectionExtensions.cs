@@ -18,7 +18,12 @@ public static class ServiceCollectionExtensions
         {
             var options = provider.GetRequiredService<IOptions<SubmissionOptions>>().Value;
             if (options.HasReadAccess)
-                client.BaseAddress = new Uri(options.BaseAddress.TrimEnd('/') + "/");
+            {
+                var address = new UriBuilder(options.BaseAddress);
+                if (!address.Path.EndsWith('/'))
+                    address.Path += "/";
+                client.BaseAddress = address.Uri;
+            }
             client.Timeout = Timeout.InfiniteTimeSpan;
         }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
         {

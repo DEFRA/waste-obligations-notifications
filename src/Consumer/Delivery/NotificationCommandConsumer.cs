@@ -137,10 +137,13 @@ public sealed class NotificationCommandConsumer(
             logger.LogInformation(
                 "Notification command outcome {Outcome} ({OutcomeMeaning}) for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}, template {TemplateId}, action {ActionOccurredAtUtc}",
                 outcome,
-                outcome == "terminal-duplicate" ? "matching terminal evidence; no new request or suppression"
-                    : outcome == NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue() ? "email request accepted by Notify; acceptance recorded"
-                    : cutover is null ? "would request this template; suppressed because cutover is unset"
-                    : "would request this template; suppressed because action precedes cutover",
+                outcome switch
+                {
+                    "terminal-duplicate" => "matching terminal evidence; no new request or suppression",
+                    _ when outcome == NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue() => "email request accepted by Notify; acceptance recorded",
+                    _ when cutover is null => "would request this template; suppressed because cutover is unset",
+                    _ => "would request this template; suppressed because action precedes cutover",
+                },
                 notificationType,
                 message.MessageId,
                 reference,
