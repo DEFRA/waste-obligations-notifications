@@ -24,6 +24,7 @@ services:
       - compose/aws.env
     environment:
       AWS_ENDPOINT_URL: http://floci:4566
+      AnalyticsEventConsumer__ProcessingEnabled: "false"
     volumes:
       - ./compose/init-floci.sh:/compose/init-floci.sh:ro
     healthcheck:

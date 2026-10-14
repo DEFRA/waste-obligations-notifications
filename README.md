@@ -140,6 +140,10 @@ Configure `Submission__BaseAddress`, `Submission__ClientId` and
 needs no read credentials. Local development values are synthetic examples, not a
 running declaration API. `DeclarationRead` extended health checks connectivity only;
 validate the deployed Read ACL and MO-562 version/identity response before activation.
+Compose disables analytics processing because it has no declaration API. The
+submitted-email integration scenarios enable their own hosts with a controlled
+declaration endpoint. To process submissions locally, configure a reachable Read
+service and explicitly enable analytics processing.
 
 The four overridable UUID mappings are:
 
