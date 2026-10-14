@@ -45,7 +45,7 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Equal(template, command.TemplateId);
         Assert.Equal(type, command.NotificationType);
         Assert.Equal("original-private@example.test", command.EmailAddress);
-        Assert.Equal(DateTimeOffset.Parse("2026-09-20T11:12:13Z"), command.ActionOccurredAtUtc);
+        Assert.Equal(new DateTimeOffset(2026, 9, 20, 11, 12, 13, TimeSpan.Zero), command.ActionOccurredAtUtc);
         var values = command.Personalisation;
         Assert.Equal(5, values.EnumerateObject().Count());
         Assert.Equal(JsonValueKind.Number, values.GetProperty("obligationYear").ValueKind);
