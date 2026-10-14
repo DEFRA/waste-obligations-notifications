@@ -87,25 +87,12 @@ public class ServiceCollectionExtensionsTests
     [InlineData("BaseAddress", "ftp://declarations.test")]
     [InlineData("BaseAddress", "http://declarations.test")]
     [InlineData("ClientId", "test:read-client")]
-    public void WhenReadAccessConfigurationIsInvalid_ShouldRejectAnalyticsStartup(string property, string value)
-    {
-        var configuration = CreateConfiguration();
-        configuration[$"Submission:{property}"] = value;
-        var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
-        using var provider = services.BuildServiceProvider();
-
-        Assert.Throws<OptionsValidationException>(() =>
-            provider.GetRequiredService<IOptions<SubmissionOptions>>().Value
-        );
-    }
-
-    [Theory]
     [InlineData("DirectEnglishTemplateId", "not-a-template-uuid")]
     [InlineData("DirectEnglishTemplateId", "{5f64e3bd-d454-4a45-a9c6-9409bf940d7a}")]
     [InlineData("DirectWelshTemplateId", "not-a-template-uuid")]
     [InlineData("SchemeEnglishTemplateId", "not-a-template-uuid")]
     [InlineData("SchemeWelshTemplateId", "not-a-template-uuid")]
-    public void WhenAnyTemplateMappingIsInvalid_ShouldRejectConfiguration(string property, string value)
+    public void WhenSubmissionConfigurationIsInvalid_ShouldRejectAnalyticsStartup(string property, string value)
     {
         var configuration = CreateConfiguration();
         configuration[$"Submission:{property}"] = value;
