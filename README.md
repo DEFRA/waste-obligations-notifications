@@ -171,6 +171,10 @@ four bounded categories: `declaration-submitted-direct-en`,
 `NotificationCommandDelivery__DiagnosticNotificationTypes__0` (and subsequent indices)
 allowlist to distinguish variants.
 
+Finalize all template overrides before the producer dry run begins. Changing a
+template ID for an existing submission creates an immutable-command conflict on
+replay, which follows the command retry/DLQ policy.
+
 Use null cutover for the producer dry run: commands are published and terminally
 suppressed. Read ACL/deployed DTO, effective template overrides/account access and
 queue redrive policies remain activation prerequisites. Shared live handover remains
@@ -586,8 +590,9 @@ they render synthetic personalisation without sending emails. They read the
 `Submission__SchemeEnglishTemplateId` and `Submission__SchemeWelshTemplateId`
 overrides. PR, main and hotfix checks supply the Actions `GOVUKNOTIFY_APIKEY` secret
 only to a dedicated preview process. Required previews also apply to Dependabot PRs;
-repository administrators must provision `GOVUKNOTIFY_APIKEY` in both the Actions
-and Dependabot secret stores. Missing credentials keep this required gate red;
+repository administrators must provision a GOV.UK Notify **test-type API key** as
+`GOVUKNOTIFY_APIKEY` in both the Actions and Dependabot secret stores. Never use
+a live sending key for previews; PR-built tests and dependencies can read this environment value. Missing credentials keep this required gate red;
 there is no bot exemption. The PR image build and Trivy scan run before previews,
 so missing credentials or provider outages do not prevent those security checks.
 Required mode fails on missing credentials,

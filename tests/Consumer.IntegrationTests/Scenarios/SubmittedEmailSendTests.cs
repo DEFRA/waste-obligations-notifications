@@ -155,7 +155,7 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                     ["AnalyticsEventConsumer:ProcessingEnabled"] = "true",
                     ["AnalyticsEventConsumer:WaitTimeSeconds"] = "0",
                     ["AnalyticsEventConsumer:PollIntervalSeconds"] = "1",
-                    ["Submission:BaseAddress"] = "http://declaration.test/",
+                    ["Submission:BaseAddress"] = "https://declaration.test/",
                     ["Submission:ClientId"] = "isolated-reader",
                     ["Submission:ClientSecret"] = "synthetic-read-secret",
                     ["Submission:DirectEnglishTemplateId"] = "11111111-1111-4111-8111-111111111111",

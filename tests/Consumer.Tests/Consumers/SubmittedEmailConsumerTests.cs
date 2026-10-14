@@ -492,7 +492,7 @@ public sealed class SubmittedEmailConsumerTests
                 {
                     ClientId = "test-client",
                     ClientSecret = "test-secret",
-                    BaseAddress = "http://declarations.test",
+                    BaseAddress = "https://declarations.test",
                     DirectEnglishTemplateId = DirectEnglish,
                     DirectWelshTemplateId = DirectWelsh,
                     SchemeEnglishTemplateId = SchemeEnglish,
@@ -510,7 +510,7 @@ public sealed class SubmittedEmailConsumerTests
                 )
             )
             {
-                BaseAddress = new Uri("http://declarations.test/"),
+                BaseAddress = new Uri("https://declarations.test/"),
                 Timeout = Timeout.InfiniteTimeSpan,
             };
             _producer = new SubmittedEmailProducer(new DeclarationReadClient(_http, submission), submission);

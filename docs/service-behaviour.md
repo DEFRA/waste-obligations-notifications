@@ -431,14 +431,18 @@ existing bounded delivery metrics, with no second metric mechanism.
 - `AnalyticsEventConsumer__QueueUrl` and
   `AnalyticsEventConsumer__ProcessingEnabled` are deployment-owned settings.
 - `Submission__BaseAddress`, `Submission__ClientId` and `Submission__ClientSecret`
-  provide deployment-owned Read access. Credentials and an HTTP service address
-  are validated when analytics processing is enabled. The extended DeclarationRead
+  provide deployment-owned Read access. Credentials and an HTTPS service address (HTTP is allowed only for loopback
+  local development and fixtures) are validated when analytics processing is enabled. The extended DeclarationRead
   health check checks service health only; it does not prove the Read ACL or DTO contract.
   Disabled analytics requires no declaration-read credentials.
 - The four `Submission__DirectEnglishTemplateId`, `Submission__DirectWelshTemplateId`,
   `Submission__SchemeEnglishTemplateId`, `Submission__SchemeWelshTemplateId` values
-  are validated as nonempty UUIDs at startup. Checked-in defaults are not proof of
+  are validated as nonempty canonical hyphenated UUIDs at startup. Checked-in defaults are not proof of
   deployed Notify account access or effective overrides.
+- Required provider previews need a GOV.UK Notify test-type API key, never a live
+  sending key. Provision `GOVUKNOTIFY_APIKEY` in both Actions and Dependabot secret
+  stores before enabling the required gate. PR-built tests and updated dependencies
+  can read this environment value; a missing key fails the required preview check.
 - Command queue, MongoDB, cutover, digest-secret and `AWS_EMF_*` settings are also
   deployment-owned. Local Compose settings do not configure CDP environments.
   Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
@@ -467,6 +471,11 @@ messages. Existing suppressed evidence is terminal when a
 future cutover is configured. A non-null cutover requires explicit UTC and the
 same millisecond precision as command identity. Other configuration requirements
 remain in force.
+
+Finalize all template overrides before the null-cutover producer dry run starts.
+Template ID is part of immutable command evidence: changing it for a replayed
+submission creates a conflict that is retried into the command DLQ, even when the
+original command was suppressed. Preserve those mappings while replays remain possible.
 
 Before activation verify the deployed MO-562 response/version contract, Read credential/ACL,
 effective template configuration/access and queue redrive policies. Null-cutover

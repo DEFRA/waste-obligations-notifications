@@ -24,12 +24,12 @@ public sealed record SubmissionOptions
 
     public bool HasValidTemplates =>
         new[] { DirectEnglishTemplateId, DirectWelshTemplateId, SchemeEnglishTemplateId, SchemeWelshTemplateId }.All(
-            value => Guid.TryParse(value, out var id) && id != Guid.Empty
+            value => Guid.TryParseExact(value, "D", out var id) && id != Guid.Empty
         );
 
     public bool HasReadAccess =>
         Uri.TryCreate(BaseAddress, UriKind.Absolute, out var uri)
-        && uri.Scheme is "http" or "https"
+        && (uri.Scheme == "https" || (uri.Scheme == "http" && uri.IsLoopback))
         && Configured(ClientId)
         && Configured(ClientSecret)
         && !ClientId.Contains(':');

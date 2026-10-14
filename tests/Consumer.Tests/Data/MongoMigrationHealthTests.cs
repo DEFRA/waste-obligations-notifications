@@ -107,7 +107,7 @@ public sealed class MongoMigrationHealthTests
                 ["AWS_EMF_ENABLED"] = "false",
             }
         );
-        builder.Configuration["Submission:BaseAddress"] = "http://declarations.test";
+        builder.Configuration["Submission:BaseAddress"] = "https://declarations.test";
         builder.Configuration["Submission:ClientId"] = "test-read-client";
         builder.Configuration["Submission:ClientSecret"] = "test-read-secret";
         builder.Services.AddAnalyticsEventConsumer(builder.Configuration);

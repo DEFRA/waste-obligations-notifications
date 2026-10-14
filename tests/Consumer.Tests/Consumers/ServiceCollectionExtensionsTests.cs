@@ -85,6 +85,7 @@ public class ServiceCollectionExtensionsTests
 
     [Theory]
     [InlineData("BaseAddress", "ftp://declarations.test")]
+    [InlineData("BaseAddress", "http://declarations.test")]
     [InlineData("ClientId", "test:read-client")]
     public void WhenReadAccessConfigurationIsInvalid_ShouldRejectAnalyticsStartup(string property, string value)
     {
@@ -99,14 +100,15 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Theory]
-    [InlineData("DirectEnglishTemplateId")]
-    [InlineData("DirectWelshTemplateId")]
-    [InlineData("SchemeEnglishTemplateId")]
-    [InlineData("SchemeWelshTemplateId")]
-    public void WhenAnyTemplateMappingIsInvalid_ShouldRejectConfiguration(string property)
+    [InlineData("DirectEnglishTemplateId", "not-a-template-uuid")]
+    [InlineData("DirectEnglishTemplateId", "{5f64e3bd-d454-4a45-a9c6-9409bf940d7a}")]
+    [InlineData("DirectWelshTemplateId", "not-a-template-uuid")]
+    [InlineData("SchemeEnglishTemplateId", "not-a-template-uuid")]
+    [InlineData("SchemeWelshTemplateId", "not-a-template-uuid")]
+    public void WhenAnyTemplateMappingIsInvalid_ShouldRejectConfiguration(string property, string value)
     {
         var configuration = CreateConfiguration();
-        configuration[$"Submission:{property}"] = "not-a-template-uuid";
+        configuration[$"Submission:{property}"] = value;
         var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
         using var provider = services.BuildServiceProvider();
 
@@ -134,8 +136,9 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Theory]
-    [InlineData("http://declarations.test/api")]
-    [InlineData("http://declarations.test/api/")]
+    [InlineData("http://localhost/api")]
+    [InlineData("https://declarations.test/api")]
+    [InlineData("https://declarations.test/api/")]
     public async Task WhenReadBaseAddressHasPathPrefix_ShouldPreservePrefixInRegisteredClient(string address)
     {
         const string organisationId = "fbf1ba88-cd09-42f6-aad5-0ddfc29e5765";
@@ -204,7 +207,7 @@ public class ServiceCollectionExtensionsTests
     {
         var values = new Dictionary<string, string?>
         {
-            ["Submission:BaseAddress"] = "http://declarations.test",
+            ["Submission:BaseAddress"] = "https://declarations.test",
             ["Submission:ClientId"] = "test-read-client",
             ["Submission:ClientSecret"] = "test-read-secret",
             [$"{AnalyticsEventConsumerOptions.SectionName}:QueueUrl"] =

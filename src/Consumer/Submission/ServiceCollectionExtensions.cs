@@ -14,10 +14,10 @@ public static class ServiceCollectionExtensions
             .AddOptions<SubmissionOptions>()
             .Bind(configuration.GetSection(SubmissionOptions.SectionName))
             .ValidateDataAnnotations()
-            .Validate(options => options.HasValidTemplates, "Submission template mappings must be nonempty UUIDs")
+            .Validate(options => options.HasValidTemplates, "Submission template mappings must be nonempty hyphenated UUIDs")
             .Validate<IOptions<AnalyticsEventConsumerOptions>>(
                 (options, analytics) => !analytics.Value.ProcessingEnabled || options.HasReadAccess,
-                "Submission service read address and credentials must be configured when analytics processing is enabled"
+                "Submission read access requires HTTPS or loopback HTTP and configured credentials when analytics processing is enabled"
             )
             .ValidateOnStart();
         services
