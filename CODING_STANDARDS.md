@@ -36,6 +36,11 @@ preferences. See [CONTRIBUTING.md](CONTRIBUTING.md) for formatting and checks.
 ## Validation, configuration, and security
 
 - Validate external input at the boundary before acting on it.
+- Match the producer's documented required and optional fields. Preserve legacy
+  fallbacks for nullable values; do not add acceptance constraints solely to make
+  identifiers safe to log. Use opaque correlation for unfamiliar identifiers.
+- Check JSON value kinds before reading scope discriminators. Unrelated events
+  must retain their acknowledgement behaviour without downstream reads or effects.
 - Pass cancellation through asynchronous work; distinguish cancellation from
   processing failures.
 - Use structured logging for identifiers and outcomes. Never log credentials,
@@ -43,6 +48,10 @@ preferences. See [CONTRIBUTING.md](CONTRIBUTING.md) for formatting and checks.
   content, or full third-party responses.
 - Use a typed options record with a section name, data annotations,
   `ValidateDataAnnotations()`, and `ValidateOnStart()` for configuration.
+- Validate configuration against the downstream API's accepted representation,
+  not a broader parser: Notify template IDs use nonempty hyphenated UUIDs.
+  Credential-bearing declaration reads require HTTPS except for local loopback
+  fixtures. Receive loops that immediately poll again must enforce an idle wait.
 - Keep credentials out of source control. Keep deployed settings as placeholders
   and local Compose values in development settings.
 - Add health checks for deployed dependencies. Keep routine health checks light
@@ -69,6 +78,11 @@ use underscore-separated names with a leading underscore, such as
   a shared field solely to satisfy an analyzer.
 - Keep unit tests focused on one behaviour. Use NSubstitute and local helpers
   where that keeps a test self-contained.
+- Cover both sides of event scope boundaries, including malformed discriminator
+  types, and assert acknowledgement plus absence of downstream effects. Include
+  nullable-field fallbacks where they are part of the upstream contract.
+- Protect named template mappings with explicit expected defaults from options and
+  checked-in configuration. Override-only tests cannot detect swapped defaults.
 - Keep integration tests focused on real dependency wiring; use unit tests for
   detailed parsing and formatting checks. See [CONTRIBUTING.md](CONTRIBUTING.md)
   for the integration-test structure.
