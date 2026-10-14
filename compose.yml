@@ -92,5 +92,49 @@ services:
       retries: 10
       start_period: 5s
 
+  submission-wiremock:
+    image: sheyenrath/wiremock.net:latest@sha256:3d31cf7a0b5ad8062c9ae1ba36e2355f4b034102bd980217d5003da5effd0e10
+    ports:
+      - '8087:80'
+      - '8088:8085'
+
+  submission-consumer:
+    build: .
+    network_mode: service:submission-wiremock
+    depends_on:
+      submission-wiremock:
+        condition: service_started
+      floci-init:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      notify-fixture:
+        condition: service_healthy
+    env_file:
+      - compose/aws.env
+    entrypoint: [/bin/sh, /fixtures/start-consumer.sh]
+    volumes:
+      - notify-fixture-credentials:/fixtures:ro
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8085
+      AWS_ENDPOINT_URL: http://floci:4566
+      AnalyticsEventConsumer__ProcessingEnabled: "true"
+      AnalyticsEventConsumer__QueueUrl: http://floci:4566/000000000000/submission_e2e_analytics_queue
+      NotificationCommandDelivery__QueueUrl: http://floci:4566/000000000000/submission_e2e_commands.fifo
+      NotificationCommandDelivery__EmailDeliveryCutoverUtc: "2026-09-01T00:00:00Z"
+      CommandDlqAdministration__QueueUrl: http://floci:4566/000000000000/submission_e2e_commands_dlq.fifo
+      Mongo__DatabaseName: submission-docker-e2e
+      WasteObligations__BaseAddress: http://localhost/
+      WasteObligations__Username: isolated-docker-reader
+      WasteObligations__Password: synthetic-docker-read-secret
+      Notify__BaseAddress: http://localhost/
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
 volumes:
   notify-fixture-credentials:
