@@ -186,7 +186,15 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 Assert.Equal(damaged, await records.Find(filter).SingleAsync(token));
             }
             var optionalDamage = acceptedRecord.DeepClone().AsBsonDocument;
-            foreach (var field in new[] { "resendOfNotificationKey", "notifyNotificationId", "notifyReference", "templateId" })
+            foreach (
+                var field in new[]
+                {
+                    "resendOfNotificationKey",
+                    "notifyNotificationId",
+                    "notifyReference",
+                    "templateId",
+                }
+            )
                 optionalDamage[field] = 42;
             optionalDamage["acceptedAtUtc"] = "not-a-date";
             optionalDamage["leaseExpiresAtUtc"] = new BsonDateTime(long.MaxValue);

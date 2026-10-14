@@ -254,16 +254,18 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             ("actionOccurredAtUtc", new BsonDateTime(long.MinValue)),
         ];
         var damaged = damage
-            .Select((entry, index) =>
-            {
-                var record = Record(index + 10, "v1:damaged-" + index, "delivery-accepted", time.AddDays(1));
-                if (entry.Value is null)
-                    record.Remove(entry.Field);
-                else
-                    record[entry.Field] = entry.Value;
+            .Select(
+                (entry, index) =>
+                {
+                    var record = Record(index + 10, "v1:damaged-" + index, "delivery-accepted", time.AddDays(1));
+                    if (entry.Value is null)
+                        record.Remove(entry.Field);
+                    else
+                        record[entry.Field] = entry.Value;
 
-                return record;
-            })
+                    return record;
+                }
+            )
             .ToArray();
         try
         {
@@ -316,7 +318,12 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             Assert.Empty(arrayLookup.Records);
             foreach (var index in Enumerable.Range(0, damage.Length))
                 Assert.Empty(
-                    (await reader.Search(new DeliveryRecordSearchQuery { NotificationKey = "v1:damaged-" + index }, token)).Records
+                    (
+                        await reader.Search(
+                            new DeliveryRecordSearchQuery { NotificationKey = "v1:damaged-" + index },
+                            token
+                        )
+                    ).Records
                 );
             Assert.Equal(before, await records.Find(new BsonDocument()).Sort("{_id:1}").ToListAsync(token));
         }
