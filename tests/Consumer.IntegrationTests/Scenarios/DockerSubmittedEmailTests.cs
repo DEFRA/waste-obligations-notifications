@@ -15,6 +15,8 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 public sealed class DockerSubmittedEmailTests : IntegrationTestBase
 {
     private const string TemplateId = "5f64e3bd-d454-4a45-a9c6-9409bf940d7a";
+    private static readonly string[] s_getMethods = ["GET"];
+    private static readonly string[] s_postMethods = ["POST"];
 
     [Fact]
     public async Task WhenSubmissionIsPublishedToTopic_ShouldSendEmailThroughDockerConsumer()
@@ -81,7 +83,7 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
                 readMapping,
                 new
                 {
-                    Methods = new[] { "GET" },
+                    Methods = s_getMethods,
                     Path = Exact(readPath),
                     Headers = new[]
                     {
@@ -98,7 +100,7 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
             await Stub(
                 wireMock,
                 notifyMapping,
-                new { Methods = new[] { "POST" }, Path = Exact("/v2/notifications/email") },
+                new { Methods = s_postMethods, Path = Exact("/v2/notifications/email") },
                 new
                 {
                     id = Guid.NewGuid(),
