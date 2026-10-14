@@ -27,23 +27,30 @@ public class AnalyticsEventConsumerTests
         var receivedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var deleted = false;
         var sqsClient = Substitute.For<IAmazonSQS>();
-        sqsClient.DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>()).Returns(_ =>
-        {
-            deleted = true;
-
-            return new DeleteMessageResponse();
-        });
-        sqsClient.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>()).Returns(
-            _ => Task.FromResult(new ReceiveMessageResponse { Messages = hasMessage ? [CreateMessage(Body())] : [] }),
-            call =>
+        sqsClient
+            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
+            .Returns(_ =>
             {
-                Assert.Equal(1, call.Arg<ReceiveMessageRequest>().MaxNumberOfMessages);
-                Assert.Equal(hasMessage, deleted);
-                receivedAgain.TrySetResult();
+                deleted = true;
 
-                return WaitForCancellation(call.Arg<CancellationToken>());
-            }
-        );
+                return new DeleteMessageResponse();
+            });
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(
+                _ =>
+                    Task.FromResult(
+                        new ReceiveMessageResponse { Messages = hasMessage ? [CreateMessage(Body())] : [] }
+                    ),
+                call =>
+                {
+                    Assert.Equal(1, call.Arg<ReceiveMessageRequest>().MaxNumberOfMessages);
+                    Assert.Equal(hasMessage, deleted);
+                    receivedAgain.TrySetResult();
+
+                    return WaitForCancellation(call.Arg<CancellationToken>());
+                }
+            );
         using var subject = CreateSubject(sqsClient, pollIntervalSeconds: 300);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
@@ -62,24 +69,30 @@ public class AnalyticsEventConsumerTests
         var sqsClient = Substitute.For<IAmazonSQS>();
         var receives = 0;
         var startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
-        sqsClient.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>()).Returns(call =>
-        {
-            var count = Interlocked.Increment(ref receives);
-            if (count == 1)
-                return Task.FromException<ReceiveMessageResponse>(timeout
-                    ? new OperationCanceledException("unsafe dependency detail")
-                    : new InvalidOperationException("unsafe dependency detail"));
-            if (count == 2)
+        sqsClient
+            .ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
             {
-                Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(0.9));
+                var count = Interlocked.Increment(ref receives);
+                if (count == 1)
+                    return Task.FromException<ReceiveMessageResponse>(
+                        timeout
+                            ? new OperationCanceledException("unsafe dependency detail")
+                            : new InvalidOperationException("unsafe dependency detail")
+                    );
+                if (count == 2)
+                {
+                    Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(0.9));
 
-                return Task.FromResult(new ReceiveMessageResponse { Messages = [CreateMessage(Body())] });
-            }
+                    return Task.FromResult(new ReceiveMessageResponse { Messages = [CreateMessage(Body())] });
+                }
 
-            return WaitForCancellation(call.Arg<CancellationToken>());
-        });
-        sqsClient.DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
-            .Returns(new DeleteMessageResponse()).AndDoes(_ => deleted.TrySetResult());
+                return WaitForCancellation(call.Arg<CancellationToken>());
+            });
+        sqsClient
+            .DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>())
+            .Returns(new DeleteMessageResponse())
+            .AndDoes(_ => deleted.TrySetResult());
         var logger = new RecordingLogger<AnalyticsEventConsumer>();
         using var subject = CreateSubject(sqsClient, logger);
 
@@ -214,7 +227,10 @@ public class AnalyticsEventConsumerTests
         await logger.WaitForMessage("Analytics event consumption failed", TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
-        Assert.Contains(logger.Messages, message => message == "Analytics event consumption failed (InvalidOperationException)");
+        Assert.Contains(
+            logger.Messages,
+            message => message == "Analytics event consumption failed (InvalidOperationException)"
+        );
     }
 
     private static AnalyticsEventConsumer CreateSubject(

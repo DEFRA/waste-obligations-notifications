@@ -66,11 +66,16 @@ public sealed class AnalyticsEventConsumer(
             }
             catch (Exception exception)
             {
-                logger.LogError("Analytics event consumption failed ({ExceptionType})", exception.GetType().Name);
+                LogFailure(exception);
                 await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
             }
-
         }
+    }
+
+    private void LogFailure(Exception exception)
+    {
+        // Dependency exception text can contain personal data.
+        logger.LogError("Analytics event consumption failed ({ExceptionType})", exception.GetType().Name);
     }
 
     private static AnalyticsEvent ReadMessage(Message message)
