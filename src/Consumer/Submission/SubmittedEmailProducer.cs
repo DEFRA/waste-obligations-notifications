@@ -6,17 +6,28 @@ namespace Defra.WasteObligations.Consumer.Submission;
 
 public sealed class SubmittedEmailProducer(IDeclarationReadClient reader, IOptions<SubmissionOptions> options)
 {
-    public async Task<NotificationCommand> Create(Guid organisationId, string declarationId, int eventVersion, CancellationToken cancellationToken)
+    public async Task<NotificationCommand> Create(
+        Guid organisationId,
+        string declarationId,
+        int eventVersion,
+        CancellationToken cancellationToken
+    )
     {
         var declaration = await reader.Read(organisationId, declarationId, cancellationToken);
         try
         {
             var organisation = declaration.GetProperty("organisation");
-            if (Required(declaration, "id") != declarationId || Guid.Parse(Required(organisation, "id")) != organisationId)
+            if (
+                Required(declaration, "id") != declarationId
+                || Guid.Parse(Required(organisation, "id")) != organisationId
+            )
                 throw new SubmissionProcessingException("identity-mismatch");
             if (declaration.GetProperty("version").GetInt32() < eventVersion)
                 throw new SubmissionProcessingException("older-declaration-version");
-            var submitted = declaration.GetProperty("audit").EnumerateArray().First(entry => Required(entry, "action") == "Submitted");
+            var submitted = declaration
+                .GetProperty("audit")
+                .EnumerateArray()
+                .First(entry => Required(entry, "action") == "Submitted");
             var user = submitted.GetProperty("user");
             if (!UtcTimestamp.TryParse(Required(submitted, "timestamp"), out var actionTime))
                 throw new SubmissionProcessingException("invalid-declaration-data");
@@ -40,21 +51,33 @@ public sealed class SubmittedEmailProducer(IDeclarationReadClient reader, IOptio
                 $"declaration-submitted-{(scheme ? "scheme" : "direct")}-{(welsh ? "cy" : "en")}",
                 Required(user, "email"),
                 template,
-                JsonSerializer.SerializeToElement(new
-                {
-                    obligationYear = year,
-                    regulatorLeading = welsh ? regulator : $"The {regulator}",
-                    regulatorInline = welsh ? regulator : $"the {regulator}",
-                    regulatorEmail = Required(organisation, "regulatorEmail"),
-                    user = Required(user, "name"),
-                })
+                JsonSerializer.SerializeToElement(
+                    new
+                    {
+                        obligationYear = year,
+                        regulatorLeading = welsh ? regulator : $"The {regulator}",
+                        regulatorInline = welsh ? regulator : $"the {regulator}",
+                        regulatorEmail = Required(organisation, "regulatorEmail"),
+                        user = Required(user, "name"),
+                    }
+                )
             ).NormaliseRecipient();
             command.Validate();
 
             return command;
         }
-        catch (SubmissionProcessingException) { throw; }
-        catch (Exception exception) when (exception is InvalidOperationException or KeyNotFoundException or FormatException or InvalidDataException or OverflowException)
+        catch (SubmissionProcessingException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+            when (exception
+                    is InvalidOperationException
+                        or KeyNotFoundException
+                        or FormatException
+                        or InvalidDataException
+                        or OverflowException
+            )
         {
             throw new SubmissionProcessingException("invalid-declaration-data");
         }

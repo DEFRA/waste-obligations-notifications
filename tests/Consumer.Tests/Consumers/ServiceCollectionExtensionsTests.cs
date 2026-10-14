@@ -56,7 +56,9 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
         using var provider = services.BuildServiceProvider();
 
-        Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<SubmissionOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<SubmissionOptions>>().Value
+        );
     }
 
     [Theory]
@@ -71,7 +73,9 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
         using var provider = services.BuildServiceProvider();
 
-        Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<SubmissionOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<SubmissionOptions>>().Value
+        );
     }
 
     [Theory]
@@ -87,7 +91,9 @@ public class ServiceCollectionExtensionsTests
         var services = new ServiceCollection().AddAnalyticsEventConsumer(configuration);
         using var provider = services.BuildServiceProvider();
 
-        Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<AnalyticsEventConsumerOptions>>().Value);
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<AnalyticsEventConsumerOptions>>().Value
+        );
     }
 
     private static IConfiguration CreateConfiguration()

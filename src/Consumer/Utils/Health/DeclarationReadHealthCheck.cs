@@ -10,7 +10,10 @@ public sealed class DeclarationReadHealthCheck(
     IDeclarationReadClient client
 ) : IHealthCheck
 {
-    public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context,
+        CancellationToken cancellationToken = default
+    )
     {
         if (!options.Value.ProcessingEnabled)
             return HealthCheckResult.Healthy("Analytics processing disabled");

@@ -20,7 +20,11 @@ public static class ServiceCollectionExtensions
 
         var healthChecks = services
             .AddHealthChecks()
-            .AddCheck<DeclarationReadHealthCheck>("DeclarationRead", tags: [WebApplicationExtensions.Extended], timeout: TimeSpan.FromSeconds(10))
+            .AddCheck<DeclarationReadHealthCheck>(
+                "DeclarationRead",
+                tags: [WebApplicationExtensions.Extended],
+                timeout: TimeSpan.FromSeconds(10)
+            )
             .AddCheck<EmailDeliveryCutoverHealthCheck>(
                 "EmailDeliveryCutover",
                 tags: [WebApplicationExtensions.Extended]

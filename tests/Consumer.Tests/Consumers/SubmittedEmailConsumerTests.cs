@@ -27,20 +27,87 @@ public sealed class SubmittedEmailConsumerTests
     private const string SchemeWelsh = "44444444-4444-4444-8444-444444444444";
 
     [Theory]
-    [InlineData("DirectProducer", "GB-ENG", DirectEnglish, "declaration-submitted-direct-en", "The Stored Regulator", "the Stored Regulator", 1, "Submitted")]
-    [InlineData("DirectProducer", "GB-WLS", DirectWelsh, "declaration-submitted-direct-cy", "Stored Regulator", "Stored Regulator", 2, "Cancelled")]
-    [InlineData("ComplianceScheme", "GB-ENG", SchemeEnglish, "declaration-submitted-scheme-en", "The Stored Regulator", "the Stored Regulator", 3, "Accepted")]
-    [InlineData("ComplianceScheme", "GB-WLS", SchemeWelsh, "declaration-submitted-scheme-cy", "Stored Regulator", "Stored Regulator", 1, "Accepted")]
-    [InlineData("DirectProducer", "GB-NIR", DirectEnglish, "declaration-submitted-direct-en", "The Stored Regulator", "the Stored Regulator", 1, "Submitted")]
-    [InlineData("OtherRegistration", "GB-SCT", DirectEnglish, "declaration-submitted-direct-en", "The Stored Regulator", "the Stored Regulator", 1, "Submitted")]
+    [InlineData(
+        "DirectProducer",
+        "GB-ENG",
+        DirectEnglish,
+        "declaration-submitted-direct-en",
+        "The Stored Regulator",
+        "the Stored Regulator",
+        1,
+        "Submitted"
+    )]
+    [InlineData(
+        "DirectProducer",
+        "GB-WLS",
+        DirectWelsh,
+        "declaration-submitted-direct-cy",
+        "Stored Regulator",
+        "Stored Regulator",
+        2,
+        "Cancelled"
+    )]
+    [InlineData(
+        "ComplianceScheme",
+        "GB-ENG",
+        SchemeEnglish,
+        "declaration-submitted-scheme-en",
+        "The Stored Regulator",
+        "the Stored Regulator",
+        3,
+        "Accepted"
+    )]
+    [InlineData(
+        "ComplianceScheme",
+        "GB-WLS",
+        SchemeWelsh,
+        "declaration-submitted-scheme-cy",
+        "Stored Regulator",
+        "Stored Regulator",
+        1,
+        "Accepted"
+    )]
+    [InlineData(
+        "DirectProducer",
+        "GB-NIR",
+        DirectEnglish,
+        "declaration-submitted-direct-en",
+        "The Stored Regulator",
+        "the Stored Regulator",
+        1,
+        "Submitted"
+    )]
+    [InlineData(
+        "OtherRegistration",
+        "GB-SCT",
+        DirectEnglish,
+        "declaration-submitted-direct-en",
+        "The Stored Regulator",
+        "the Stored Regulator",
+        1,
+        "Submitted"
+    )]
     public async Task WhenSubmitted_ShouldPublishOriginalPersistedEmailAndAcknowledge(
-        string registration, string country, string template, string type, string leading, string inline, int version, string status)
+        string registration,
+        string country,
+        string template,
+        string type,
+        string leading,
+        string inline,
+        int version,
+        string status
+    )
     {
-        using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration(registration, country, version, status))));
+        using var fixture = new Fixture(
+            (_, _) => Task.FromResult(Response(Declaration(registration, country, version, status)))
+        );
         await fixture.Run([Event("01JZ8RXBMTY2K15SJB3PCFN3D5")]);
 
         var request = Assert.Single(fixture.Publications);
-        var command = JsonSerializer.Deserialize<NotificationCommand>(request.MessageBody, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        var command = JsonSerializer.Deserialize<NotificationCommand>(
+            request.MessageBody,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        )!;
         Assert.Equal("compliance-declaration:65f1f6570bb08052a8a27b01:submitted:v1", command.IdempotencyKey);
         Assert.Equal(template, command.TemplateId);
         Assert.Equal(type, command.NotificationType);
@@ -58,7 +125,16 @@ public sealed class SubmittedEmailConsumerTests
         var read = Assert.Single(fixture.Reads);
         Assert.Equal($"/organisations/{OrganisationId}/compliance-declarations/{DeclarationId}", read.Path);
         Assert.Equal("Basic dGVzdC1jbGllbnQ6dGVzdC1zZWNyZXQ=", read.Authorization);
-        Assert.Contains(fixture.Logs.Entries, entry => entry.Level == LogLevel.Information && entry.Text.Contains("Published notification command", StringComparison.Ordinal) && entry.Text.Contains(fixture.Digest.CreateNotifyReference(command.IdempotencyKey), StringComparison.Ordinal));
+        Assert.Contains(
+            fixture.Logs.Entries,
+            entry =>
+                entry.Level == LogLevel.Information
+                && entry.Text.Contains("Published notification command", StringComparison.Ordinal)
+                && entry.Text.Contains(
+                    fixture.Digest.CreateNotifyReference(command.IdempotencyKey),
+                    StringComparison.Ordinal
+                )
+        );
         fixture.AssertSafeLogs();
     }
 
@@ -78,19 +154,34 @@ public sealed class SubmittedEmailConsumerTests
         {
             "older" => body.Replace("\"version\": 1", "\"version\": 0", StringComparison.Ordinal),
             "identity" => body.Replace(DeclarationId, "65f1f6570bb08052a8a27b02", StringComparison.Ordinal),
-            "organisation" => body.Replace(OrganisationId, "fbf1ba88-cd09-42f6-aad5-0ddfc29e5766", StringComparison.Ordinal),
+            "organisation" => body.Replace(
+                OrganisationId,
+                "fbf1ba88-cd09-42f6-aad5-0ddfc29e5766",
+                StringComparison.Ordinal
+            ),
             "audit" => body.Replace("Submitted", "Created", StringComparison.Ordinal),
             "country" => body.Replace("GB-ENG", "", StringComparison.Ordinal),
             "user" => body.Replace(PrivateName, "", StringComparison.Ordinal),
             "timestamp" => body.Replace("2026-09-20T11:12:13Z", "2026-09-20T11:12:13", StringComparison.Ordinal),
             _ => body,
         };
-        using var fixture = new Fixture((_, _) => Task.FromResult(fault == "not-found" ? new HttpResponseMessage(HttpStatusCode.NotFound) : Response(body)));
+        using var fixture = new Fixture(
+            (_, _) =>
+                Task.FromResult(
+                    fault == "not-found" ? new HttpResponseMessage(HttpStatusCode.NotFound) : Response(body)
+                )
+        );
         await fixture.Run([Event("01JZ8RXBMTY2K15SJB3PCFN3D5")]);
 
         Assert.Empty(fixture.Publications);
         Assert.Equal(0, fixture.Deletions);
-        Assert.Contains(fixture.Logs.Entries, entry => entry.Level == LogLevel.Warning && entry.Text.Contains(reason, StringComparison.Ordinal) && entry.Text.Contains("not acknowledged", StringComparison.Ordinal));
+        Assert.Contains(
+            fixture.Logs.Entries,
+            entry =>
+                entry.Level == LogLevel.Warning
+                && entry.Text.Contains(reason, StringComparison.Ordinal)
+                && entry.Text.Contains("not acknowledged", StringComparison.Ordinal)
+        );
         fixture.AssertSafeLogs();
     }
 
@@ -100,23 +191,29 @@ public sealed class SubmittedEmailConsumerTests
     public async Task WhenReadTimesOutOrDependencyCancels_ShouldBackOffAndPublishNextUsableEvent(bool timeout)
     {
         var count = 0;
-        using var fixture = new Fixture(async (_, token) =>
-        {
-            if (Interlocked.Increment(ref count) == 1)
+        using var fixture = new Fixture(
+            async (_, token) =>
             {
-                if (timeout)
-                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
-                throw new OperationCanceledException(UnsafeDependency);
-            }
+                if (Interlocked.Increment(ref count) == 1)
+                {
+                    if (timeout)
+                        await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                    throw new OperationCanceledException(UnsafeDependency);
+                }
 
-            return Response(Declaration());
-        });
+                return Response(Declaration());
+            }
+        );
         await fixture.Run([Event("01JZ8RXBMTY2K15SJB3PCFN3D5"), Event("01JZ8RXBMTY2K15SJB3PCFN3D6")]);
 
         Assert.Single(fixture.Publications);
         Assert.Equal(1, fixture.Deletions);
         Assert.True(fixture.ReceiveTimes[1] - fixture.ReceiveTimes[0] >= TimeSpan.FromSeconds(timeout ? 1.8 : 0.9));
-        Assert.Contains(fixture.Logs.Entries, entry => entry.Level == LogLevel.Warning && entry.Text.Contains("dependency-timeout", StringComparison.Ordinal));
+        Assert.Contains(
+            fixture.Logs.Entries,
+            entry =>
+                entry.Level == LogLevel.Warning && entry.Text.Contains("dependency-timeout", StringComparison.Ordinal)
+        );
         fixture.AssertSafeLogs();
     }
 
@@ -125,13 +222,32 @@ public sealed class SubmittedEmailConsumerTests
     [InlineData(true)]
     public async Task WhenPublicationOrAcknowledgementIsUnconfirmed_ShouldReportAccurateRetryState(bool acknowledgement)
     {
-        using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())), failPublish: !acknowledgement, failDelete: acknowledgement);
+        using var fixture = new Fixture(
+            (_, _) => Task.FromResult(Response(Declaration())),
+            failPublish: !acknowledgement,
+            failDelete: acknowledgement
+        );
         await fixture.Run([Event("01JZ8RXBMTY2K15SJB3PCFN3D5")]);
 
         Assert.Single(fixture.Publications);
         Assert.Equal(acknowledgement ? 1 : 0, fixture.Deletions);
-        Assert.Equal(acknowledgement, fixture.Logs.Entries.Any(entry => entry.Text.Contains("Published notification command", StringComparison.Ordinal)));
-        Assert.Contains(fixture.Logs.Entries, entry => entry.Level == LogLevel.Warning && entry.Text.Contains(acknowledgement ? "command publication confirmed; acknowledgement uncertain" : "unconfirmed-publication", StringComparison.Ordinal));
+        Assert.Equal(
+            acknowledgement,
+            fixture.Logs.Entries.Any(entry =>
+                entry.Text.Contains("Published notification command", StringComparison.Ordinal)
+            )
+        );
+        Assert.Contains(
+            fixture.Logs.Entries,
+            entry =>
+                entry.Level == LogLevel.Warning
+                && entry.Text.Contains(
+                    acknowledgement
+                        ? "command publication confirmed; acknowledgement uncertain"
+                        : "unconfirmed-publication",
+                    StringComparison.Ordinal
+                )
+        );
         fixture.AssertSafeLogs();
     }
 
@@ -153,33 +269,50 @@ public sealed class SubmittedEmailConsumerTests
     {
         const string privateIdentifier = "DISTINCTIVEPRIVATENAMEABCDE";
         using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
-        await fixture.Run([Event(privateIdentifier).Replace($"cdec_{DeclarationId}", privateIdentifier, StringComparison.Ordinal)]);
+        await fixture.Run([
+            Event(privateIdentifier).Replace($"cdec_{DeclarationId}", privateIdentifier, StringComparison.Ordinal),
+        ]);
 
         Assert.Empty(fixture.Reads);
         Assert.Empty(fixture.Publications);
         Assert.Equal(0, fixture.Deletions);
-        Assert.All(fixture.Logs.Entries, entry => Assert.DoesNotContain(privateIdentifier, entry.Text, StringComparison.Ordinal));
-        Assert.Contains(fixture.Logs.Entries, entry => entry.Level == LogLevel.Warning && entry.Text.Contains("invalid-event-data", StringComparison.Ordinal));
+        Assert.All(
+            fixture.Logs.Entries,
+            entry => Assert.DoesNotContain(privateIdentifier, entry.Text, StringComparison.Ordinal)
+        );
+        Assert.Contains(
+            fixture.Logs.Entries,
+            entry =>
+                entry.Level == LogLevel.Warning && entry.Text.Contains("invalid-event-data", StringComparison.Ordinal)
+        );
     }
 
-    private static HttpResponseMessage Response(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
+    private static HttpResponseMessage Response(string body) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(body) };
 
-    private static string Event(string eventId) => $$$"""
-        {"eventId":"{{{eventId}}}","entityId":"cdec_{{{DeclarationId}}}","entity":"compliance_declaration","eventType":"submission.created","operation":"create","version":1,"schemaVersion":"compliance_declaration_v1.3","occurredAt":"2026-09-20T11:12:13Z","recordedAt":"2026-09-20T11:12:14Z","sequence":1,"after":{"organisation":{"id":"{{{OrganisationId}}}","businessCountry":"GB-WLS","registrationType":"ComplianceScheme","regulator":"Current changed regulator","regulatorEmail":"current-regulator@example.test"}},"actor":"2be16023-4b2b-4e6c-960a-0bc1a1162a84"}
-        """;
+    private static string Event(string eventId) =>
+        $$$"""
+            {"eventId":"{{{eventId}}}","entityId":"cdec_{{{DeclarationId}}}","entity":"compliance_declaration","eventType":"submission.created","operation":"create","version":1,"schemaVersion":"compliance_declaration_v1.3","occurredAt":"2026-09-20T11:12:13Z","recordedAt":"2026-09-20T11:12:14Z","sequence":1,"after":{"organisation":{"id":"{{{OrganisationId}}}","businessCountry":"GB-WLS","registrationType":"ComplianceScheme","regulator":"Current changed regulator","regulatorEmail":"current-regulator@example.test"}},"actor":"2be16023-4b2b-4e6c-960a-0bc1a1162a84"}
+            """;
 
-    private static string Declaration(string registration = "DirectProducer", string country = "GB-ENG", int version = 1, string status = "Cancelled") => $$$"""
-        {
-          "id":"{{{DeclarationId}}}", "version": {{{version}}}, "status":"{{{status}}}", "obligationYear":2025,
-          "organisation":{"id":"{{{OrganisationId}}}","businessCountry":"{{{country}}}","registrationType":"{{{registration}}}","regulator":"Stored Regulator","regulatorEmail":"stored-regulator@example.test"},
-          "submitterName":"changed current submitter", "updated":"2026-10-01T12:00:00Z",
-          "audit":[
-            {"action":"Submitted","timestamp":"2026-09-20T11:12:13Z","user":{"id":"5bd7385b-042e-464a-bba8-b9dcc0dce677","email":"{{{PrivateEmail}}}","name":"{{{PrivateName}}}","locale":"cy"}},
-            {"action":"Submitted","timestamp":"2026-09-21T12:00:00Z","user":{"id":"09fec9fa-b22d-4571-869e-68c5e0effe3e","email":"second-submit@example.test","name":"second submitter","locale":"en"}},
-            {"action":"Cancelled","timestamp":"2026-10-01T12:00:00Z","user":{"id":"2be16023-4b2b-4e6c-960a-0bc1a1162a84","email":"later-actor@example.test","name":"later actor","locale":"en"}}
-          ]
-        }
-        """;
+    private static string Declaration(
+        string registration = "DirectProducer",
+        string country = "GB-ENG",
+        int version = 1,
+        string status = "Cancelled"
+    ) =>
+        $$$"""
+            {
+              "id":"{{{DeclarationId}}}", "version": {{{version}}}, "status":"{{{status}}}", "obligationYear":2025,
+              "organisation":{"id":"{{{OrganisationId}}}","businessCountry":"{{{country}}}","registrationType":"{{{registration}}}","regulator":"Stored Regulator","regulatorEmail":"stored-regulator@example.test"},
+              "submitterName":"changed current submitter", "updated":"2026-10-01T12:00:00Z",
+              "audit":[
+                {"action":"Submitted","timestamp":"2026-09-20T11:12:13Z","user":{"id":"5bd7385b-042e-464a-bba8-b9dcc0dce677","email":"{{{PrivateEmail}}}","name":"{{{PrivateName}}}","locale":"cy"}},
+                {"action":"Submitted","timestamp":"2026-09-21T12:00:00Z","user":{"id":"09fec9fa-b22d-4571-869e-68c5e0effe3e","email":"second-submit@example.test","name":"second submitter","locale":"en"}},
+                {"action":"Cancelled","timestamp":"2026-10-01T12:00:00Z","user":{"id":"2be16023-4b2b-4e6c-960a-0bc1a1162a84","email":"later-actor@example.test","name":"later actor","locale":"en"}}
+              ]
+            }
+            """;
 
     private sealed class Fixture : IDisposable
     {
@@ -195,44 +328,68 @@ public sealed class SubmittedEmailConsumerTests
         public Logs Logs { get; } = new();
         public NotificationCommandDigest Digest { get; }
 
-        public Fixture(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> read, bool failPublish = false, bool failDelete = false)
+        public Fixture(
+            Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> read,
+            bool failPublish = false,
+            bool failDelete = false
+        )
         {
             _failDelete = failDelete;
-            var submission = Options.Create(new SubmissionOptions
-            {
-                ClientId = "test-client", ClientSecret = "test-secret", BaseAddress = "http://declarations.test",
-                DirectEnglishTemplateId = DirectEnglish, DirectWelshTemplateId = DirectWelsh,
-                SchemeEnglishTemplateId = SchemeEnglish, SchemeWelshTemplateId = SchemeWelsh,
-            });
-            _http = new HttpClient(new Handler((request, token) =>
-            {
-                Reads.Add((request.RequestUri!.AbsolutePath, request.Headers.Authorization?.ToString()));
+            var submission = Options.Create(
+                new SubmissionOptions
+                {
+                    ClientId = "test-client",
+                    ClientSecret = "test-secret",
+                    BaseAddress = "http://declarations.test",
+                    DirectEnglishTemplateId = DirectEnglish,
+                    DirectWelshTemplateId = DirectWelsh,
+                    SchemeEnglishTemplateId = SchemeEnglish,
+                    SchemeWelshTemplateId = SchemeWelsh,
+                }
+            );
+            _http = new HttpClient(
+                new Handler(
+                    (request, token) =>
+                    {
+                        Reads.Add((request.RequestUri!.AbsolutePath, request.Headers.Authorization?.ToString()));
 
-                return read(request, token);
-            })) { BaseAddress = new Uri("http://declarations.test/"), Timeout = Timeout.InfiniteTimeSpan };
-            _producer = new SubmittedEmailProducer(new DeclarationReadClient(_http, submission), submission);
-            var delivery = Options.Create(new NotificationCommandDeliveryOptions
+                        return read(request, token);
+                    }
+                )
+            )
             {
-                QueueUrl = "http://sqs.test/commands.fifo", EvidenceDigestSecret = "test-evidence-secret", RecipientLaneSecret = "test-recipient-secret",
-            });
+                BaseAddress = new Uri("http://declarations.test/"),
+                Timeout = Timeout.InfiniteTimeSpan,
+            };
+            _producer = new SubmittedEmailProducer(new DeclarationReadClient(_http, submission), submission);
+            var delivery = Options.Create(
+                new NotificationCommandDeliveryOptions
+                {
+                    QueueUrl = "http://sqs.test/commands.fifo",
+                    EvidenceDigestSecret = "test-evidence-secret",
+                    RecipientLaneSecret = "test-recipient-secret",
+                }
+            );
             Digest = new NotificationCommandDigest(delivery);
             _publisher = new NotificationCommandPublisher(_sqs, delivery, Digest);
-            _sqs.SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>()).Returns(call =>
-            {
-                Publications.Add(call.Arg<SendMessageRequest>());
-                if (failPublish)
-                    throw new HttpRequestException(UnsafeDependency);
+            _sqs.SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>())
+                .Returns(call =>
+                {
+                    Publications.Add(call.Arg<SendMessageRequest>());
+                    if (failPublish)
+                        throw new HttpRequestException(UnsafeDependency);
 
-                return Task.FromResult(new SendMessageResponse { HttpStatusCode = HttpStatusCode.OK });
-            });
-            _sqs.DeleteMessageAsync("http://sqs.test/analytics", Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(_ =>
-            {
-                Deletions++;
-                if (_failDelete)
-                    throw new HttpRequestException(UnsafeDependency);
+                    return Task.FromResult(new SendMessageResponse { HttpStatusCode = HttpStatusCode.OK });
+                });
+            _sqs.DeleteMessageAsync("http://sqs.test/analytics", Arg.Any<string>(), Arg.Any<CancellationToken>())
+                .Returns(_ =>
+                {
+                    Deletions++;
+                    if (_failDelete)
+                        throw new HttpRequestException(UnsafeDependency);
 
-                return Task.FromResult(new DeleteMessageResponse());
-            });
+                    return Task.FromResult(new DeleteMessageResponse());
+                });
         }
 
         public async Task Run(string[] events)
@@ -240,25 +397,51 @@ public sealed class SubmittedEmailConsumerTests
             var complete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var received = 0;
             var startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
-            _sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>()).Returns(async call =>
-            {
-                Assert.Equal(1, call.Arg<ReceiveMessageRequest>().MaxNumberOfMessages);
-                Assert.Equal(90, call.Arg<ReceiveMessageRequest>().VisibilityTimeout);
-                ReceiveTimes.Add(System.Diagnostics.Stopwatch.GetElapsedTime(startedAt));
-                var index = received++;
-                if (index < events.Length)
-                    return new ReceiveMessageResponse { Messages = [new Message { Body = events[index], ReceiptHandle = $"receipt-{index}", MessageId = $"sqs-{index}" }] };
-                complete.TrySetResult();
-                await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+            _sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+                .Returns(async call =>
+                {
+                    Assert.Equal(1, call.Arg<ReceiveMessageRequest>().MaxNumberOfMessages);
+                    Assert.Equal(90, call.Arg<ReceiveMessageRequest>().VisibilityTimeout);
+                    ReceiveTimes.Add(System.Diagnostics.Stopwatch.GetElapsedTime(startedAt));
+                    var index = received++;
+                    if (index < events.Length)
+                        return new ReceiveMessageResponse
+                        {
+                            Messages =
+                            [
+                                new Message
+                                {
+                                    Body = events[index],
+                                    ReceiptHandle = $"receipt-{index}",
+                                    MessageId = $"sqs-{index}",
+                                },
+                            ],
+                        };
+                    complete.TrySetResult();
+                    await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
 
-                return new ReceiveMessageResponse();
-            });
+                    return new ReceiveMessageResponse();
+                });
             var startup = new ApplicationStartup();
             startup.MarkStarted();
-            using var consumer = new AnalyticsEventConsumer(_sqs, Options.Create(new AnalyticsEventConsumerOptions
-            {
-                QueueUrl = "http://sqs.test/analytics", ProcessingEnabled = true, WaitTimeSeconds = 0, ReadTimeoutSeconds = 1, PollIntervalSeconds = 1,
-            }), Logs, startup, _producer, _publisher, Digest);
+            using var consumer = new AnalyticsEventConsumer(
+                _sqs,
+                Options.Create(
+                    new AnalyticsEventConsumerOptions
+                    {
+                        QueueUrl = "http://sqs.test/analytics",
+                        ProcessingEnabled = true,
+                        WaitTimeSeconds = 0,
+                        ReadTimeoutSeconds = 1,
+                        PollIntervalSeconds = 1,
+                    }
+                ),
+                Logs,
+                startup,
+                _producer,
+                _publisher,
+                Digest
+            );
             await consumer.StartAsync(TestContext.Current.CancellationToken);
             await complete.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
             await consumer.StopAsync(TestContext.Current.CancellationToken);
@@ -266,7 +449,19 @@ public sealed class SubmittedEmailConsumerTests
 
         public void AssertSafeLogs()
         {
-            foreach (var value in new[] { PrivateEmail.Trim(), PrivateEmail.Trim().ToLowerInvariant(), PrivateName, UnsafeDependency, "stored-regulator@example.test", "test-secret", $"compliance-declaration:{DeclarationId}:submitted:v1", "later-actor@example.test" })
+            foreach (
+                var value in new[]
+                {
+                    PrivateEmail.Trim(),
+                    PrivateEmail.Trim().ToLowerInvariant(),
+                    PrivateName,
+                    UnsafeDependency,
+                    "stored-regulator@example.test",
+                    "test-secret",
+                    $"compliance-declaration:{DeclarationId}:submitted:v1",
+                    "later-actor@example.test",
+                }
+            )
                 Assert.All(Logs.Entries, entry => Assert.DoesNotContain(value, entry.Text, StringComparison.Ordinal));
             Assert.All(Logs.Entries, entry => Assert.Null(entry.Exception));
         }
@@ -274,16 +469,30 @@ public sealed class SubmittedEmailConsumerTests
         public void Dispose() => _http.Dispose();
     }
 
-    private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
+    private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send)
+        : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => send(request, cancellationToken);
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        ) => send(request, cancellationToken);
     }
 
     private sealed class Logs : ILogger<AnalyticsEventConsumer>
     {
         public ConcurrentQueue<(LogLevel Level, string Text, Exception? Exception)> Entries { get; } = new();
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
         public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) => Entries.Enqueue((logLevel, formatter(state, exception), exception));
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter
+        ) => Entries.Enqueue((logLevel, formatter(state, exception), exception));
     }
 }
