@@ -253,7 +253,11 @@ public class AnalyticsEventConsumerTests
         await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
-        Assert.True(retryDelay >= TimeSpan.FromSeconds(1));
+        // Allow timer-resolution jitter while still rejecting an immediate or substantially shortened retry.
+        Assert.True(
+            retryDelay >= TimeSpan.FromMilliseconds(950),
+            $"Expected approximately 1 second of error backoff; observed {retryDelay.TotalMilliseconds:F1} ms."
+        );
         Assert.Single(logger.Messages, message => message == "Analytics event consumption failed");
         await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
     }
