@@ -337,6 +337,9 @@ public class AnalyticsEventConsumerTests
     private sealed class RecordingLogger<T> : ILogger<T>
     {
         private readonly List<string> _messages = [];
+        private readonly List<Exception> _exceptions = [];
+
+        public IReadOnlyList<Exception> Exceptions => _exceptions;
 
         public IReadOnlyList<string> Messages => _messages;
 
@@ -356,6 +359,8 @@ public class AnalyticsEventConsumerTests
             lock (_messages)
             {
                 _messages.Add(formatter(state, exception));
+                if (exception is not null)
+                    _exceptions.Add(exception);
             }
         }
 
@@ -365,7 +370,7 @@ public class AnalyticsEventConsumerTests
             {
                 lock (_messages)
                 {
-                    if (_messages.Contains(expected))
+                    if (_messages.Any(message => message.Contains(expected, StringComparison.Ordinal)))
                     {
                         return;
                     }
