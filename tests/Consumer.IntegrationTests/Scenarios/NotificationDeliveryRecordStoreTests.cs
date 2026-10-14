@@ -158,6 +158,59 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 Assert.DoesNotContain(value, JsonSerializer.Serialize(accepted), StringComparison.Ordinal);
                 Assert.DoesNotContain(value, JsonSerializer.Serialize(unknown), StringComparison.Ordinal);
             }
+            (string Field, BsonValue? Value)[] malformed =
+            [
+                ("actionOccurredAtUtc", null),
+                ("recordedAtUtc", new BsonString("not-a-date")),
+                ("notificationType", new BsonArray { "submitted" }),
+                ("outcome", new BsonInt32(42)),
+                ("recordedAtUtc", new BsonDateTime(long.MaxValue)),
+            ];
+            foreach (var (field, value) in malformed)
+            {
+                var damaged = acceptedRecord.DeepClone().AsBsonDocument;
+                if (value is null)
+                    damaged.Remove(field);
+                else
+                    damaged[field] = value;
+                await records.ReplaceOneAsync(filter, damaged, cancellationToken: token);
+                var state = await store.Inspect(command, token);
+                Assert.Equal("unknown-delivery-state", state.Classification);
+                Assert.Null(state.Record);
+                var damagedConflict = await store.Inspect(command with { TemplateId = "different-template" }, token);
+                Assert.Equal("immutable-conflict", damagedConflict.Classification);
+                Assert.Null(damagedConflict.Record);
+                var healthy = await store.Inspect(command with { IdempotencyKey = "suppressed-inspection-key" }, token);
+                Assert.Equal("delivery-suppressed", healthy.Classification);
+                Assert.NotNull(healthy.Record);
+                Assert.Equal(damaged, await records.Find(filter).SingleAsync(token));
+            }
+            var optionalDamage = acceptedRecord.DeepClone().AsBsonDocument;
+            foreach (var field in new[] { "resendOfNotificationKey", "notifyNotificationId", "notifyReference", "templateId" })
+                optionalDamage[field] = 42;
+            optionalDamage["acceptedAtUtc"] = "not-a-date";
+            optionalDamage["leaseExpiresAtUtc"] = new BsonDateTime(long.MaxValue);
+            optionalDamage["templateVersion"] = new BsonInt64((long)int.MaxValue + 1);
+            await records.ReplaceOneAsync(filter, optionalDamage, cancellationToken: token);
+            var optional = await store.Inspect(command, token);
+            Assert.Equal("delivery-accepted", optional.Classification);
+            Assert.NotNull(optional.Record);
+            Assert.Null(optional.Record.ResendOfNotificationKey);
+            Assert.Null(optional.Record.NotifyNotificationId);
+            Assert.Null(optional.Record.NotifyReference);
+            Assert.Null(optional.Record.TemplateId);
+            Assert.Null(optional.Record.TemplateVersion);
+            Assert.Null(optional.Record.AcceptedAtUtc);
+            Assert.Null(optional.Record.LeaseExpiresAtUtc);
+            Assert.Equal(optionalDamage, await records.Find(filter).SingleAsync(token));
+            optionalDamage["templateVersion"] = new BsonInt64(7);
+            await records.ReplaceOneAsync(filter, optionalDamage, cancellationToken: token);
+            Assert.Equal(7, (await store.Inspect(command, token)).Record?.TemplateVersion);
+            Assert.Equal(optionalDamage, await records.Find(filter).SingleAsync(token));
+            optionalDamage["templateVersion"] = new BsonDouble(7.5);
+            await records.ReplaceOneAsync(filter, optionalDamage, cancellationToken: token);
+            Assert.Null((await store.Inspect(command, token)).Record?.TemplateVersion);
+            Assert.Equal(optionalDamage, await records.Find(filter).SingleAsync(token));
         }
         finally
         {

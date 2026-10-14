@@ -85,7 +85,9 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             .FirstOrDefaultAsync(cancellationToken);
         if (record is null)
             return new("unrecorded", null, null);
-        var classification = record[OutcomeField].AsString switch
+        var matches = record.TryGetValue("matches", out var matching) && matching.IsBoolean && matching.AsBoolean;
+        var evidence = matches ? TryReadEvidence(record) : null;
+        var classification = evidence?.Outcome switch
         {
             PendingOutcome => record["active"].AsBoolean ? "active-claim" : "expired-claim",
             "delivery-accepted" => "delivery-accepted",
@@ -93,40 +95,66 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             AbandonedOutcome => AbandonedOutcome,
             _ => "unknown-delivery-state",
         };
-        if (!record["matches"].AsBoolean)
+        if (!matches)
             classification = "immutable-conflict";
 
         return new(
             classification,
             ReadTimestamp(record, RecordedAtField),
             ReadTimestamp(record, LeaseExpiresAtField),
-            record["matches"].AsBoolean ? ReadEvidence(record) : null
+            evidence
         );
     }
 
     private static DateTimeOffset? ReadTimestamp(BsonDocument record, string name) =>
-        record.TryGetValue(name, out var value) && value.BsonType == BsonType.DateTime
-            ? new DateTimeOffset(value.ToUniversalTime())
+        record.TryGetValue(name, out var value)
+        && value is BsonDateTime date
+        && date.MillisecondsSinceEpoch >= DateTimeOffset.MinValue.ToUnixTimeMilliseconds()
+        && date.MillisecondsSinceEpoch <= DateTimeOffset.MaxValue.ToUnixTimeMilliseconds()
+            ? new DateTimeOffset(date.ToUniversalTime())
             : null;
 
-    private static NotificationDeliveryEvidence ReadEvidence(BsonDocument record) =>
-        new(
-            record[NotificationKeyField].AsString,
+    private static NotificationDeliveryEvidence? TryReadEvidence(BsonDocument record)
+    {
+        var key = ReadString(record, NotificationKeyField);
+        var type = ReadString(record, NotificationTypeField);
+        var outcome = ReadString(record, OutcomeField);
+        var recorded = ReadTimestamp(record, RecordedAtField);
+        var action = ReadTimestamp(record, ActionOccurredAtField);
+        if (key is null || type is null || outcome is null || recorded is null || action is null)
+            return null;
+
+        return new(
+            key,
             ReadString(record, "resendOfNotificationKey"),
-            record[NotificationTypeField].AsString,
-            record[OutcomeField].AsString,
-            record[RecordedAtField].ToUniversalTime(),
-            record[ActionOccurredAtField].ToUniversalTime(),
+            type,
+            outcome,
+            recorded.Value.UtcDateTime,
+            action.Value.UtcDateTime,
             ReadTimestamp(record, "acceptedAtUtc")?.UtcDateTime,
             ReadTimestamp(record, LeaseExpiresAtField)?.UtcDateTime,
             ReadString(record, "notifyNotificationId"),
             ReadString(record, "notifyReference"),
             ReadString(record, "templateId"),
-            record.TryGetValue("templateVersion", out var version) && !version.IsBsonNull ? version.AsInt32 : null
+            ReadTemplateVersion(record)
         );
+    }
 
     private static string? ReadString(BsonDocument record, string name) =>
-        record.TryGetValue(name, out var value) && !value.IsBsonNull ? value.AsString : null;
+        record.TryGetValue(name, out var value) && value.IsString ? value.AsString : null;
+
+    private static int? ReadTemplateVersion(BsonDocument record)
+    {
+        if (!record.TryGetValue("templateVersion", out var value))
+            return null;
+
+        return value switch
+        {
+            BsonInt32 version => version.Value,
+            BsonInt64 version when version.Value is >= int.MinValue and <= int.MaxValue => (int)version.Value,
+            _ => null,
+        };
+    }
 
     public async Task<AbandonmentResult> RecordAbandonment(
         NotificationCommand command,

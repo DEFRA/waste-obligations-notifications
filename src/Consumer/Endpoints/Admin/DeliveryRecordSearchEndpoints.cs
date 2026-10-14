@@ -10,6 +10,7 @@ public static class DeliveryRecordSearchEndpoints
     private static async Task<IResult> Search(
         HttpRequest request,
         IDeliveryRecordSearchReader reader,
+        CommandDlqDiagnostics diagnostics,
         CancellationToken cancellationToken
     )
     {
@@ -35,6 +36,8 @@ public static class DeliveryRecordSearchEndpoints
         }
         catch (Exception)
         {
+            diagnostics.SearchFailed();
+
             return Results.Problem(
                 statusCode: StatusCodes.Status503ServiceUnavailable,
                 detail: "Delivery record search failed."

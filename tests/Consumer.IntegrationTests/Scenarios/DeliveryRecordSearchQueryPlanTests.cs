@@ -231,6 +231,45 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
             Assert.Equal(1, exact.Explain["executionStats"]["nReturned"].ToInt64());
             Assert.InRange(exact.Explain["executionStats"]["totalKeysExamined"].ToInt64(), 1, 1);
             Assert.InRange(exact.Explain["executionStats"]["totalDocsExamined"].ToInt64(), 1, 1);
+            var deepRecords = Enumerable
+                .Range(1, 600)
+                .Select(index =>
+                    Record(
+                        index + 5000,
+                        "v1:deep-" + index.ToString("D3", CultureInfo.InvariantCulture),
+                        time.AddMinutes(index <= 300 ? 4 : 5),
+                        AcceptedOutcome,
+                        NotifyId,
+                        ParentKey
+                    )
+                );
+            await records.InsertManyAsync(deepRecords, cancellationToken: token);
+            Assert.Equal(2641, await records.CountDocumentsAsync(new BsonDocument(), cancellationToken: token));
+            var deepQueries = new[]
+            {
+                new DeliveryRecordSearchQuery { PageSize = 100 },
+                new DeliveryRecordSearchQuery { PageSize = 100, NotifyNotificationId = NotifyId },
+            };
+            foreach (var initial in deepQueries)
+            {
+                var paged = initial;
+                for (var page = 0; page < 4; page++)
+                {
+                    var actual = await SearchAndExplain(reader, database, commands, paged, token);
+                    var expectedKeys = Enumerable
+                        .Range(501 - page * 100, 100)
+                        .Reverse()
+                        .Select(index => "v1:deep-" + index.ToString("D3", CultureInfo.InvariantCulture));
+                    Assert.Equal(expectedKeys, actual.Result.Records.Select(record => record.NotificationKey));
+                    Assert.NotNull(actual.Result.NextCursor);
+                    paged = initial with { Cursor = actual.Result.NextCursor };
+                }
+                var deep = await SearchAndExplain(reader, database, commands, paged with { PageSize = 5 }, token);
+                string[] deepKeys = ["v1:deep-200", "v1:deep-199", "v1:deep-198", "v1:deep-197", "v1:deep-196"];
+                Assert.Equal(deepKeys, deep.Result.Records.Select(record => record.NotificationKey));
+                Assert.NotNull(deep.Result.NextCursor);
+                AssertOrderedBounded(deep.Explain);
+            }
         }
         finally
         {

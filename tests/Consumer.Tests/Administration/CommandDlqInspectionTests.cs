@@ -1294,17 +1294,34 @@ public sealed class CommandDlqInspectionTests
     [Fact]
     public async Task WhenSearchDependencyFails_ShouldReturnFixedFailureWithoutDependencyContent()
     {
-        await using var factory = new InspectionApplicationFactory();
+        await using var factory = new InspectionApplicationFactory(productionLogging: true);
         factory
             .SearchReader.Search(Arg.Any<DeliveryRecordSearchQuery>(), Arg.Any<CancellationToken>())
             .Returns<Task<DeliveryRecordSearchResult>>(_ => throw new InvalidOperationException(PrivateContent));
         using var client = factory.CreateClient();
-        using var request = SearchRequest("admin");
+        var query = "notificationKey=" + Uri.EscapeDataString(Identity);
+        using var request = SearchRequest("admin", query);
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var capture = factory.ProductionLogs!;
+        await WaitForRequestLogs(capture, "/admin/notification-commands/delivery-records");
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Contains("Delivery record search failed.", body, StringComparison.Ordinal);
+        var failure = Assert.Single(
+            capture.Events,
+            logEvent => logEvent.MessageTemplate.Text == "Delivery record search failed."
+        );
+        Assert.Equal(LogEventLevel.Error, failure.Level);
+        Assert.Null(failure.Exception);
+        foreach (var sensitive in new[] { Identity, Uri.EscapeDataString(Identity), PrivateContent })
+        {
+            Assert.All(
+                capture.Events,
+                logEvent => Assert.DoesNotContain(sensitive, StructuredLogText(logEvent), StringComparison.Ordinal)
+            );
+            Assert.All(capture.EcsOutput, output => Assert.DoesNotContain(sensitive, output, StringComparison.Ordinal));
+        }
         AssertPrivacy(factory, body);
     }
 
@@ -1357,6 +1374,12 @@ public sealed class CommandDlqInspectionTests
             AssertPrivacy(factory, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
         }
         Assert.True(dependencyToken.IsCancellationRequested);
+        Assert.Equal(
+            callerCancels ? 0 : 1,
+            factory.Logs.Messages.Count(message =>
+                message.Contains("Delivery record search failed.", StringComparison.Ordinal)
+            )
+        );
         Assert.Empty(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());

@@ -13,6 +13,11 @@ public sealed class MongoDeliveryRecordSearchReader(
 ) : IDeliveryRecordSearchReader
 {
     private const string RecordedAtField = "recordedAtUtc";
+    private const string ActionOccurredAtField = "actionOccurredAtUtc";
+    private const string NotificationKeyField = "notificationKey";
+    private const string NotificationTypeField = "notificationType";
+    private const string OutcomeField = "outcome";
+    private const string StringType = "string";
 
     public async Task<DeliveryRecordSearchResult> Search(
         DeliveryRecordSearchQuery query,
@@ -27,16 +32,16 @@ public sealed class MongoDeliveryRecordSearchReader(
         try
         {
             source.Token.ThrowIfCancellationRequested();
-            var filters = new List<FilterDefinition<BsonDocument>>();
+            var filters = new List<FilterDefinition<BsonDocument>> { ReadableRecords() };
             var builder = Builders<BsonDocument>.Filter;
             if (query.RecordedFromUtc is { } from)
                 filters.Add(builder.Gte(RecordedAtField, RoundUpToMillisecond(from)));
             if (query.RecordedToUtc is { } to)
                 filters.Add(builder.Lt(RecordedAtField, RoundUpToMillisecond(to)));
             AddExact(filters, "notifyNotificationId", query.NotifyNotificationId);
-            AddExact(filters, "notificationKey", query.NotificationKey);
+            AddExact(filters, NotificationKeyField, query.NotificationKey);
             AddExact(filters, "resendOfNotificationKey", query.ResendOfNotificationKey);
-            AddExact(filters, "outcome", query.Outcome);
+            AddExact(filters, OutcomeField, query.Outcome);
             if (query.ReadCursor() is { } cursor)
                 filters.Add(
                     builder.Or(
@@ -47,12 +52,12 @@ public sealed class MongoDeliveryRecordSearchReader(
             var projection = new BsonDocument
             {
                 { "_id", 1 },
-                { "notificationKey", 1 },
+                { NotificationKeyField, 1 },
                 { "resendOfNotificationKey", 1 },
-                { "notificationType", 1 },
-                { "outcome", 1 },
+                { NotificationTypeField, 1 },
+                { OutcomeField, 1 },
                 { RecordedAtField, 1 },
-                { "actionOccurredAtUtc", 1 },
+                { ActionOccurredAtField, 1 },
                 { "acceptedAtUtc", 1 },
                 { "leaseExpiresAtUtc", 1 },
                 { "notifyNotificationId", 1 },
@@ -94,10 +99,41 @@ public sealed class MongoDeliveryRecordSearchReader(
         }
     }
 
+    private static BsonDocument ReadableRecords() =>
+        new(
+            "$expr",
+            new BsonDocument(
+                "$and",
+                new BsonArray
+                {
+                    HasScalarType("_id", "objectId"),
+                    HasScalarType(NotificationKeyField, StringType),
+                    HasScalarType(NotificationTypeField, StringType),
+                    HasScalarType(OutcomeField, StringType),
+                    HasScalarType(RecordedAtField, "date"),
+                    HasScalarType(ActionOccurredAtField, "date"),
+                    DateBound(RecordedAtField, "$gte", DateTimeOffset.MinValue.ToUnixTimeMilliseconds()),
+                    DateBound(RecordedAtField, "$lte", DateTimeOffset.MaxValue.ToUnixTimeMilliseconds()),
+                    DateBound(ActionOccurredAtField, "$gte", DateTimeOffset.MinValue.ToUnixTimeMilliseconds()),
+                    DateBound(ActionOccurredAtField, "$lte", DateTimeOffset.MaxValue.ToUnixTimeMilliseconds()),
+                }
+            )
+        );
+
+    private static BsonDocument HasScalarType(string field, string type) =>
+        new("$eq", new BsonArray { new BsonDocument("$type", "$" + field), type });
+
+    private static BsonDocument DateBound(string field, string comparison, long milliseconds) =>
+        new(comparison, new BsonArray { "$" + field, new BsonDateTime(milliseconds) });
+
     private static void AddExact(List<FilterDefinition<BsonDocument>> filters, string field, string? value)
     {
         if (value is not null)
+        {
             filters.Add(Builders<BsonDocument>.Filter.Eq(field, value));
+            if (field != NotificationKeyField && field != OutcomeField)
+                filters.Add(new BsonDocument("$expr", HasScalarType(field, StringType)));
+        }
     }
 
     // Stored timestamps have millisecond precision; both range bounds round upward to preserve comparisons.
@@ -115,18 +151,18 @@ public sealed class MongoDeliveryRecordSearchReader(
         var parent = ReadString(record, "resendOfNotificationKey");
 
         return new(
-            record["notificationKey"].AsString,
+            record[NotificationKeyField].AsString,
             parent,
-            record["notificationType"].AsString,
-            record["outcome"].AsString,
+            record[NotificationTypeField].AsString,
+            record[OutcomeField].AsString,
             record[RecordedAtField].ToUniversalTime(),
-            record["actionOccurredAtUtc"].ToUniversalTime(),
+            record[ActionOccurredAtField].ToUniversalTime(),
             ReadDate(record, "acceptedAtUtc"),
             ReadDate(record, "leaseExpiresAtUtc"),
             ReadString(record, "notifyNotificationId"),
             ReadString(record, "notifyReference"),
             ReadString(record, "templateId"),
-            record.TryGetValue("templateVersion", out var version) && !version.IsBsonNull ? version.AsInt32 : null,
+            ReadTemplateVersion(record),
             parent is null
                 ? null
                 : new("/admin/notification-commands/delivery-records?notificationKey=" + Uri.EscapeDataString(parent))
@@ -134,8 +170,26 @@ public sealed class MongoDeliveryRecordSearchReader(
     }
 
     private static string? ReadString(BsonDocument record, string name) =>
-        record.TryGetValue(name, out var value) && !value.IsBsonNull ? value.AsString : null;
+        record.TryGetValue(name, out var value) && value.IsString ? value.AsString : null;
 
     private static DateTime? ReadDate(BsonDocument record, string name) =>
-        record.TryGetValue(name, out var value) && !value.IsBsonNull ? value.ToUniversalTime() : null;
+        record.TryGetValue(name, out var value)
+        && value is BsonDateTime date
+        && date.MillisecondsSinceEpoch >= DateTimeOffset.MinValue.ToUnixTimeMilliseconds()
+        && date.MillisecondsSinceEpoch <= DateTimeOffset.MaxValue.ToUnixTimeMilliseconds()
+            ? date.ToUniversalTime()
+            : null;
+
+    private static int? ReadTemplateVersion(BsonDocument record)
+    {
+        if (!record.TryGetValue("templateVersion", out var value))
+            return null;
+
+        return value switch
+        {
+            BsonInt32 version => version.Value,
+            BsonInt64 version when version.Value is >= int.MinValue and <= int.MaxValue => (int)version.Value,
+            _ => null,
+        };
+    }
 }

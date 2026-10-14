@@ -512,6 +512,22 @@ historical snapshot. Empty searches return an empty records array and null curso
 Dependency work uses the existing administration timeout; failures return a fixed
 503 response without dependency details, and request cancellation propagates.
 
+Inspection treats matching evidence with malformed mandatory summary fields as
+`unknown-delivery-state`, with no matching summary or usable selected recovery
+action. Immutable conflicts retain precedence. Search excludes malformed mandatory
+evidence before sorting/page limits: identity/type/outcome must be scalar strings,
+recording/action times representable BSON dates, and the tie-breaker an ObjectId.
+Unknown string outcomes remain searchable. The readable-record set preserves
+stable cursors; missing or invalid timestamps are never reconstructed from commands
+or processing time. Empty exact lookup does not prove that no malformed record
+exists. Optional malformed fields return null; template versions accept Int32 or
+Int64 within Int32 range without coercing fractional/string values. Optional exact
+identifier filters require scalar strings and do not match array containment.
+Reads do not rewrite or backfill evidence.
+
+Search dependency failures emit one fixed error diagnostic without query values,
+identifiers or exception content; caller cancellation emits no failure diagnostic.
+
 Optional forward migration 002 adds four full, visible, nonunique search indexes:
 recording time/ObjectId descending, and exact Notify ID, parent key or outcome
 followed by the same descending pair. The critical unique notification-key index

@@ -461,6 +461,13 @@ updates do not provide a snapshot. Summaries expose retained correlation and
 encoded parent links without email payloads or queue/Notify/evidence-write effects.
 Acceptance does not establish recipient delivery. Optional parent readback does
 not create replacements; explicit resend remains unavailable.
+Search pages contain readable retained summaries: malformed mandatory BSON fields
+are excluded before pagination, while unknown string outcomes remain included.
+Invalid optional fields return null; dates are not invented and evidence is not
+rewritten. An empty exact lookup is not proof that no malformed record exists.
+Inspection classifies matching malformed mandatory evidence as unknown and offers
+engineering escalation. Search failures log a fixed reason without query or
+exception content; caller cancellation is distinct.
 See [the HTTP runbook](runbooks/http/README.md) and
 [service behaviour](docs/service-behaviour.md#retained-delivery-record-search).
 

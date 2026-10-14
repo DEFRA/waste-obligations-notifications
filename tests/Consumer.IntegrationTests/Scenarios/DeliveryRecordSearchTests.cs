@@ -218,6 +218,114 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
         }
     }
 
+    [Fact]
+    public async Task WhenRetainedBsonIsMalformed_ShouldPageReadableEvidenceWithoutInventingFieldsOrChangingRecords()
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_bson_search_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        var token = TestContext.Current.CancellationToken;
+        var time = new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc);
+        var valid = new[]
+        {
+            Record(1, "v1:unknown", "future-retained-outcome", time.AddMinutes(-1)),
+            Record(2, "v1:pending", "delivery-pending", time),
+            Record(3, "v1:bad-optionals", "delivery-accepted", time),
+            Record(4, "v1:wide-version", "delivery-accepted", time),
+        };
+        valid[2]["templateVersion"] = new BsonInt64(long.MaxValue);
+        valid[2]["acceptedAtUtc"] = "not-a-date";
+        valid[2]["leaseExpiresAtUtc"] = new BsonDateTime(long.MaxValue);
+        valid[2]["resendOfNotificationKey"] = 42;
+        valid[2]["notifyNotificationId"] = new BsonArray { "not-a-scalar" };
+        valid[2]["notifyReference"] = new BsonDocument("not", "a-string");
+        valid[2]["templateId"] = false;
+        valid[3]["templateVersion"] = new BsonInt64(7);
+        (string Field, BsonValue? Value)[] damage =
+        [
+            ("actionOccurredAtUtc", null),
+            ("recordedAtUtc", new BsonString("not-a-date")),
+            ("recordedAtUtc", new BsonArray { time }),
+            ("notificationType", new BsonArray { "submitted" }),
+            ("outcome", new BsonInt32(42)),
+            ("_id", new BsonString("non-object-id")),
+            ("recordedAtUtc", new BsonDateTime(long.MaxValue)),
+            ("actionOccurredAtUtc", new BsonDateTime(long.MinValue)),
+        ];
+        var damaged = damage
+            .Select((entry, index) =>
+            {
+                var record = Record(index + 10, "v1:damaged-" + index, "delivery-accepted", time.AddDays(1));
+                if (entry.Value is null)
+                    record.Remove(entry.Field);
+                else
+                    record[entry.Field] = entry.Value;
+
+                return record;
+            })
+            .ToArray();
+        try
+        {
+            using var loggerFactory = LoggerFactory.Create(_ => { });
+            await new MongoMigrationRunner(
+                database,
+                loggerFactory.CreateLogger<MongoMigrationRunner>(),
+                new MongoMigrationCompletion()
+            ).Run(token);
+            await records.InsertManyAsync(valid.Concat(damaged), cancellationToken: token);
+            var before = await records.Find(new BsonDocument()).Sort("{_id:1}").ToListAsync(token);
+            var reader = Reader(client, databaseName);
+            var first = await reader.Search(new DeliveryRecordSearchQuery { PageSize = 2 }, token);
+            Assert.Collection(
+                first.Records,
+                record =>
+                {
+                    Assert.Equal("v1:wide-version", record.NotificationKey);
+                    Assert.Equal(7, record.TemplateVersion);
+                },
+                record =>
+                {
+                    Assert.Equal("v1:bad-optionals", record.NotificationKey);
+                    Assert.Null(record.TemplateVersion);
+                    Assert.Null(record.AcceptedAtUtc);
+                    Assert.Null(record.LeaseExpiresAtUtc);
+                    Assert.Null(record.ResendOfNotificationKey);
+                    Assert.Null(record.NotifyNotificationId);
+                    Assert.Null(record.NotifyReference);
+                    Assert.Null(record.TemplateId);
+                    Assert.Null(record.Links);
+                }
+            );
+            Assert.NotNull(first.NextCursor);
+            var second = await reader.Search(
+                new DeliveryRecordSearchQuery { PageSize = 2, Cursor = first.NextCursor },
+                token
+            );
+            Assert.Collection(
+                second.Records,
+                record => Assert.Equal("v1:pending", record.NotificationKey),
+                record => Assert.Equal("v1:unknown", record.NotificationKey)
+            );
+            Assert.Null(second.NextCursor);
+            Assert.Equal("future-retained-outcome", second.Records[1].Outcome);
+            var arrayLookup = await reader.Search(
+                new DeliveryRecordSearchQuery { NotifyNotificationId = "not-a-scalar" },
+                token
+            );
+            Assert.Empty(arrayLookup.Records);
+            foreach (var index in Enumerable.Range(0, damage.Length))
+                Assert.Empty(
+                    (await reader.Search(new DeliveryRecordSearchQuery { NotificationKey = "v1:damaged-" + index }, token)).Records
+                );
+            Assert.Equal(before, await records.Find(new BsonDocument()).Sort("{_id:1}").ToListAsync(token));
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
     private static MongoDeliveryRecordSearchReader Reader(IMongoClient client, string databaseName) =>
         new(
             client,

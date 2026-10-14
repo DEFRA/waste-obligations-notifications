@@ -137,7 +137,8 @@ new configuration is introduced.
 
 Real-reader command capture and execution-statistics tests check representative
 unhinted ordered plans for listing, recording ranges, Notify/parent/outcome filters,
-combined filters, unique-key lookup and tied-timestamp continuation. This is not a
+combined filters, unique-key lookup and deep tied-timestamp continuation for
+listing and Notify equality. This is not a
 performance guarantee for every filter combination or data distribution. Combined
 filters can retain residual filtering, and skew can increase examined keys/documents;
 the bounded administration timeout remains applicable.
@@ -163,6 +164,20 @@ this is not proof of acceptance. Read optional parent metadata without backfill,
 with encoded record/replacement and parent search links. Invalid inputs expose no
 partial identity, correlation, navigation or usable action. All additional evidence
 remains confined to the authenticated response and excluded from diagnostic logs.
+
+### Malformed retained evidence
+
+Preserve the required summary and recording-time/ObjectId cursor contract without
+fabricating missing dates. Matching inspection records with malformed mandatory
+summary fields classify as unknown and expose no matching summary; immutable
+conflicts keep precedence. Search applies scalar BSON-type and representable-date
+guards before page limits, excluding unreadable mandatory evidence while retaining
+unknown string outcomes. Optional malformed correlation/timestamps/version return
+null, with Int32/Int64 versions read only when representable as Int32. Exact
+optional identifiers require scalar strings, not Mongo array containment. Empty
+search results do not establish absence of malformed evidence. No backfill or
+record mutation occurs. A fixed search-failure diagnostic omits query/exception
+content and distinguishes caller cancellation.
 
 ### Administration request-log privacy
 
