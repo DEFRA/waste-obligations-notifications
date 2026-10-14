@@ -230,6 +230,7 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                     ),
                 call =>
                 {
+                    Assert.Equal(1, call.Arg<ReceiveMessageRequest>().MaxNumberOfMessages);
                     Assert.Equal(hasCommand, deleted);
                     receivedAgain.TrySetResult();
 

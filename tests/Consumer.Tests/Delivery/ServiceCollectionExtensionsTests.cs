@@ -15,6 +15,7 @@ public sealed class ServiceCollectionExtensionsTests
             .AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
+                    ["NotificationCommandDelivery:BatchSize"] = "10",
                     ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                 }
@@ -53,7 +54,6 @@ public sealed class ServiceCollectionExtensionsTests
         {
             Assert.Equal(waitTimeSeconds, options.Value.WaitTimeSeconds);
             Assert.Equal(receiveTimeoutSeconds, options.Value.ReceiveTimeoutSeconds);
-            Assert.Equal(1, options.Value.BatchSize);
             Assert.True(options.Value.HasValidProcessingBudget);
         }
         else
@@ -74,6 +74,7 @@ public sealed class ServiceCollectionExtensionsTests
             .AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
+                    ["NotificationCommandDelivery:BatchSize"] = "10",
                     ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2100-01-01T00:00:00Z",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
@@ -107,6 +108,7 @@ public sealed class ServiceCollectionExtensionsTests
             .AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
+                    ["NotificationCommandDelivery:BatchSize"] = "10",
                     ["NotificationCommandDelivery:QueueUrl"] = "http://localhost:4566/commands.fifo",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "test-evidence-secret",
                     ["NotificationCommandDelivery:RecipientLaneSecret"] = "test-lane-secret",

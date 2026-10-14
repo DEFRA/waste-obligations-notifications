@@ -29,7 +29,6 @@ public class ServiceCollectionExtensionsTests
 
         Assert.Equal("http://localhost:4566/000000000000/analytics-events", options.QueueUrl);
         Assert.True(options.ProcessingEnabled);
-        Assert.Equal(2, options.BatchSize);
         Assert.Equal(3, options.WaitTimeSeconds);
         Assert.Equal(4, options.PollIntervalSeconds);
     }

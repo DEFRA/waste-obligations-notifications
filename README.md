@@ -114,7 +114,11 @@ unit tests, integration tests, and Compose teardown.
 set `AnalyticsEventConsumer__ProcessingEnabled` to `true` and provide the
 service-owned `AnalyticsEventConsumer__QueueUrl`. The deployed queue must be a
 separate subscription from the producer queue and must have the CDP dead-letter
-queue convention configured.
+queue convention configured. Each host requests one message per receive;
+normal consumers have no batch-size setting. A larger receive requires a reviewed
+processing/visibility budget. Analytics immediately receives again after success
+or an empty response. `AnalyticsEventConsumer__PollIntervalSeconds` controls
+cancellation-aware error backoff only; SQS long polling supplies idle waiting.
 
 `NotificationCommandDelivery` is deployment-owned. Every host consumes commands
 after successful startup readiness; there is no command-processing enablement
@@ -148,7 +152,7 @@ error backoff only (15 seconds initially). Each host processes one command
 at a time. `WaitTimeSeconds` defaults to a 20-second long poll;
 `ReceiveTimeoutSeconds` bounds the entire receive request, including SDK
 retries, and defaults to 30 seconds. It must exceed `WaitTimeSeconds`. These
-command settings leave analytics polling and the shared SQS client unchanged.
+command settings are separate from analytics settings and the shared SQS client.
 CDP can override them through the `NotificationCommandDelivery` section;
 local Compose values do not configure deployed environments.
 
