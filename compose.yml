@@ -24,7 +24,6 @@ services:
       - compose/aws.env
     environment:
       AWS_ENDPOINT_URL: http://floci:4566
-      AnalyticsEventConsumer__ProcessingEnabled: "false"
     volumes:
       - ./compose/init-floci.sh:/compose/init-floci.sh:ro
     healthcheck:
@@ -82,6 +81,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://+:8085
       AWS_ENDPOINT_URL: http://floci:4566
+      AnalyticsEventConsumer__ProcessingEnabled: "false"
       Acl__Clients__docker__Type: ApiKey
       Acl__Clients__docker__Secret: development-only-http-runbook-secret
       Acl__Clients__docker__Scopes__0: admin
