@@ -563,7 +563,14 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
-        Assert.Contains(logger.Messages, message => message.Contains("terminal-duplicate (matching terminal evidence; no new request or suppression)", StringComparison.Ordinal));
+        Assert.Contains(
+            logger.Messages,
+            message =>
+                message.Contains(
+                    "terminal-duplicate (matching terminal evidence; no new request or suppression)",
+                    StringComparison.Ordinal
+                )
+        );
         Assert.DoesNotContain(logger.Messages, message => message.Contains("would request", StringComparison.Ordinal));
         await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
     }

@@ -6,7 +6,8 @@ using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Submission;
 
-public sealed class DeclarationReadClient(HttpClient client, IOptions<SubmissionOptions> options) : IDeclarationReadClient
+public sealed class DeclarationReadClient(HttpClient client, IOptions<SubmissionOptions> options)
+    : IDeclarationReadClient
 {
     public async Task<JsonElement> Read(Guid organisationId, string declarationId, CancellationToken cancellationToken)
     {
@@ -17,7 +18,10 @@ public sealed class DeclarationReadClient(HttpClient client, IOptions<Submission
         response.EnsureSuccessStatusCode();
         try
         {
-            using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(cancellationToken),
+                cancellationToken: cancellationToken
+            );
 
             return document.RootElement.Clone();
         }
@@ -37,7 +41,10 @@ public sealed class DeclarationReadClient(HttpClient client, IOptions<Submission
     private HttpRequestMessage CreateRequest(string path)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{options.Value.ClientId}:{options.Value.ClientSecret}")));
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Basic",
+            Convert.ToBase64String(Encoding.UTF8.GetBytes($"{options.Value.ClientId}:{options.Value.ClientSecret}"))
+        );
 
         return request;
     }

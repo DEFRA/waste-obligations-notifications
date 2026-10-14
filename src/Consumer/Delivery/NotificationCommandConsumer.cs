@@ -140,7 +140,8 @@ public sealed class NotificationCommandConsumer(
                 outcome switch
                 {
                     "terminal-duplicate" => "matching terminal evidence; no new request or suppression",
-                    _ when outcome == NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue() => "email request accepted by Notify; acceptance recorded",
+                    _ when outcome == NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue() =>
+                        "email request accepted by Notify; acceptance recorded",
                     _ when cutover is null => "would request this template; suppressed because cutover is unset",
                     _ => "would request this template; suppressed because action precedes cutover",
                 },

@@ -4,9 +4,9 @@ using System.Text;
 using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
-using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Options;
 
@@ -48,18 +48,23 @@ public sealed class AnalyticsEventConsumer(
             try
             {
                 var receivedAt = Stopwatch.GetTimestamp();
-                var response = await RunBounded(token => sqsClient.ReceiveMessageAsync(
-                    new ReceiveMessageRequest
-                    {
-                        QueueUrl = options.Value.QueueUrl,
-                        // One read, publish and delete budget per receive; batching requires review.
-                        MaxNumberOfMessages = 1,
-                        VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
-                        MessageAttributeNames = ["All"],
-                        WaitTimeSeconds = options.Value.WaitTimeSeconds,
-                    },
-                    token
-                ), options.Value.ReceiveTimeoutSeconds, stoppingToken);
+                var response = await RunBounded(
+                    token =>
+                        sqsClient.ReceiveMessageAsync(
+                            new ReceiveMessageRequest
+                            {
+                                QueueUrl = options.Value.QueueUrl,
+                                // One read, publish and delete budget per receive; batching requires review.
+                                MaxNumberOfMessages = 1,
+                                VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
+                                MessageAttributeNames = ["All"],
+                                WaitTimeSeconds = options.Value.WaitTimeSeconds,
+                            },
+                            token
+                        ),
+                    options.Value.ReceiveTimeoutSeconds,
+                    stoppingToken
+                );
 
                 foreach (var message in response.Messages ?? [])
                 {
@@ -70,43 +75,80 @@ public sealed class AnalyticsEventConsumer(
                     eventId = SafeEventId(ReadRequiredString(root, "eventId"));
                     var rawEntityId = ReadRequiredString(root, "entityId");
                     entityId = SafeEntityId(rawEntityId);
-                    if (root.TryGetProperty("entity", out var entity) && entity.GetString() == "compliance_declaration"
-                        && root.TryGetProperty("eventType", out var eventType) && eventType.GetString() == "submission.created")
+                    if (
+                        root.TryGetProperty("entity", out var entity)
+                        && entity.GetString() == "compliance_declaration"
+                        && root.TryGetProperty("eventType", out var eventType)
+                        && eventType.GetString() == "submission.created"
+                    )
                     {
                         stage = "validate-event";
                         var id = rawEntityId;
-                        if (eventId is null || entityId is null
-                            || ReadRequiredString(root, "schemaVersion") != "compliance_declaration_v1.3")
+                        if (
+                            eventId is null
+                            || entityId is null
+                            || ReadRequiredString(root, "schemaVersion") != "compliance_declaration_v1.3"
+                        )
                             throw new SubmissionProcessingException("invalid-event-data");
                         var version = root.GetProperty("version").GetInt32();
-                        var organisationId = Guid.Parse(ReadRequiredString(root.GetProperty("after").GetProperty("organisation"), "id"));
+                        var organisationId = Guid.Parse(
+                            ReadRequiredString(root.GetProperty("after").GetProperty("organisation"), "id")
+                        );
                         if (version < 1 || organisationId == Guid.Empty)
                             throw new SubmissionProcessingException("invalid-event-data");
-                        EnsureRemaining(receivedAt, options.Value.ReadTimeoutSeconds + options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
+                        EnsureRemaining(
+                            receivedAt,
+                            options.Value.ReadTimeoutSeconds
+                                + options.Value.PublishTimeoutSeconds
+                                + options.Value.DeleteTimeoutSeconds
+                        );
                         // The enclosing catch reads this stage when the awaited read throws, before the next assignment.
 #pragma warning disable S1854 // Sonar does not account for this exceptional path through the awaited call.
                         stage = "read-declaration";
 #pragma warning restore S1854
-                        var command = await RunBounded(token => producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token), options.Value.ReadTimeoutSeconds, stoppingToken);
-                        EnsureRemaining(receivedAt, options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
+                        var command = await RunBounded(
+                            token => producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token),
+                            options.Value.ReadTimeoutSeconds,
+                            stoppingToken
+                        );
+                        EnsureRemaining(
+                            receivedAt,
+                            options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds
+                        );
                         stage = "publish-command";
-                        await RunBounded(async token => { await publisher.Publish(command, token); return true; }, options.Value.PublishTimeoutSeconds, stoppingToken);
+                        await RunBounded(
+                            async token =>
+                            {
+                                await publisher.Publish(command, token);
+                                return true;
+                            },
+                            options.Value.PublishTimeoutSeconds,
+                            stoppingToken
+                        );
                         published = true;
-                        logger.LogInformation("Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}", eventId, entityId, digest.CreateNotifyReference(command.IdempotencyKey), command.NotificationType, command.TemplateId, command.ActionOccurredAtUtc);
+                        logger.LogInformation(
+                            "Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}",
+                            eventId,
+                            entityId,
+                            digest.CreateNotifyReference(command.IdempotencyKey),
+                            command.NotificationType,
+                            command.TemplateId,
+                            command.ActionOccurredAtUtc
+                        );
                     }
 
                     if (logger.IsEnabled(LogLevel.Information))
                     {
-                        logger.LogInformation(
-                            "Consumed analytics event {EventId} for {EntityId}",
-                            eventId,
-                            entityId
-                        );
+                        logger.LogInformation("Consumed analytics event {EventId} for {EntityId}", eventId, entityId);
                     }
 
                     stage = "acknowledge";
                     EnsureRemaining(receivedAt, options.Value.DeleteTimeoutSeconds);
-                    await RunBounded(token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token), options.Value.DeleteTimeoutSeconds, stoppingToken);
+                    await RunBounded(
+                        token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
+                        options.Value.DeleteTimeoutSeconds,
+                        stoppingToken
+                    );
                 }
             }
             catch (Exception) when (stoppingToken.IsCancellationRequested)
@@ -128,7 +170,14 @@ public sealed class AnalyticsEventConsumer(
         logger.LogError("Analytics event consumption failed ({ExceptionType})", exception.GetType().Name);
     }
 
-    private void LogRetry(Exception exception, string stage, bool published, string? messageId, string? eventId, string? entityId)
+    private void LogRetry(
+        Exception exception,
+        string stage,
+        bool published,
+        string? messageId,
+        string? eventId,
+        string? entityId
+    )
     {
         var reason = exception switch
         {
@@ -144,14 +193,30 @@ public sealed class AnalyticsEventConsumer(
             ("acknowledge", false) => "acknowledgement uncertain; possible queue retry",
             _ => "not acknowledged; left for queue retry/recovery",
         };
-        logger.LogWarning("Analytics processing at {Stage} failed ({FailureReason}) for SQS message {MessageId}, event {EventId}, entity {EntityId}: {AcknowledgementStatus}", stage, reason, messageId, eventId, entityId, acknowledgementStatus);
+        logger.LogWarning(
+            "Analytics processing at {Stage} failed ({FailureReason}) for SQS message {MessageId}, event {EventId}, entity {EntityId}: {AcknowledgementStatus}",
+            stage,
+            reason,
+            messageId,
+            eventId,
+            entityId,
+            acknowledgementStatus
+        );
     }
 
-    private static string? SafeEventId(string value) => value.Length == 26 && value[0] <= '7'
-        && value.All(character => "0123456789ABCDEFGHJKMNPQRSTVWXYZ".Contains(character)) ? value : null;
+    private static string? SafeEventId(string value) =>
+        value.Length == 26
+        && value[0] <= '7'
+        && value.All(character => "0123456789ABCDEFGHJKMNPQRSTVWXYZ".Contains(character))
+            ? value
+            : null;
 
-    private static string? SafeEntityId(string value) => value.Length == 29
-        && value.StartsWith("cdec_", StringComparison.Ordinal) && value[5..].All(char.IsAsciiHexDigit) ? value : null;
+    private static string? SafeEntityId(string value) =>
+        value.Length == 29
+        && value.StartsWith("cdec_", StringComparison.Ordinal)
+        && value[5..].All(char.IsAsciiHexDigit)
+            ? value
+            : null;
 
     private static string? SafeTransportCorrelation(string? value)
     {
@@ -160,17 +225,27 @@ public sealed class AnalyticsEventConsumer(
         if (Guid.TryParseExact(value, "D", out var id))
             return id.ToString("D");
 
-        return "opaque-" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..16];
+        return "opaque-"
+            + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)))[
+                ..16
+            ];
     }
 
     private void EnsureRemaining(long receivedAt, int budgetSeconds)
     {
-        if (Stopwatch.GetElapsedTime(receivedAt) + TimeSpan.FromSeconds(budgetSeconds + options.Value.SafetyHeadroomSeconds)
-            >= TimeSpan.FromSeconds(options.Value.VisibilityTimeoutSeconds))
+        if (
+            Stopwatch.GetElapsedTime(receivedAt)
+                + TimeSpan.FromSeconds(budgetSeconds + options.Value.SafetyHeadroomSeconds)
+            >= TimeSpan.FromSeconds(options.Value.VisibilityTimeoutSeconds)
+        )
             throw new SubmissionProcessingException("processing-budget-exhausted");
     }
 
-    private static async Task<T> RunBounded<T>(Func<CancellationToken, Task<T>> operation, int seconds, CancellationToken stoppingToken)
+    private static async Task<T> RunBounded<T>(
+        Func<CancellationToken, Task<T>> operation,
+        int seconds,
+        CancellationToken stoppingToken
+    )
     {
         using var source = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         source.CancelAfter(TimeSpan.FromSeconds(seconds));
@@ -218,5 +293,4 @@ public sealed class AnalyticsEventConsumer(
 
         return reader.ReadToEnd();
     }
-
 }
