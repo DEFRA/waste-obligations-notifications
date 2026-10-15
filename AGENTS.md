@@ -27,7 +27,8 @@
   from the companion Waste Obligations service; avoid global logging overrides.
 - Put reusable HTTP stubbing and request inspection in test helper extensions.
 - Distinguish isolated integration results from separately required provider
-  previews when reporting test totals and skips.
+  previews when reporting test totals and skips. Name intentionally skipped test
+  groups in the CI report itself and link them to their separate required result.
 
 ## Build guidance for agents
 

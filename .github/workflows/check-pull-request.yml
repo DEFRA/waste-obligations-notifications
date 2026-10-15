@@ -232,6 +232,9 @@ jobs:
             printf '| Docker image | %s |\n' "$(step_summary "$DOCKER_BUILD")"
             printf '| Trivy (Critical/High) | %s |\n' "$(trivy_summary)"
             echo
+            echo 'The integration-test total includes four GOV.UK Notify submission previews that are skipped in the isolated run: `NotifySubmissionPreviewTests.DirectEnglish_ShouldRenderSubmission`, `DirectWelsh_ShouldRenderSubmission`, `SchemeEnglish_ShouldRenderSubmission` and `SchemeWelsh_ShouldRenderSubmission`.'
+            echo 'Their execution results appear in the separate **Notify submission previews** row above. All four must pass that required check; they are not missing isolated integration scenarios.'
+            echo
             printf '_PR validation: %s._\n' "$(step_summary "$PR_VALIDATOR")"
             echo
             printf '[Workflow run and downloadable reports](%s/%s/actions/runs/%s). Reports are retained for seven days.\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
