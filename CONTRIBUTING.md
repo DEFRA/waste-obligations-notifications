@@ -76,7 +76,9 @@ report uploads on failure. Required Notify previews use test-type API keys in bo
 Actions and Dependabot secret stores; never supply live sending keys to PR-built
 tests or dependencies. A missing key must fail the preview gate, not exempt bots.
 
-Run actionlint v1.7.12 locally when changing workflows. CI verifies its release
+Run actionlint v1.7.12 with ShellCheck available on `PATH` when changing workflows.
+Actionlint skips shell analysis when ShellCheck is missing, so an actionlint-only
+pass does not reproduce CI validation. CI verifies its release
 archive against a pinned SHA256 checksum before running it. Review action commits,
 container digests, and the actionlint version and checksum manually when updating
 these pins.
