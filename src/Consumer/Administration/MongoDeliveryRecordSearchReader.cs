@@ -40,7 +40,6 @@ public sealed class MongoDeliveryRecordSearchReader(
                 filters.Add(builder.Lt(RecordedAtField, RoundUpToMillisecond(to)));
             AddExact(filters, "notifyNotificationId", query.NotifyNotificationId);
             AddExact(filters, NotificationKeyField, query.NotificationKey);
-            AddExact(filters, "resendOfNotificationKey", query.ResendOfNotificationKey);
             AddExact(filters, OutcomeField, query.Outcome);
             if (query.ReadCursor() is { } cursor)
                 filters.Add(
@@ -53,7 +52,6 @@ public sealed class MongoDeliveryRecordSearchReader(
             {
                 { "_id", 1 },
                 { NotificationKeyField, 1 },
-                { "resendOfNotificationKey", 1 },
                 { NotificationTypeField, 1 },
                 { OutcomeField, 1 },
                 { RecordedAtField, 1 },
@@ -146,13 +144,9 @@ public sealed class MongoDeliveryRecordSearchReader(
         return new BsonDateTime((roundedTicks - DateTime.UnixEpoch.Ticks) / TimeSpan.TicksPerMillisecond);
     }
 
-    private static DeliveryRecordSummary Summarise(BsonDocument record)
-    {
-        var parent = ReadString(record, "resendOfNotificationKey");
-
-        return new(
+    private static DeliveryRecordSummary Summarise(BsonDocument record) =>
+        new(
             record[NotificationKeyField].AsString,
-            parent,
             record[NotificationTypeField].AsString,
             record[OutcomeField].AsString,
             record[RecordedAtField].ToUniversalTime(),
@@ -162,12 +156,8 @@ public sealed class MongoDeliveryRecordSearchReader(
             ReadString(record, "notifyNotificationId"),
             ReadString(record, "notifyReference"),
             ReadString(record, "templateId"),
-            ReadTemplateVersion(record),
-            parent is null
-                ? null
-                : new("/admin/notification-commands/delivery-records?notificationKey=" + Uri.EscapeDataString(parent))
+            ReadTemplateVersion(record)
         );
-    }
 
     private static string? ReadString(BsonDocument record, string name) =>
         record.TryGetValue(name, out var value) && value.IsString ? value.AsString : null;

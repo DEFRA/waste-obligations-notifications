@@ -158,16 +158,12 @@ public sealed class CommandDlqInspector(
     {
         var encoded = Uri.EscapeDataString(notificationKey);
 
-        return new(
-            "/admin/notification-commands/delivery-records?notificationKey=" + encoded,
-            "/admin/notification-commands/delivery-records?resendOfNotificationKey=" + encoded
-        );
+        return new("/admin/notification-commands/delivery-records?notificationKey=" + encoded);
     }
 
     private static DeliveryRecordSummary Summarise(NotificationDeliveryEvidence record) =>
         new(
             record.NotificationKey,
-            record.ResendOfNotificationKey,
             record.NotificationType,
             record.Outcome,
             record.RecordedAtUtc,
@@ -177,10 +173,7 @@ public sealed class CommandDlqInspector(
             record.NotifyNotificationId,
             record.NotifyReference,
             record.TemplateId,
-            record.TemplateVersion,
-            record.ResendOfNotificationKey is { } parent
-                ? new("/admin/notification-commands/delivery-records?notificationKey=" + Uri.EscapeDataString(parent))
-                : null
+            record.TemplateVersion
         );
 
     private InvalidOperationException InspectionFailure()

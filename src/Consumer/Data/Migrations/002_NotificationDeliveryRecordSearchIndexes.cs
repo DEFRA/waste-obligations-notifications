@@ -23,15 +23,6 @@ public sealed class NotificationDeliveryRecordSearchIndexes : MongoMigration
             }
         ),
         (
-            "resendOfNotificationKey_recordedAtUtc_id_desc",
-            new BsonDocument
-            {
-                { "resendOfNotificationKey", 1 },
-                { RecordedAtField, -1 },
-                { "_id", -1 },
-            }
-        ),
-        (
             "outcome_recordedAtUtc_id_desc",
             new BsonDocument
             {

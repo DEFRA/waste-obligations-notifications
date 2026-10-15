@@ -12,7 +12,6 @@ public sealed record DeliveryRecordSearchQuery
     public DateTime? RecordedToUtc { get; init; }
     public string? NotifyNotificationId { get; init; }
     public string? NotificationKey { get; init; }
-    public string? ResendOfNotificationKey { get; init; }
     public string? Outcome { get; init; }
     public int PageSize { get; init; } = 25;
     public string? Cursor { get; init; }
@@ -25,7 +24,6 @@ public sealed record DeliveryRecordSearchQuery
             "recordedToUtc",
             "notifyNotificationId",
             "notificationKey",
-            "resendOfNotificationKey",
             "outcome",
             "pageSize",
             "cursor",
@@ -39,7 +37,6 @@ public sealed record DeliveryRecordSearchQuery
             RecordedToUtc = ReadUtc(Read(values, "recordedToUtc")),
             NotifyNotificationId = Read(values, "notifyNotificationId"),
             NotificationKey = Read(values, "notificationKey"),
-            ResendOfNotificationKey = Read(values, "resendOfNotificationKey"),
             Outcome = Read(values, "outcome"),
             PageSize = Read(values, "pageSize") is { } size
                 ? int.Parse(size, NumberStyles.None, CultureInfo.InvariantCulture)
@@ -58,7 +55,7 @@ public sealed record DeliveryRecordSearchQuery
             || RecordedFromUtc is { Kind: not DateTimeKind.Utc }
             || RecordedToUtc is { Kind: not DateTimeKind.Utc }
             || RecordedFromUtc >= RecordedToUtc
-            || new[] { NotifyNotificationId, NotificationKey, ResendOfNotificationKey, Outcome }.Any(value =>
+            || new[] { NotifyNotificationId, NotificationKey, Outcome }.Any(value =>
                 value is not null && (value.Length is < 1 or > 512 || value.Any(char.IsControl))
             )
         )
@@ -119,7 +116,6 @@ public sealed record DeliveryRecordSearchQuery
                         RecordedToUtc,
                         NotifyNotificationId,
                         NotificationKey,
-                        ResendOfNotificationKey,
                         Outcome,
                     }
                 )

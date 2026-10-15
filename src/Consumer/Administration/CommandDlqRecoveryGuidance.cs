@@ -22,11 +22,10 @@ public static class CommandDlqRecoveryGuidance
             {
                 "delivery-accepted" =>
                     "Notify acceptance is recorded; this does not confirm recipient delivery. Check Notify by "
-                        + "notification ID/reference and check any replacement's progress. If still processing, wait. "
+                        + "notification ID/reference. If still processing, wait. "
                         + "If delivered, redrive only to clean up the terminal queue copy without another send. "
                         + "If Notify later reports delivery failed, investigate; the record remains accepted and "
-                        + "redrive still performs terminal-copy cleanup only. Explicit resend is unavailable. "
-                        + "An empty replacement lookup does not prove queue absence or failed publication.",
+                        + "redrive still performs terminal-copy cleanup only. Explicit resend is unavailable.",
                 "active-claim" => Unconfirmed
                     + "An unexpired lease owns the attempt, but is not proof that its process is running. "
                     + "Wait and inspect again. Selected redrive is not offered while the lease is active; "

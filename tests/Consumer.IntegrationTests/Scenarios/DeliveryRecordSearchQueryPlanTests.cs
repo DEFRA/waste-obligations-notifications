@@ -17,7 +17,6 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
 {
     private const string CollectionName = "NotificationDeliveryRecord";
     private const string NotifyId = "retained-notify-id";
-    private const string ParentKey = "v1:retained-parent";
     private const string AcceptedOutcome = "delivery-accepted";
 
     [Fact]
@@ -71,8 +70,7 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
                                 "v1:target-" + index.ToString("D2", CultureInfo.InvariantCulture),
                                 index <= 20 ? time.AddMinutes(-1) : time,
                                 AcceptedOutcome,
-                                NotifyId,
-                                ParentKey
+                                NotifyId
                             )
                         )
                 )
@@ -124,14 +122,12 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
                         "v1:newer-nonmatch-" + index.ToString(CultureInfo.InvariantCulture),
                         time.AddMinutes(2).AddMilliseconds(index),
                         "delivery-suppressed",
-                        index % 2 == 0 ? "nonmatching-notify-id" : null,
-                        index % 3 == 0 ? "v1:nonmatching-parent" : null
+                        index % 2 == 0 ? "nonmatching-notify-id" : null
                     )
                 );
             await records.InsertManyAsync(newerNonmatches, cancellationToken: token);
             Assert.Equal(2041, await records.CountDocumentsAsync(new BsonDocument(), cancellationToken: token));
             var notifyQuery = new DeliveryRecordSearchQuery { PageSize = 5, NotifyNotificationId = NotifyId };
-            var parentQuery = new DeliveryRecordSearchQuery { PageSize = 5, ResendOfNotificationKey = ParentKey };
             var outcomeQuery = new DeliveryRecordSearchQuery { PageSize = 5, Outcome = AcceptedOutcome };
             var filtered = new[]
             {
@@ -142,7 +138,6 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
                     RecordedToUtc = time.AddTicks(1),
                 },
                 notifyQuery,
-                parentQuery,
                 outcomeQuery,
                 new DeliveryRecordSearchQuery
                 {
@@ -150,7 +145,6 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
                     RecordedFromUtc = time,
                     RecordedToUtc = time.AddTicks(1),
                     NotifyNotificationId = NotifyId,
-                    ResendOfNotificationKey = ParentKey,
                     Outcome = AcceptedOutcome,
                 },
             };
@@ -192,7 +186,6 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
             var controls = new[]
             {
                 (Index: "notifyNotificationId_recordedAtUtc_id_desc", Query: notifyQuery),
-                (Index: "resendOfNotificationKey_recordedAtUtc_id_desc", Query: parentQuery),
                 (Index: "outcome_recordedAtUtc_id_desc", Query: outcomeQuery),
             };
             foreach (var (index, query) in controls)
@@ -239,8 +232,7 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
                         "v1:deep-" + index.ToString("D3", CultureInfo.InvariantCulture),
                         time.AddMinutes(index <= 300 ? 4 : 5),
                         AcceptedOutcome,
-                        NotifyId,
-                        ParentKey
+                        NotifyId
                     )
                 );
             await records.InsertManyAsync(deepRecords, cancellationToken: token);
@@ -352,8 +344,7 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
         string key,
         DateTime recorded,
         string outcome,
-        string? notifyId = null,
-        string? parent = null
+        string? notifyId = null
     )
     {
         var record = new BsonDocument
@@ -369,8 +360,6 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
         };
         if (notifyId is not null)
             record.Add("notifyNotificationId", notifyId);
-        if (parent is not null)
-            record.Add("resendOfNotificationKey", parent);
 
         return record;
     }

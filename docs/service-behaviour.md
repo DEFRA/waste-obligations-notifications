@@ -293,8 +293,7 @@ does not authorise a later action. Matching retained evidence appears in
 also exposed at the item level. Conflicting evidence is never returned as a
 matching summary. Pending or unrecorded commands expose their derived original
 Notify reference for investigating uncertain results, not proof of acceptance.
-Valid commands provide encoded `links.deliveryRecord` and `links.resends` search
-URLs; a retained replacement summary also provides `links.sourceRecord`.
+Valid commands provide an encoded `links.deliveryRecord` search URL.
 Malformed/unsupported entries expose no command identity, correlation, record,
 navigation or usable selected action, and direct engineering escalation.
 
@@ -303,7 +302,7 @@ recipient delivery. The implemented recovery choices are:
 
 | Classification | Guidance and available actions |
 | --- | --- |
-| `delivery-accepted` | Check Notify and any replacement's progress. Recorded acceptance does not prove recipient delivery. Wait if processing; redrive cleans up a terminal queue copy without another send. Later delivery failure leaves acceptance intact. Explicit resend is unavailable. Inspect/redrive only. |
+| `delivery-accepted` | Check Notify. Recorded acceptance does not prove recipient delivery. Wait if processing; redrive cleans up a terminal queue copy without another send. Later delivery failure leaves acceptance intact. Explicit resend is unavailable. Inspect/redrive only. |
 | `active-claim` | Wait and inspect again. The lease does not prove the owning process is running. Selected redrive is not offered while active; discard refuses active claims. |
 | `expired-claim` | Check Notify using the original reference. If delivered, discard to stop further attempts; if processing, wait. If rejection is confirmed, fix its cause, including credentials where relevant, before redrive. An inconclusive lookup retains duplicate risk. Inspect/redrive/discard. |
 | `unrecorded` | Investigate and fix the processing failure before redrive, or discard if further attempts are no longer required. Redrive/discard. |
@@ -313,8 +312,7 @@ recipient delivery. The implemented recovery choices are:
 
 Pending evidence cannot distinguish rejection, a lost response, a crash before
 sending or failed acceptance persistence. Absence in Notify is not proof that no
-request was accepted. Empty replacement lookup is not proof of queue absence or
-failed publication. Neither suppression nor abandonment can be overridden.
+request was accepted. Neither suppression nor abandonment can be overridden.
 No resend endpoint or new removal action is provided.
 
 Command content is permitted only in authenticated inspection responses; it must
@@ -493,7 +491,7 @@ correlation metadata remain available. Redaction affects event snapshots only;
 request filters, authorization and non-administration logging are unchanged.
 
 Filters are `recordedFromUtc` (inclusive), `recordedToUtc` (exclusive),
-`notifyNotificationId`, `notificationKey`, `resendOfNotificationKey` and `outcome`.
+`notifyNotificationId`, `notificationKey` and `outcome`.
 Query names are case-insensitive; names outside these filters, `pageSize` and `cursor` return 400.
 Date bounds require explicit UTC (`Z` or a zero offset) and use the latest
 `recordedAtUtc` processing-state time, rather than `actionOccurredAtUtc`.
@@ -529,8 +527,8 @@ Reads do not rewrite or backfill evidence.
 Search dependency failures emit one fixed error diagnostic without query values,
 identifiers or exception content; caller cancellation emits no failure diagnostic.
 
-Optional forward migration 002 adds four full, visible, nonunique search indexes:
-recording time/ObjectId descending, and exact Notify ID, parent key or outcome
+Optional forward migration 002 adds three full, visible, nonunique search indexes:
+recording time/ObjectId descending, and exact Notify ID or outcome
 followed by the same descending pair. The critical unique notification-key index
 continues to guard delivery identity. Search uses no index hints. Integration
 tests check representative query plans for bounded ordered reads; combined filters can retain
@@ -540,7 +538,7 @@ performance guarantee is implied.
 The search-index migration does not gate critical delivery readiness. Investigate
 optional migration failures and confirm completion before relying on efficient
 search. Builds consume resources, can outlive a client timeout, and require
-monitoring. The four indexes add storage and delivery-state write maintenance.
+monitoring. The three indexes add storage and delivery-state write maintenance.
 Incompatible owned definitions are preserved and rejected; rollback drops only
 these owned search indexes. No data backfill, payload or configuration change is
 required.
@@ -548,9 +546,7 @@ required.
 Summaries include opaque identity, retained outcome/type, business-action and
 recording timestamps, and available acceptance, lease, template and Notify
 correlation. Recipient/immutable digests, attempt owners and email payloads are
-excluded. Optional `resendOfNotificationKey` is read without backfill. Original
-records have no parent; replacement summaries provide an encoded
-`links.sourceRecord` URL for exact parent lookup. An empty parent/replacement
-lookup does not prove queue absence or publication failure. Recorded acceptance
-is not proof of recipient delivery. Explicit resend remains unavailable; this
-search capability does not create replacement commands.
+excluded. Recorded acceptance is not proof of recipient delivery. Explicit resend,
+parent correlation, parent search filters/navigation and their index are deferred
+until a replacement-command producer exists. Search does not create replacement
+commands or alter stored evidence.

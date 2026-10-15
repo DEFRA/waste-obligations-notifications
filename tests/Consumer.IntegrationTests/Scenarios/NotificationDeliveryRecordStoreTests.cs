@@ -82,7 +82,6 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             Assert.NotNull(active.Record);
             Assert.Equal("delivery-pending", active.Record.Outcome);
             Assert.Null(active.Record.NotifyNotificationId);
-            Assert.Null(active.Record.ResendOfNotificationKey);
             Assert.Equal(activeRecord, await records.Find(filter).SingleAsync(token));
             var conflict = await store.Inspect(command with { TemplateId = "changed-private-template" }, token);
             Assert.Equal("immutable-conflict", conflict.Classification);
@@ -108,11 +107,6 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                     token
                 )
             );
-            await records.UpdateOneAsync(
-                filter,
-                new BsonDocument("$set", new BsonDocument("resendOfNotificationKey", "v1:parent/+?")),
-                cancellationToken: token
-            );
             var acceptedRecord = await records.Find(filter).SingleAsync(token);
             var accepted = await store.Inspect(command, token);
             Assert.Equal("delivery-accepted", accepted.Classification);
@@ -120,7 +114,6 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             Assert.Null(accepted.LeaseExpiresAtUtc);
             Assert.NotNull(accepted.Record);
             Assert.Equal(digest.CreateIdempotencyKeyDigest(command.IdempotencyKey), accepted.Record.NotificationKey);
-            Assert.Equal("v1:parent/+?", accepted.Record.ResendOfNotificationKey);
             Assert.Equal("11111111-1111-1111-1111-111111111111", accepted.Record.NotifyNotificationId);
             Assert.Equal(digest.CreateNotifyReference(command.IdempotencyKey), accepted.Record.NotifyReference);
             Assert.Equal(command.TemplateId, accepted.Record.TemplateId);
@@ -189,7 +182,6 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             foreach (
                 var field in new[]
                 {
-                    "resendOfNotificationKey",
                     "notifyNotificationId",
                     "notifyReference",
                     "templateId",
@@ -203,7 +195,6 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             var optional = await store.Inspect(command, token);
             Assert.Equal("delivery-accepted", optional.Classification);
             Assert.NotNull(optional.Record);
-            Assert.Null(optional.Record.ResendOfNotificationKey);
             Assert.Null(optional.Record.NotifyNotificationId);
             Assert.Null(optional.Record.NotifyReference);
             Assert.Null(optional.Record.TemplateId);

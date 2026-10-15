@@ -415,7 +415,7 @@ public sealed class CommandDlqInspectionTests
     }
 
     [Fact]
-    public async Task WhenInspectingMatchingAcceptedReplacement_ShouldReturnRetainedSummaryAndEncodedNavigation()
+    public async Task WhenInspectingMatchingAcceptedRecord_ShouldReturnRetainedSummaryAndEncodedNavigation()
     {
         await using var factory = new InspectionApplicationFactory();
         using var client = factory.CreateClient();
@@ -423,7 +423,6 @@ public sealed class CommandDlqInspectionTests
         var key = digest.CreateIdempotencyKeyDigest(Identity);
         var evidence = new NotificationDeliveryEvidence(
             key,
-            "v1:parent/+?",
             "submitted",
             "delivery-accepted",
             new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc),
@@ -455,7 +454,9 @@ public sealed class CommandDlqInspectionTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(key, summary.GetProperty("notificationKey").GetString());
-        Assert.Equal("v1:parent/+?", summary.GetProperty("resendOfNotificationKey").GetString());
+        Assert.False(summary.TryGetProperty("resendOfNotificationKey", out _));
+        Assert.False(summary.TryGetProperty("links", out _));
+        Assert.False(item.GetProperty("links").TryGetProperty("resends", out _));
         Assert.Equal("11111111-1111-1111-1111-111111111111", item.GetProperty("notifyNotificationId").GetString());
         Assert.Equal("v1:retained-reference", item.GetProperty("notifyReference").GetString());
         Assert.Equal("v1:retained-reference", summary.GetProperty("notifyReference").GetString());
@@ -467,23 +468,10 @@ public sealed class CommandDlqInspectionTests
             "/admin/notification-commands/delivery-records?notificationKey=" + encodedKey,
             item.GetProperty("links").GetProperty("deliveryRecord").GetString()
         );
-        Assert.Equal(
-            "/admin/notification-commands/delivery-records?resendOfNotificationKey=" + encodedKey,
-            item.GetProperty("links").GetProperty("resends").GetString()
-        );
-        Assert.Equal(
-            "/admin/notification-commands/delivery-records?notificationKey=v1%3Aparent%2F%2B%3F",
-            summary.GetProperty("links").GetProperty("sourceRecord").GetString()
-        );
         foreach (
             var field in new[] { "recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation" }
         )
             Assert.False(summary.TryGetProperty(field, out _));
-        Assert.Contains(
-            "An empty replacement lookup does not prove",
-            item.GetProperty("operatorGuidance").GetString()!,
-            StringComparison.Ordinal
-        );
         Assert.Single(factory.Store.ReceivedCalls());
         Assert.Single(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
@@ -1221,6 +1209,7 @@ public sealed class CommandDlqInspectionTests
     [InlineData("pageSize=1&pageSize=2")]
     [InlineData("notifyId=private-notify-id")]
     [InlineData("resendOf=private-parent-key")]
+    [InlineData("resendOfNotificationKey=private-parent-key")]
     [InlineData("notificationKey=known-key&unexpected=value")]
     [InlineData("notificationKey=")]
     [InlineData("outcome=%00")]
@@ -1246,7 +1235,7 @@ public sealed class CommandDlqInspectionTests
     }
 
     [Fact]
-    public async Task WhenAdminSearchesRetainedEvidence_ShouldReturnSummaryAndEncodedParentThroughRealReaderWithoutEffects()
+    public async Task WhenAdminSearchesRetainedEvidence_ShouldReturnSummaryThroughRealReaderWithoutEffects()
     {
         var mongo = Substitute.For<IMongoClient>();
         var database = Substitute.For<IMongoDatabase>();
@@ -1292,10 +1281,8 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal("delivery-pending", record.GetProperty("outcome").GetString());
         Assert.Equal("2026-10-12T09:00:00Z", record.GetProperty("recordedAtUtc").GetString());
         Assert.Equal(JsonValueKind.Null, record.GetProperty("notifyNotificationId").ValueKind);
-        Assert.Equal(
-            "/admin/notification-commands/delivery-records?notificationKey=v1%3Aparent%2F%2B%3F",
-            record.GetProperty("links").GetProperty("sourceRecord").GetString()
-        );
+        Assert.False(record.TryGetProperty("resendOfNotificationKey", out _));
+        Assert.False(record.TryGetProperty("links", out _));
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
         string[] privateFields = ["recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation"];
         foreach (var field in privateFields)

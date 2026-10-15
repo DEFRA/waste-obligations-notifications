@@ -367,8 +367,8 @@ Recipient addresses, template IDs and personalisation are visible to the operato
 they remain excluded from logs, tokens and Mongo evidence.
 Inspection adds current-state `operatorGuidance`, implemented `availableActions`
 (method/endpoint/description), matching `deliveryRecord` summaries and available
-Notify correlation. Encoded record/replacement links support retained lookup;
-replacement summaries link to their parent. Pending/unrecorded items provide the
+Notify correlation. Encoded delivery-record links support retained lookup.
+Pending/unrecorded items provide the
 original Notify reference for investigation, without asserting acceptance.
 Historical dependency errors are not persisted; inspection returns its current
 classification without a placeholder failure-details field. Malformed or unsupported
@@ -450,17 +450,17 @@ Authenticated `POST /admin/notification-commands/dlq/verification-command` accep
 Use authenticated `GET /admin/notification-commands/delivery-records` after a queue
 copy has disappeared or before a Notify ID exists. Combine explicit UTC
 `recordedFromUtc`/`recordedToUtc` bounds (inclusive/exclusive), exact
-`notifyNotificationId`, `notificationKey`, `resendOfNotificationKey`, and optional
+`notifyNotificationId`, `notificationKey`, and optional
 `outcome`. Bounds use recording time, not business-action time. All retained
 outcomes are included by default; pending records remain `delivery-pending`.
 
 The response contains `records` and `nextCursor`. Pages default to 25, with
 `pageSize` 1–100, newest recording time first and a stable identifier tie-breaker.
 Retain the filters when supplying the opaque cursor for the next page. Concurrent
-updates do not provide a snapshot. Summaries expose retained correlation and
-encoded parent links without email payloads or queue/Notify/evidence-write effects.
-Acceptance does not establish recipient delivery. Optional parent readback does
-not create replacements; explicit resend remains unavailable.
+updates do not provide a snapshot. Summaries expose retained correlation without
+email payloads or queue/Notify/evidence-write effects. Acceptance does not establish
+recipient delivery. Explicit resend and parent readback are deferred until a
+replacement-command producer exists.
 Search pages contain readable retained summaries: malformed mandatory BSON fields
 are excluded before pagination, while unknown string outcomes remain included.
 Invalid optional fields return null; dates are not invented and evidence is not

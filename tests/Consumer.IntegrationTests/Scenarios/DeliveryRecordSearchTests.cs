@@ -20,21 +20,20 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
         var to = from.AddDays(1);
         var fixtures = new[]
         {
-            Record(1, "v1:replacement", "delivery-accepted", from, "notify-1", "v1:parent/+?"),
-            Record(2, "v1:replacement-other", "delivery-accepted", from.AddHours(1), "notify-1", "v1:parent/+?"),
-            Record(3, "v1:replacement-upper", "delivery-accepted", to, "notify-1", "v1:parent/+?"),
+            Record(1, "v1:replacement", "delivery-accepted", from, "notify-1"),
+            Record(2, "v1:replacement-other", "delivery-accepted", from.AddHours(1), "notify-1"),
+            Record(3, "v1:replacement-upper", "delivery-accepted", to, "notify-1"),
             Record(
                 4,
                 "v1:replacement-before",
                 "delivery-accepted",
                 from.AddMilliseconds(-1),
-                "notify-1",
-                "v1:parent/+?"
+                "notify-1"
             ),
-            Record(5, "v1:replacement-pending", "delivery-pending", from, null, "v1:parent/+?"),
-            Record(6, "v1:replacement-case-notify", "delivery-accepted", from, "NOTIFY-1", "v1:parent/+?"),
-            Record(7, "v1:replacement-other-parent", "delivery-accepted", from, "notify-1", "v1:other"),
-            Record(8, "V1:replacement", "delivery-accepted", from, "notify-1", "v1:parent/+?"),
+            Record(5, "v1:replacement-pending", "delivery-pending", from, null),
+            Record(6, "v1:replacement-case-notify", "delivery-accepted", from, "NOTIFY-1"),
+            Record(7, "v1:replacement-other-parent", "delivery-accepted", from, "notify-1"),
+            Record(8, "V1:replacement", "delivery-accepted", from, "notify-1"),
         };
         try
         {
@@ -54,7 +53,6 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
                     RecordedToUtc = to,
                     NotifyNotificationId = "notify-1",
                     NotificationKey = "v1:replacement",
-                    ResendOfNotificationKey = "v1:parent/+?",
                     Outcome = "delivery-accepted",
                 },
                 token
@@ -65,10 +63,6 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             Assert.Equal(new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc), record.ActionOccurredAtUtc);
             Assert.Equal("notify-1", record.NotifyNotificationId);
             Assert.Equal("v1:reference", record.NotifyReference);
-            Assert.Equal(
-                "/admin/notification-commands/delivery-records?notificationKey=v1%3Aparent%2F%2B%3F",
-                record.Links?.SourceRecord
-            );
             Assert.Null(result.NextCursor);
             foreach (
                 var exclusion in new[]
@@ -77,11 +71,6 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
                     {
                         NotificationKey = "v1:replacement",
                         NotifyNotificationId = "NOTIFY-1",
-                    },
-                    new DeliveryRecordSearchQuery
-                    {
-                        NotificationKey = "v1:replacement",
-                        ResendOfNotificationKey = "v1:other",
                     },
                     new DeliveryRecordSearchQuery { NotificationKey = "v1:replacement", Outcome = "delivery-pending" },
                     new DeliveryRecordSearchQuery
@@ -106,11 +95,6 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             );
             Assert.Equal(6, range.Records.Count);
             Assert.All(range.Records, item => Assert.Equal(from.Date, item.RecordedAtUtc.Date));
-            var parents = await reader.Search(
-                new DeliveryRecordSearchQuery { ResendOfNotificationKey = "v1:parent/+?" },
-                token
-            );
-            Assert.Equal(7, parents.Records.Count);
             var fractionalLower = await reader.Search(
                 new DeliveryRecordSearchQuery { RecordedFromUtc = from.AddTicks(1), RecordedToUtc = to },
                 token
@@ -121,11 +105,6 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
                 token
             );
             Assert.Equal(5, fractionalUpper.Records.Count);
-            var unknownParent = await reader.Search(
-                new DeliveryRecordSearchQuery { ResendOfNotificationKey = "v1:absent" },
-                token
-            );
-            Assert.Empty(unknownParent.Records);
             Assert.Equal(before, await records.Find(new BsonDocument()).Sort("{_id:1}").ToListAsync(token));
         }
         finally
@@ -135,7 +114,7 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task WhenRecordingTimesTie_ShouldTraverseEveryOutcomeNewestFirstWithoutRepeatingOrInventingParents()
+    public async Task WhenRecordingTimesTie_ShouldTraverseEveryOutcomeNewestFirstWithoutRepeatingRecords()
     {
         using var client = CreateMongoClient();
         var databaseName = $"notifications_search_pages_{Guid.NewGuid():N}";
@@ -184,11 +163,6 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             );
             Assert.Equal("v1:old", Assert.Single(third.Records).NotificationKey);
             Assert.Null(third.NextCursor);
-            foreach (var record in first.Records.Concat(second.Records).Concat(third.Records))
-            {
-                Assert.Null(record.ResendOfNotificationKey);
-                Assert.Null(record.Links);
-            }
             var pending = await reader.Search(new DeliveryRecordSearchQuery { NotificationKey = "v1:pending" }, token);
             Assert.Equal("delivery-pending", Assert.Single(pending.Records).Outcome);
             Assert.Null(pending.Records[0].NotifyNotificationId);
@@ -292,11 +266,9 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
                     Assert.Null(record.TemplateVersion);
                     Assert.Null(record.AcceptedAtUtc);
                     Assert.Null(record.LeaseExpiresAtUtc);
-                    Assert.Null(record.ResendOfNotificationKey);
                     Assert.Null(record.NotifyNotificationId);
                     Assert.Null(record.NotifyReference);
                     Assert.Null(record.TemplateId);
-                    Assert.Null(record.Links);
                 }
             );
             Assert.NotNull(first.NextCursor);
@@ -347,8 +319,7 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
         string key,
         string outcome,
         DateTime recordedAtUtc,
-        string? notifyId = null,
-        string? parent = null
+        string? notifyId = null
     )
     {
         var record = new BsonDocument
@@ -369,8 +340,6 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             record.Add("notifyReference", "v1:reference");
             record.Add("acceptedAtUtc", recordedAtUtc);
         }
-        if (parent is not null)
-            record.Add("resendOfNotificationKey", parent);
 
         return record;
     }

@@ -22,15 +22,14 @@ For deployed environments:
 Retained evidence can be searched independently of DLQ inspection through
 `GET /admin/notification-commands/delivery-records`. Use explicit UTC recording-time
 bounds: `recordedFromUtc` includes its boundary and `recordedToUtc` excludes it.
-Combine exact Notify ID, opaque notification key, parent key and outcome filters.
+Combine exact Notify ID, opaque notification key and outcome filters.
 All recorded outcomes are included by default; `delivery-pending` is retained
 state, not a claim-expiry classification. `pageSize` defaults to 25 and is limited
 to 1–100. Copy `nextCursor` into the next request with the same filters. Results
 are newest first; concurrent updates do not provide a historical snapshot.
 
-Follow a replacement's `links.sourceRecord` to its parent. An original record
-has no parent. Empty replacement results are not evidence of failed publication
-or queue absence. Search shows no payload, attempt history or live Notify status;
+Parent readback is deferred until a replacement-command producer exists.
+Search shows no payload, attempt history or live Notify status;
 check Notify separately using retained identifiers. Recorded acceptance does not
 confirm recipient delivery. Existing resolving endpoints remain selected redrive
 and discard, plus whole-queue redrive. Explicit resend is unavailable, and search
@@ -39,12 +38,11 @@ records cannot authorise selected actions. See the
 
 Inspection now provides `operatorGuidance`, `availableActions` with HTTP method,
 endpoint and purpose, matching `deliveryRecord` evidence and available Notify
-correlation. Follow encoded `links.deliveryRecord`/`links.resends` to retained
-lookup, and a replacement's `links.sourceRecord` to its parent. Actions are
+correlation. Follow encoded `links.deliveryRecord` to retained lookup. Actions are
 classification-specific recommendations. Redrive validates the selection and
 command content; discard additionally checks current delivery evidence.
 
-- Accepted: check Notify and replacement progress. Wait while processing. Recorded
+- Accepted: check Notify progress. Wait while processing. Recorded
   acceptance is not recipient delivery; even a later delivery failure leaves the
   record accepted. Selected redrive only cleans up the terminal queue copy.
   Explicit resend is unavailable.

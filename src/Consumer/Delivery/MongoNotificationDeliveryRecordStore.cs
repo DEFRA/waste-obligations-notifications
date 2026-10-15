@@ -48,7 +48,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { RecordedAtField, 1 },
             { LeaseExpiresAtField, 1 },
             { NotificationKeyField, 1 },
-            { "resendOfNotificationKey", 1 },
             { NotificationTypeField, 1 },
             { ActionOccurredAtField, 1 },
             { "acceptedAtUtc", 1 },
@@ -126,7 +125,6 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
 
         return new(
             key,
-            ReadString(record, "resendOfNotificationKey"),
             type,
             outcome,
             recorded.Value.UtcDateTime,
