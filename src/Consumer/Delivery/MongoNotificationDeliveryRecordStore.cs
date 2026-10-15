@@ -20,7 +20,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private const string LeaseExpiresAtField = "leaseExpiresAtUtc";
     private const string LeaseExpiresAtExpression = "$leaseExpiresAtUtc";
     private const string PendingOutcome = "delivery-pending";
-    private const string AbandonedOutcome = "delivery-abandoned";
+    private const string AbandonedOutcome = NotificationDeliveryClassifications.DeliveryAbandoned;
     private readonly INotificationCommandDigest _digest;
     private readonly IMongoCollection<NotificationDeliveryRecord> _records;
 
@@ -83,19 +83,19 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             .Project<BsonDocument>(fields)
             .FirstOrDefaultAsync(cancellationToken);
         if (record is null)
-            return new("unrecorded", null, null);
+            return new(NotificationDeliveryClassifications.Unrecorded, null, null);
         var matches = record.TryGetValue("matches", out var matching) && matching.IsBoolean && matching.AsBoolean;
         var evidence = matches ? TryReadEvidence(record) : null;
         var classification = evidence?.Outcome switch
         {
-            PendingOutcome => record["active"].AsBoolean ? "active-claim" : "expired-claim",
-            "delivery-accepted" => "delivery-accepted",
-            "delivery-suppressed" => "delivery-suppressed",
+            PendingOutcome => record["active"].AsBoolean ? NotificationDeliveryClassifications.ActiveClaim : NotificationDeliveryClassifications.ExpiredClaim,
+            NotificationDeliveryClassifications.DeliveryAccepted => NotificationDeliveryClassifications.DeliveryAccepted,
+            NotificationDeliveryClassifications.DeliverySuppressed => NotificationDeliveryClassifications.DeliverySuppressed,
             AbandonedOutcome => AbandonedOutcome,
-            _ => "unknown-delivery-state",
+            _ => NotificationDeliveryClassifications.UnknownDeliveryState,
         };
         if (!matches)
-            classification = "immutable-conflict";
+            classification = NotificationDeliveryClassifications.ImmutableConflict;
 
         return new(
             classification,
@@ -445,5 +445,5 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private static BsonDocument Literal(string value) => new("$literal", value);
 
     private static bool IsTerminal(string outcome) =>
-        outcome is "delivery-accepted" or "delivery-suppressed" or AbandonedOutcome;
+        outcome is NotificationDeliveryClassifications.DeliveryAccepted or NotificationDeliveryClassifications.DeliverySuppressed or AbandonedOutcome;
 }

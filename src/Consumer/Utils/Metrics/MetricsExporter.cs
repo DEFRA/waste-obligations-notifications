@@ -77,13 +77,13 @@ public static class MetricsExporter
         name == MetricTags.NotificationType && NotificationCommandDeliveryOptions.IsDiagnosticLabel(value)
         || name == MetricTags.Outcome
             && value
-                is "delivery-accepted"
-                    or "delivery-suppressed"
-                    or "delivery-abandoned"
+                is NotificationDeliveryClassifications.DeliveryAccepted
+                    or NotificationDeliveryClassifications.DeliverySuppressed
+                    or NotificationDeliveryClassifications.DeliveryAbandoned
                     or "terminal-duplicate"
                     or "claimed"
                     or "conflict"
-                    or "active-claim"
+                    or NotificationDeliveryClassifications.ActiveClaim
                     or "unavailable"
                     or "failure";
 }
