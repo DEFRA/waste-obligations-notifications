@@ -616,10 +616,11 @@ Required mode fails on missing credentials,
 provider errors or incorrect rendering, and a fresh TRX guard requires all four
 cases to execute and pass with zero skips. Publishing depends on that build job.
 Normal isolated integration execution in CI has no provider key and explicitly
-skips previews; it does not substitute for the required step. An isolated result
-such as 76 passed out of 80 total therefore includes four deliberately skipped
-provider previews. Read the separate **Notify submission previews** CI report row
-for their required execution result; those four cases must all pass there.
+skips previews; it does not substitute for the required step. The CI report
+combines isolated integration results with the dedicated preview results using
+test identities, counting each test once. Missing reports remain unavailable,
+and failures or unrelated skips remain visible. Preview results also appear
+in their own row. Counts come from TRX evidence rather than a fixed case list.
 
 For local previews, create the Git-ignored root `.env` (also excluded from Docker
 build inputs) with a placeholder replaced privately:

@@ -27,8 +27,9 @@
   from the companion Waste Obligations service; avoid global logging overrides.
 - Put reusable HTTP stubbing and request inspection in test helper extensions.
 - Distinguish isolated integration results from separately required provider
-  previews when reporting test totals and skips. Name intentionally skipped test
-  groups in the CI report itself and link them to their separate required result.
+  previews when reporting test totals and skips. Derive combined integration
+  totals from TRX evidence and count repeated preview cases once. Never hard-code
+  preview counts or case lists in CI summaries or step titles.
 
 ## Build guidance for agents
 
