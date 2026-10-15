@@ -55,9 +55,10 @@ public static class CommandDlqRecoveryGuidance
                     "Command inputs cannot be trusted. Escalate to engineering to investigate format, encoding "
                         + "or schema compatibility. Inspect again after repair. No selected recovery or removal "
                         + "action is available.",
-                NotificationDeliveryClassifications.UnknownDeliveryState => "The stored outcome is unrecognised. Escalate to engineering to investigate compatibility "
-                    + "or damaged evidence before permitting another email. No selected recovery or removal "
-                    + "action is offered for this classification.",
+                NotificationDeliveryClassifications.UnknownDeliveryState =>
+                    "The stored outcome is unrecognised. Escalate to engineering to investigate compatibility "
+                        + "or damaged evidence before permitting another email. No selected recovery or removal "
+                        + "action is offered for this classification.",
                 _ => "The classification is unrecognised. Escalate to engineering before permitting another email. "
                     + "No selected recovery or removal action is offered for this classification.",
             }
@@ -66,7 +67,8 @@ public static class CommandDlqRecoveryGuidance
     public static IReadOnlyList<CommandDlqAction> Actions(string classification) =>
         classification switch
         {
-            NotificationDeliveryClassifications.DeliveryAccepted or NotificationDeliveryClassifications.DeliverySuppressed =>
+            NotificationDeliveryClassifications.DeliveryAccepted
+            or NotificationDeliveryClassifications.DeliverySuppressed =>
             [
                 new("POST", InspectEndpoint, "Inspect again"),
                 new("POST", RedriveEndpoint, "Clean up the terminal queue copy without another send"),
@@ -83,7 +85,10 @@ public static class CommandDlqRecoveryGuidance
                 new("POST", RedriveEndpoint, "Retry after fixing the processing failure"),
                 new("POST", DiscardEndpoint, "Abandon further attempts and remove the selected copy"),
             ],
-            NotificationDeliveryClassifications.DeliveryAbandoned => [new("POST", DiscardEndpoint, "Clean up the abandoned queue copy")],
+            NotificationDeliveryClassifications.DeliveryAbandoned =>
+            [
+                new("POST", DiscardEndpoint, "Clean up the abandoned queue copy"),
+            ],
             _ => [],
         };
 }

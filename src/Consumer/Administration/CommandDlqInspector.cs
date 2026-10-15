@@ -77,8 +77,12 @@ public sealed class CommandDlqInspector(
                             null,
                             null,
                             null,
-                            CommandDlqRecoveryGuidance.For(NotificationDeliveryClassifications.InvalidOrUnsupportedCommand),
-                            CommandDlqRecoveryGuidance.Actions(NotificationDeliveryClassifications.InvalidOrUnsupportedCommand),
+                            CommandDlqRecoveryGuidance.For(
+                                NotificationDeliveryClassifications.InvalidOrUnsupportedCommand
+                            ),
+                            CommandDlqRecoveryGuidance.Actions(
+                                NotificationDeliveryClassifications.InvalidOrUnsupportedCommand
+                            ),
                             null,
                             null,
                             null,
@@ -147,7 +151,10 @@ public sealed class CommandDlqInspector(
             state.Record?.NotifyNotificationId,
             state.Record?.NotifyReference
                 ?? (
-                    state.Classification is NotificationDeliveryClassifications.Unrecorded or NotificationDeliveryClassifications.ActiveClaim or NotificationDeliveryClassifications.ExpiredClaim
+                    state.Classification
+                        is NotificationDeliveryClassifications.Unrecorded
+                            or NotificationDeliveryClassifications.ActiveClaim
+                            or NotificationDeliveryClassifications.ExpiredClaim
                         ? digest.CreateNotifyReference(command.IdempotencyKey)
                         : null
                 ),

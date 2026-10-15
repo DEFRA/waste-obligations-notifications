@@ -339,13 +339,7 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
         }
     }
 
-    private static BsonDocument Record(
-        int id,
-        string key,
-        DateTime recorded,
-        string outcome,
-        string? notifyId = null
-    )
+    private static BsonDocument Record(int id, string key, DateTime recorded, string outcome, string? notifyId = null)
     {
         var record = new BsonDocument
         {

@@ -23,13 +23,7 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             Record(1, "v1:replacement", "delivery-accepted", from, "notify-1"),
             Record(2, "v1:replacement-other", "delivery-accepted", from.AddHours(1), "notify-1"),
             Record(3, "v1:replacement-upper", "delivery-accepted", to, "notify-1"),
-            Record(
-                4,
-                "v1:replacement-before",
-                "delivery-accepted",
-                from.AddMilliseconds(-1),
-                "notify-1"
-            ),
+            Record(4, "v1:replacement-before", "delivery-accepted", from.AddMilliseconds(-1), "notify-1"),
             Record(5, "v1:replacement-pending", "delivery-pending", from, null),
             Record(6, "v1:replacement-case-notify", "delivery-accepted", from, "NOTIFY-1"),
             Record(7, "v1:replacement-other-parent", "delivery-accepted", from, "notify-1"),

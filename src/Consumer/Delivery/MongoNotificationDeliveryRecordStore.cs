@@ -88,9 +88,13 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         var evidence = matches ? TryReadEvidence(record) : null;
         var classification = evidence?.Outcome switch
         {
-            PendingOutcome => record["active"].AsBoolean ? NotificationDeliveryClassifications.ActiveClaim : NotificationDeliveryClassifications.ExpiredClaim,
-            NotificationDeliveryClassifications.DeliveryAccepted => NotificationDeliveryClassifications.DeliveryAccepted,
-            NotificationDeliveryClassifications.DeliverySuppressed => NotificationDeliveryClassifications.DeliverySuppressed,
+            PendingOutcome => record["active"].AsBoolean
+                ? NotificationDeliveryClassifications.ActiveClaim
+                : NotificationDeliveryClassifications.ExpiredClaim,
+            NotificationDeliveryClassifications.DeliveryAccepted =>
+                NotificationDeliveryClassifications.DeliveryAccepted,
+            NotificationDeliveryClassifications.DeliverySuppressed =>
+                NotificationDeliveryClassifications.DeliverySuppressed,
             AbandonedOutcome => AbandonedOutcome,
             _ => NotificationDeliveryClassifications.UnknownDeliveryState,
         };
@@ -445,5 +449,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private static BsonDocument Literal(string value) => new("$literal", value);
 
     private static bool IsTerminal(string outcome) =>
-        outcome is NotificationDeliveryClassifications.DeliveryAccepted or NotificationDeliveryClassifications.DeliverySuppressed or AbandonedOutcome;
+        outcome
+            is NotificationDeliveryClassifications.DeliveryAccepted
+                or NotificationDeliveryClassifications.DeliverySuppressed
+                or AbandonedOutcome;
 }
