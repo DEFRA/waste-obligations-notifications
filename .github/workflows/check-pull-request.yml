@@ -33,6 +33,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/actionlint"
           tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
           "$RUNNER_TEMP/actionlint/actionlint"
+      - name: Verify CI report summaries
+        run: python3 scripts/test-ci-report.py
 
   dependency-review:
     name: Dependency security review

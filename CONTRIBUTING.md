@@ -40,6 +40,7 @@ Compose changes, run the full local check. Always tear Compose down, including
 after a failed build or test:
 
 ```bash
+python3 scripts/test-ci-report.py
 docker compose up --build -d --wait
 DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 dotnet build waste-obligations-notifications.slnx --no-restore -m:1 -nodeReuse:false --disable-build-servers -v:minimal
 DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 dotnet test --test-modules tests/Consumer.Tests/bin/Debug/net10.0/Consumer.Tests.dll --no-build -v:minimal
