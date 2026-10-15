@@ -46,8 +46,6 @@ public static class ServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() =>
                 new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = TimeSpan.FromMinutes(2) }
             )
-            // HTTP logs include declaration paths; processing logs already provide safe correlation.
-            .RemoveAllLoggers()
             .AddResilienceHandler(
                 WasteObligationsOptions.SectionName,
                 (builder, context) =>
