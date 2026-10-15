@@ -6,10 +6,10 @@ using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.IntegrationTests.Extensions;
-using static Defra.WasteObligations.Consumer.IntegrationTests.Extensions.WireMockExtensions;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using static Defra.WasteObligations.Consumer.IntegrationTests.Extensions.WireMockExtensions;
 
 namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
@@ -179,5 +179,4 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
 
         return body.RootElement.GetProperty("email_address").GetString() == recipient;
     }
-
 }
