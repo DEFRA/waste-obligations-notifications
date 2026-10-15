@@ -494,6 +494,7 @@ request filters, authorization and non-administration logging are unchanged.
 
 Filters are `recordedFromUtc` (inclusive), `recordedToUtc` (exclusive),
 `notifyNotificationId`, `notificationKey`, `resendOfNotificationKey` and `outcome`.
+Query names are case-insensitive; names outside these filters, `pageSize` and `cursor` return 400.
 Date bounds require explicit UTC (`Z` or a zero offset) and use the latest
 `recordedAtUtc` processing-state time, rather than `actionOccurredAtUtc`.
 Supplied filters combine; Notify IDs and opaque keys match exactly, including

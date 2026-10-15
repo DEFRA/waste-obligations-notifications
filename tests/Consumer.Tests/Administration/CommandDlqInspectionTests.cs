@@ -1201,11 +1201,27 @@ public sealed class CommandDlqInspectionTests
         Assert.Empty(factory.Notify.ReceivedCalls());
     }
 
+    [Fact]
+    public void WhenSearchQueryNamesUseDifferentCase_ShouldReadSupportedValues()
+    {
+        var values = new QueryCollection(
+            Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery("?PAGESIZE=7&NOTIFICATIONKEY=exact-key")
+        );
+
+        var query = DeliveryRecordSearchQuery.Parse(values);
+
+        Assert.Equal(7, query.PageSize);
+        Assert.Equal("exact-key", query.NotificationKey);
+    }
+
     [Theory]
     [InlineData("pageSize=0")]
     [InlineData("pageSize=101")]
     [InlineData("pageSize=999999999999999999999")]
     [InlineData("pageSize=1&pageSize=2")]
+    [InlineData("notifyId=private-notify-id")]
+    [InlineData("resendOf=private-parent-key")]
+    [InlineData("notificationKey=known-key&unexpected=value")]
     [InlineData("notificationKey=")]
     [InlineData("outcome=%00")]
     [InlineData("recordedFromUtc=2026-10-12T00:00:00")]

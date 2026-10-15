@@ -19,6 +19,20 @@ public sealed record DeliveryRecordSearchQuery
 
     public static DeliveryRecordSearchQuery Parse(IQueryCollection values)
     {
+        string[] supportedNames =
+        [
+            "recordedFromUtc",
+            "recordedToUtc",
+            "notifyNotificationId",
+            "notificationKey",
+            "resendOfNotificationKey",
+            "outcome",
+            "pageSize",
+            "cursor",
+        ];
+        if (values.Keys.Any(name => !supportedNames.Contains(name, StringComparer.OrdinalIgnoreCase)))
+            throw new ArgumentException("Delivery record search query is invalid.");
+
         var query = new DeliveryRecordSearchQuery
         {
             RecordedFromUtc = ReadUtc(Read(values, "recordedFromUtc")),
