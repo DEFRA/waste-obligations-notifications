@@ -46,6 +46,10 @@ public static class ServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() =>
                 new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = TimeSpan.FromMinutes(2) }
             )
+            // Default HttpClient failure logs attach the dependency exception, including its message.
+            // Suppress this client's logs to preserve the no-dependency-exception-text contract;
+            // the consumer emits fixed failure reasons and safe correlation instead.
+            .RemoveAllLoggers()
             .AddResilienceHandler(
                 WasteObligationsOptions.SectionName,
                 (builder, context) =>
