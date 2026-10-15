@@ -1,11 +1,12 @@
 using System.Net;
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using Amazon.Runtime;
 using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.IntegrationTests.Extensions;
+using static Defra.WasteObligations.Consumer.IntegrationTests.Extensions.WireMockExtensions;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -78,8 +79,7 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
 
         try
         {
-            await Stub(
-                wireMock,
+            await wireMock.Stub(
                 readMapping,
                 new
                 {
@@ -97,8 +97,7 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
                 declaration,
                 HttpStatusCode.OK
             );
-            await Stub(
-                wireMock,
+            await wireMock.Stub(
                 notifyMapping,
                 new { Methods = s_postMethods, Path = Exact("/v2/notifications/email") },
                 new
@@ -164,7 +163,7 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
                 TimeSpan.FromSeconds(30)
             );
 
-            var reads = await FindRequests(wireMock, "GET", readPath);
+            var reads = await wireMock.FindRequests("GET", readPath);
             Assert.Single(reads);
         }
         finally
@@ -181,39 +180,4 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
         return body.RootElement.GetProperty("email_address").GetString() == recipient;
     }
 
-    private static object Exact(string path) =>
-        new { Matchers = new[] { new { Name = "ExactMatcher", Pattern = path } } };
-
-    private static async Task Stub(HttpClient client, Guid id, object request, object body, HttpStatusCode status)
-    {
-        using var result = await client.PostAsJsonAsync(
-            "/__admin/mappings",
-            new
-            {
-                Guid = id,
-                Request = request,
-                Response = new
-                {
-                    StatusCode = (int)status,
-                    BodyAsJson = body,
-                    Headers = new Dictionary<string, string> { ["Content-Type"] = "application/json" },
-                },
-            },
-            TestContext.Current.CancellationToken
-        );
-        result.EnsureSuccessStatusCode();
-    }
-
-    private static async Task<JsonElement[]> FindRequests(HttpClient client, string method, string path)
-    {
-        using var result = await client.PostAsJsonAsync(
-            "/__admin/requests/find",
-            new { Methods = new[] { method }, Path = Exact(path) },
-            TestContext.Current.CancellationToken
-        );
-        result.EnsureSuccessStatusCode();
-        var requests = await result.Content.ReadFromJsonAsync<JsonElement[]>(TestContext.Current.CancellationToken);
-
-        return requests ?? [];
-    }
 }
