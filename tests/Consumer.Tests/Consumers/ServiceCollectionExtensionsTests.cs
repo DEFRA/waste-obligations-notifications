@@ -299,16 +299,61 @@ public class ServiceCollectionExtensionsTests
         );
     }
 
+    [Fact]
+    public async Task WhenDefaultHttpFailureLoggerIsRestored_ShouldDemonstratePrivateExceptionDisclosure()
+    {
+        const string privateData = "synthetic-private-dependency-message@example.test";
+        var attempts = 0;
+        using var logs = new CapturedLogs();
+        using var handler = new ReadHandler(_ =>
+        {
+            attempts++;
+            if (attempts == 1)
+                throw new HttpRequestException(privateData);
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"version\":1}") };
+        });
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(logs));
+        services.AddAnalyticsEventConsumer(CreateConfiguration());
+        services
+            .AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddDefaultLogger();
+        using var provider = services.BuildServiceProvider();
+        var reader = provider.GetRequiredService<IWasteObligationsClient>();
+
+        var result = await reader.ReadDeclaration(
+            Guid.NewGuid(),
+            "65f1f6570bb08052a8a27b01",
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal(1, result!.Version);
+        Assert.Equal(2, handler.RequestCount);
+        Assert.Contains(
+            logs.Exceptions,
+            entry => entry.Category.StartsWith("System.Net.Http.HttpClient.", StringComparison.Ordinal)
+                && entry.Exception.Message == privateData
+        );
+    }
+
     private sealed class CapturedLogs : ILoggerProvider
     {
         public List<string> Messages { get; } = [];
 
-        public ILogger CreateLogger(string categoryName) => new CapturedLogger(Messages);
+        public List<(string Category, Exception Exception)> Exceptions { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new CapturedLogger(categoryName, Messages, Exceptions);
 
         public void Dispose() { }
     }
 
-    private sealed class CapturedLogger(List<string> messages) : ILogger
+    private sealed class CapturedLogger(
+        string category,
+        List<string> messages,
+        List<(string Category, Exception Exception)> exceptions
+    ) : ILogger
     {
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
@@ -321,7 +366,12 @@ public class ServiceCollectionExtensionsTests
             TState state,
             Exception? exception,
             Func<TState, Exception?, string> formatter
-        ) => messages.Add(formatter(state, exception) + exception);
+        )
+        {
+            messages.Add(formatter(state, exception) + exception);
+            if (exception is not null)
+                exceptions.Add((category, exception));
+        }
     }
 
     private static string RepositoryRoot()
