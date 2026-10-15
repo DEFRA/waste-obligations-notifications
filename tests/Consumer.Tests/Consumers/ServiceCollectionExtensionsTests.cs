@@ -333,7 +333,8 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal(2, handler.RequestCount);
         Assert.Contains(
             logs.Exceptions,
-            entry => entry.Category.StartsWith("System.Net.Http.HttpClient.", StringComparison.Ordinal)
+            entry =>
+                entry.Category.StartsWith("System.Net.Http.HttpClient.", StringComparison.Ordinal)
                 && entry.Exception.Message == privateData
         );
     }
