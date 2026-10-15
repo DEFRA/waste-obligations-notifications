@@ -13,7 +13,7 @@ class CiReportTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        workflow = Path(__file__).resolve().parents[1] / ".github/workflows/check-pull-request.yml"
+        workflow = Path(__file__).resolve().parents[2] / ".github/workflows/check-pull-request.yml"
         section = workflow.read_text().split("      - name: Create CI report\n", 1)[1]
         section = section.split("      - name: Replace pull request comment\n", 1)[0]
         self.script = "\n".join(
