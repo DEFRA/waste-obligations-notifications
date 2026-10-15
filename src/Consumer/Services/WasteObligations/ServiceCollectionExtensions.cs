@@ -2,6 +2,7 @@ using System.Net;
 using Defra.WasteObligations.Consumer.Consumers;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using Polly;
 
 namespace Defra.WasteObligations.Consumer.Services.WasteObligations;
@@ -13,9 +14,6 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration
     )
     {
-        // Polly telemetry formats exception results; preserve only the consumer's fixed diagnostics.
-        services.AddLogging(logging => logging.AddFilter("Polly", LogLevel.None));
-
         services
             .AddOptions<WasteObligationsOptions>()
             .Bind(configuration.GetSection(WasteObligationsOptions.SectionName))
@@ -48,17 +46,23 @@ public static class ServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(() =>
                 new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = TimeSpan.FromMinutes(2) }
             )
+            // HTTP logs include declaration paths; processing logs already provide safe correlation.
             .RemoveAllLoggers()
-            .AddStandardResilienceHandler(options =>
-            {
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(10);
-                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(3);
-                options.Retry.MaxRetryAttempts = 2;
-                options.Retry.Delay = TimeSpan.FromMilliseconds(200);
-                options.Retry.BackoffType = DelayBackoffType.Exponential;
-                options.Retry.UseJitter = true;
-                options.Retry.DisableForUnsafeHttpMethods();
-            });
+            .AddResilienceHandler(
+                WasteObligationsOptions.SectionName,
+                (builder, context) =>
+                {
+                    var options = context.ServiceProvider.GetRequiredService<IOptions<WasteObligationsOptions>>().Value;
+                    options.Retry.DisableForUnsafeHttpMethods();
+
+                    // Exception text can contain private downstream data. Scope suppression to this pipeline.
+                    builder.ConfigureTelemetry(NullLoggerFactory.Instance);
+                    builder
+                        .AddTimeout(options.TotalRequestTimeout)
+                        .AddRetry(options.Retry)
+                        .AddTimeout(options.AttemptTimeout);
+                }
+            );
 
         return services;
     }

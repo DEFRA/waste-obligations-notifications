@@ -448,6 +448,11 @@ host, including command delivery and DLQ administration.
   prefer HTTP/2 with protocol fallback. The client retries transient GET failures
   at most twice with exponential jitter, bounded by a ten-second total and
   three-second attempt timeout; the outer read/health cancellation budget wins.
+  These defaults are inherited by `WasteObligationsOptions` and can be overridden
+  through `WasteObligations:TotalRequestTimeout`, `WasteObligations:AttemptTimeout`
+  and `WasteObligations:Retry`. Only timeout, retry and attempt timeout strategies
+  are installed; there is no circuit breaker. The outer processing budget still
+  caps the operation regardless of these settings.
   Unsafe methods are not retried. A 404 returns no declaration; the submission
   producer decides to retain the event for recovery.
 - The four `Submission__DirectEnglishTemplateId`, `Submission__DirectWelshTemplateId`,

@@ -655,3 +655,11 @@ point at the isolated fixture. This command is a real Notify runtime configurati
 normal `docker compose up --build -d --wait` remains the isolated fixture setup.
 Declaration Read access, effective template access, cutover and both producer
 readiness remain deployment prerequisites described above.
+
+Waste Obligations resilience defaults remain ten seconds total, three seconds per
+attempt and two transient GET retries. Override inherited settings through
+`WasteObligations__Retry__MaxRetryAttempts`, `WasteObligations__Retry__Delay`,
+`WasteObligations__AttemptTimeout__Timeout` or
+`WasteObligations__TotalRequestTimeout__Timeout`. The analytics processing budget
+remains the outer bound; increasing client timeouts does not extend it. The client
+uses timeout, retry and attempt timeout strategies without a circuit breaker.

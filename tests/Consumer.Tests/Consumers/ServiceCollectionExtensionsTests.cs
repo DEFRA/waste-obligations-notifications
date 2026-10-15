@@ -225,6 +225,31 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal(2, handler.RequestCount);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task WhenRetryLimitIsConfigured_ShouldUseConfiguredAttempts(int retries)
+    {
+        var configuration = CreateConfiguration();
+        configuration["WasteObligations:Retry:MaxRetryAttempts"] = retries.ToString();
+        configuration["WasteObligations:Retry:Delay"] = "00:00:00";
+        using var handler = new ReadHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddAnalyticsEventConsumer(configuration);
+        services
+            .AddHttpClient<IWasteObligationsClient, WasteObligationsClient>()
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+        using var provider = services.BuildServiceProvider();
+        var reader = provider.GetRequiredService<IWasteObligationsClient>();
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            reader.ReadDeclaration(Guid.NewGuid(), "65f1f6570bb08052a8a27b01", TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(retries + 1, handler.RequestCount);
+    }
+
     [Fact]
     public async Task WhenTransientReadExceptionContainsPrivateData_ShouldRetryWithoutLoggingIt()
     {
@@ -258,6 +283,8 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal(1, result!.Version);
         Assert.Equal(2, handler.RequestCount);
         Assert.Contains("Fixed analytics retry diagnostic", logs.Messages);
+        provider.GetRequiredService<ILoggerFactory>().CreateLogger("Polly.Unrelated").LogWarning("Other pipeline diagnostic");
+        Assert.Contains("Other pipeline diagnostic", logs.Messages);
         Assert.All(
             logs.Messages,
             message =>
