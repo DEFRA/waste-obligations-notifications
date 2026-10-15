@@ -1,8 +1,8 @@
 using System.Net;
 using Defra.WasteObligations.Consumer.Consumers;
 using Microsoft.Extensions.Http.Resilience;
-using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Polly;
 
 namespace Defra.WasteObligations.Consumer.Services.WasteObligations;

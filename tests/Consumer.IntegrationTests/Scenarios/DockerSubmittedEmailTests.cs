@@ -142,7 +142,7 @@ public sealed class DockerSubmittedEmailTests : IntegrationTestBase
             await WaitForAsync(
                 async () =>
                 {
-                    var requests = await FindRequests(wireMock, "POST", "/v2/notifications/email");
+                    var requests = await wireMock.FindRequests("POST", "/v2/notifications/email");
                     var matching = requests.Where(entry => IsRecipient(entry, recipient)).ToArray();
                     var sent = Assert.Single(matching);
                     using var body = JsonDocument.Parse(sent.GetProperty("Request").GetProperty("Body").GetString()!);

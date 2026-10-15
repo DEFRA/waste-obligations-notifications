@@ -283,7 +283,10 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal(1, result!.Version);
         Assert.Equal(2, handler.RequestCount);
         Assert.Contains("Fixed analytics retry diagnostic", logs.Messages);
-        provider.GetRequiredService<ILoggerFactory>().CreateLogger("Polly.Unrelated").LogWarning("Other pipeline diagnostic");
+        provider
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("Polly.Unrelated")
+            .LogWarning("Other pipeline diagnostic");
         Assert.Contains("Other pipeline diagnostic", logs.Messages);
         Assert.All(
             logs.Messages,
