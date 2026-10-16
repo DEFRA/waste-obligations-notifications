@@ -333,9 +333,8 @@ public sealed class CommandDlqResendTests
         Assert.IsType<SendMessageRequest>(
             Assert
                 .Single(
-                    factory
-                        .Sqs.ReceivedCalls()
-                        .Where(call => call.GetMethodInfo().Name == nameof(IAmazonSQS.SendMessageAsync))
+                    factory.Sqs.ReceivedCalls(),
+                    call => call.GetMethodInfo().Name == nameof(IAmazonSQS.SendMessageAsync)
                 )
                 .GetArguments()[0]
         );
