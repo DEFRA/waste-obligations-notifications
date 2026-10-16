@@ -55,6 +55,7 @@ public static class WebApplicationBuilderExtensions
                 && logEvent.Properties.TryGetValue("RequestPath", out var path)
                 && path.ToString().Contains("/health")
                 && !logEvent.MessageTemplate.Text.StartsWith("Request finished")
-            );
+            )
+            .Enrich.With(new AdminRequestLogRedactor(httpAccessor));
     }
 }

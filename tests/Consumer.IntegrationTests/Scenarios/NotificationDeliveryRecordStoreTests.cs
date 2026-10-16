@@ -17,7 +17,7 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
 {
     [Fact]
-    public async Task WhenInspectingDeliveryEvidence_ShouldClassifyRealStateWithoutChangingRecordsOrProjectingNotifyDetails()
+    public async Task WhenInspectingDeliveryEvidence_ShouldProjectMatchingCorrelationWithoutChangingRecords()
     {
         using var client = CreateMongoClient();
         var databaseName = $"notifications_inspect_state_{Guid.NewGuid():N}";
@@ -79,11 +79,14 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 new DateTimeOffset(activeRecord["leaseExpiresAtUtc"].ToUniversalTime()),
                 active.LeaseExpiresAtUtc
             );
+            Assert.NotNull(active.Record);
+            Assert.Equal("delivery-pending", active.Record.Outcome);
+            Assert.Null(active.Record.NotifyNotificationId);
             Assert.Equal(activeRecord, await records.Find(filter).SingleAsync(token));
-            Assert.Equal(
-                "immutable-conflict",
-                (await store.Inspect(command with { TemplateId = "changed-private-template" }, token)).Classification
-            );
+            var conflict = await store.Inspect(command with { TemplateId = "changed-private-template" }, token);
+            Assert.Equal("immutable-conflict", conflict.Classification);
+            Assert.Null(conflict.Record);
+            Assert.Equal(activeRecord, await records.Find(filter).SingleAsync(token));
             await records.UpdateOneAsync(
                 filter,
                 new BsonDocument("$set", new BsonDocument("leaseExpiresAtUtc", DateTime.UnixEpoch)),
@@ -109,6 +112,14 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             Assert.Equal("delivery-accepted", accepted.Classification);
             Assert.Equal(new DateTimeOffset(acceptedRecord["recordedAtUtc"].ToUniversalTime()), accepted.RecordedAtUtc);
             Assert.Null(accepted.LeaseExpiresAtUtc);
+            Assert.NotNull(accepted.Record);
+            Assert.Equal(digest.CreateIdempotencyKeyDigest(command.IdempotencyKey), accepted.Record.NotificationKey);
+            Assert.Equal("11111111-1111-1111-1111-111111111111", accepted.Record.NotifyNotificationId);
+            Assert.Equal(digest.CreateNotifyReference(command.IdempotencyKey), accepted.Record.NotifyReference);
+            Assert.Equal(command.TemplateId, accepted.Record.TemplateId);
+            Assert.Equal(3, accepted.Record.TemplateVersion);
+            Assert.Equal(acceptedRecord["acceptedAtUtc"].ToUniversalTime(), accepted.Record.AcceptedAtUtc);
+            Assert.Equal(command.ActionOccurredAtUtc.UtcDateTime, accepted.Record.ActionOccurredAtUtc);
             Assert.Equal(acceptedRecord, await records.Find(filter).SingleAsync(token));
             const string privateOutcome = "private-outcome-recipient@example.com";
             await records.UpdateOneAsync(
@@ -121,22 +132,77 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             Assert.Equal("unknown-delivery-state", unknown.Classification);
             Assert.Equal(new DateTimeOffset(unknownRecord["recordedAtUtc"].ToUniversalTime()), unknown.RecordedAtUtc);
             Assert.Null(unknown.LeaseExpiresAtUtc);
+            Assert.NotNull(unknown.Record);
+            Assert.Equal(privateOutcome, unknown.Record.Outcome);
             Assert.Equal(unknownRecord, await records.Find(filter).SingleAsync(token));
             foreach (
                 var value in new[]
                 {
-                    privateOutcome,
                     command.IdempotencyKey,
                     command.EmailAddress,
-                    command.TemplateId,
                     "private-body",
-                    "11111111-1111-1111-1111-111111111111",
+                    "inspection-owner",
+                    "new-inspection-owner",
+                    digest.CreateRecipientDigest(command.EmailAddress),
+                    digest.CreateImmutableFieldsDigest(command),
                 }
             )
             {
                 Assert.DoesNotContain(value, JsonSerializer.Serialize(accepted), StringComparison.Ordinal);
                 Assert.DoesNotContain(value, JsonSerializer.Serialize(unknown), StringComparison.Ordinal);
             }
+            (string Field, BsonValue? Value)[] malformed =
+            [
+                ("actionOccurredAtUtc", null),
+                ("recordedAtUtc", new BsonString("not-a-date")),
+                ("notificationType", new BsonArray { "submitted" }),
+                ("outcome", new BsonInt32(42)),
+                ("recordedAtUtc", new BsonDateTime(long.MaxValue)),
+            ];
+            foreach (var (field, value) in malformed)
+            {
+                var damaged = acceptedRecord.DeepClone().AsBsonDocument;
+                if (value is null)
+                    damaged.Remove(field);
+                else
+                    damaged[field] = value;
+                await records.ReplaceOneAsync(filter, damaged, cancellationToken: token);
+                var state = await store.Inspect(command, token);
+                Assert.Equal("unknown-delivery-state", state.Classification);
+                Assert.Null(state.Record);
+                var damagedConflict = await store.Inspect(command with { TemplateId = "different-template" }, token);
+                Assert.Equal("immutable-conflict", damagedConflict.Classification);
+                Assert.Null(damagedConflict.Record);
+                var healthy = await store.Inspect(command with { IdempotencyKey = "suppressed-inspection-key" }, token);
+                Assert.Equal("delivery-suppressed", healthy.Classification);
+                Assert.NotNull(healthy.Record);
+                Assert.Equal(damaged, await records.Find(filter).SingleAsync(token));
+            }
+            var optionalDamage = acceptedRecord.DeepClone().AsBsonDocument;
+            foreach (var field in new[] { "notifyNotificationId", "notifyReference", "templateId" })
+                optionalDamage[field] = 42;
+            optionalDamage["acceptedAtUtc"] = "not-a-date";
+            optionalDamage["leaseExpiresAtUtc"] = new BsonDateTime(long.MaxValue);
+            optionalDamage["templateVersion"] = new BsonInt64((long)int.MaxValue + 1);
+            await records.ReplaceOneAsync(filter, optionalDamage, cancellationToken: token);
+            var optional = await store.Inspect(command, token);
+            Assert.Equal("delivery-accepted", optional.Classification);
+            Assert.NotNull(optional.Record);
+            Assert.Null(optional.Record.NotifyNotificationId);
+            Assert.Null(optional.Record.NotifyReference);
+            Assert.Null(optional.Record.TemplateId);
+            Assert.Null(optional.Record.TemplateVersion);
+            Assert.Null(optional.Record.AcceptedAtUtc);
+            Assert.Null(optional.Record.LeaseExpiresAtUtc);
+            Assert.Equal(optionalDamage, await records.Find(filter).SingleAsync(token));
+            optionalDamage["templateVersion"] = new BsonInt64(7);
+            await records.ReplaceOneAsync(filter, optionalDamage, cancellationToken: token);
+            Assert.Equal(7, (await store.Inspect(command, token)).Record?.TemplateVersion);
+            Assert.Equal(optionalDamage, await records.Find(filter).SingleAsync(token));
+            optionalDamage["templateVersion"] = new BsonDouble(7.5);
+            await records.ReplaceOneAsync(filter, optionalDamage, cancellationToken: token);
+            Assert.Null((await store.Inspect(command, token)).Record?.TemplateVersion);
+            Assert.Equal(optionalDamage, await records.Find(filter).SingleAsync(token));
         }
         finally
         {

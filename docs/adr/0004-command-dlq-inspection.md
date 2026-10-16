@@ -106,6 +106,90 @@ are introduced. Existing inspection holds must expire before whole-queue recover
 Native movement leaves delivery evidence unchanged and normal consumption retains
 all terminal suppression and identity checks.
 
+### Retained evidence search
+
+Add read-only authenticated delivery-record search independently of queue
+inspection. Use a separate Mongo reader, preserving the delivery write-store
+interface. Project only retained identity/state/timestamps and available Notify,
+template correlation; exclude payloads, recipient/immutable digests and attempt
+ownership. Explicit resend and parent readback are deferred until a
+replacement-command producer exists. No current production writer persists parent
+correlation, so its filter, navigation and index would add unused surface and
+storage/write-maintenance cost. Stored evidence remains unchanged.
+
+Use recording time for inclusive/exclusive UTC ranges and exact combined
+identifier filters. Sort newest first with Mongo ObjectId as a stable tie-breaker,
+and use bounded opaque cursors bound to the search filters. Unchanged-dataset
+traversal is stable; concurrent updates have no snapshot guarantee. Reuse the
+existing bounded administration dependency timeout and fixed safe failures.
+Search performs no queue, Notify or evidence-write operations. Forward migration
+002 adds three full, visible, nonunique indexes: descending recording time/ObjectId,
+and exact Notify ID or outcome followed by that same descending pair.
+They support bounded ordered listing and the selected exact filters without
+changing the critical unique notification-key index or using query hints.
+
+Migration 002 is noncritical. Its failure does not gate delivery readiness; check
+optional migration completion before relying on efficient administration search.
+Reject incompatible owned indexes without replacing them, confirm index-build
+completion before recording migration history, and remove only owned names on
+rollback. Index builds consume resources and may continue after a client timeout;
+monitor completion and investigate conflicts before retrying. The three indexes
+increase storage and maintenance on delivery-state writes. No data backfill or
+new configuration is introduced.
+
+Real-reader command capture and execution-statistics tests check representative
+unhinted ordered plans for listing, recording ranges, Notify/outcome filters,
+combined filters, unique-key lookup and deep tied-timestamp continuation for
+listing and Notify equality. This is not a
+performance guarantee for every filter combination or data distribution. Combined
+filters can retain residual filtering, and skew can increase examined keys/documents;
+the bounded administration timeout remains applicable.
+
+### Inspection recovery guidance and correlation
+
+Extend each inspection item with current-state operator guidance and only
+implemented usable actions, represented by HTTP method, endpoint and description.
+Keep action-time selection, immutable identity and state guards unchanged.
+Recorded acceptance is distinct from recipient delivery; accepted redrive cleans
+up a terminal queue copy, including after a later provider delivery failure.
+Explicit resend is unavailable. Pending guidance treats rejection and lost
+responses as conditional investigations and makes inconclusive-lookup duplicate
+risk explicit. Invalid, conflicting and unknown states direct engineering
+escalation without a new removal action.
+
+Extend only the existing read projection to return matching minimal retained
+evidence and available Notify correlation; no delivery write path changes.
+Keep the evidence model in Delivery and map it to the Administration search-summary
+contract. Do not expose a mismatched record as matching evidence. Valid pending or
+unrecorded commands can derive the original Notify reference for investigation;
+this is not proof of acceptance. Provide an encoded exact delivery-record link.
+Invalid inputs expose no partial identity, correlation, navigation or usable action.
+All additional evidence remains confined to the authenticated response and excluded from diagnostic logs.
+
+### Malformed retained evidence
+
+Preserve the required summary and recording-time/ObjectId cursor contract without
+fabricating missing dates. Matching inspection records with malformed mandatory
+summary fields classify as unknown and expose no matching summary; immutable
+conflicts keep precedence. Search applies scalar BSON-type and representable-date
+guards before page limits, excluding unreadable mandatory evidence while retaining
+unknown string outcomes. Optional malformed correlation/timestamps/version return
+null, with Int32/Int64 versions read only when representable as Int32. Exact
+optional identifiers require scalar strings, not Mongo array containment. Empty
+search results do not establish absence of malformed evidence. No backfill or
+record mutation occurs. A fixed search-failure diagnostic omits query/exception
+content and distinguishes caller cancellation.
+
+### Administration request-log privacy
+
+Keep retained identity and Notify correlation confined to authenticated responses.
+GET query values can otherwise appear in hosting diagnostics before authorization
+and in ECS URL enrichment. Redact administration query strings at the logging
+boundary, preserving lifecycle, path, method, status and correlation metadata.
+The [request-log redactor](../../src/Consumer/Utils/Logging/AdminRequestLogRedactor.cs)
+changes detached event metadata after enrichment, leaving request binding,
+authorization, log levels and non-admin request logging unchanged.
+
 ## Consequences
 
 Malformed commands and immutable conflicts cannot be discarded through these APIs.

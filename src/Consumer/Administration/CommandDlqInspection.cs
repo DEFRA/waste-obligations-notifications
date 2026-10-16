@@ -17,5 +17,11 @@ public sealed record CommandDlqInspection(
     int? SchemaVersion,
     string? EmailAddress,
     string? TemplateId,
-    JsonElement? Personalisation
+    JsonElement? Personalisation,
+    string OperatorGuidance,
+    IReadOnlyList<CommandDlqAction> AvailableActions,
+    DeliveryRecordSummary? DeliveryRecord,
+    string? NotifyNotificationId,
+    string? NotifyReference,
+    CommandDlqInspectionLinks? Links
 );

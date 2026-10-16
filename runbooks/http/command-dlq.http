@@ -9,6 +9,8 @@ POST {{host}}/admin/notification-commands/dlq/verification-command
 Authorization: {{authorization}}
 
 ### Inspect and select up to ten commands
+# Read operatorGuidance and availableActions before recovery.
+# Follow links.deliveryRecord for evidence; explicit resend is unavailable.
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/inspect
 Authorization: {{authorization}}
@@ -44,3 +46,27 @@ Content-Type: application/json
 {
   "selectionToken": "{{selectionToken}}"
 }
+
+### Search retained evidence by recording time (UTC, inclusive/exclusive)
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?recordedFromUtc=2026-10-12T00:00:00Z&recordedToUtc=2026-10-13T00:00:00Z&pageSize=25
+Authorization: {{authorization}}
+
+> {%
+client.global.set("deliveryRecordsCursor", (response.body && response.body.nextCursor) || "");
+%}
+
+### Continue the same recording-time search (only when nextCursor was returned)
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?recordedFromUtc=2026-10-12T00:00:00Z&recordedToUtc=2026-10-13T00:00:00Z&pageSize=25&cursor={{deliveryRecordsCursor}}
+Authorization: {{authorization}}
+
+### Exact retained Notify notification ID lookup (replace the synthetic ID)
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?notifyNotificationId=11111111-1111-1111-1111-111111111111
+Authorization: {{authorization}}
+
+### Exact opaque-key lookup (replace the encoded synthetic key)
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?notificationKey=v1%3Asynthetic-key
+Authorization: {{authorization}}

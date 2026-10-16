@@ -365,9 +365,20 @@ Authenticated inspection returns a `messages` array with each valid command's em
 inputs, SQS metadata, current delivery classification and signed selection token.
 Recipient addresses, template IDs and personalisation are visible to the operator;
 they remain excluded from logs, tokens and Mongo evidence.
+Inspection adds current-state `operatorGuidance`, implemented `availableActions`
+(method/endpoint/description), matching `deliveryRecord` summaries and available
+Notify correlation. Encoded delivery-record links support retained lookup.
+Pending/unrecorded items provide the
+original Notify reference for investigation, without asserting acceptance.
 Historical dependency errors are not persisted; inspection returns its current
 classification without a placeholder failure-details field. Malformed or unsupported
-commands disclose no partial command identity and receive no usable selection.
+commands disclose no partial command identity, summary, correlation or navigation,
+and receive no usable selection or action. Conflicts do not expose mismatched
+records as matching evidence. Guidance separates recorded acceptance from
+recipient delivery and conditional investigation from historical failure causes.
+Explicit resend remains unavailable: accepted redrive only cleans up terminal
+queue copies. See the [operator matrix](docs/service-behaviour.md#command-dlq-inspection)
+for guarded recovery choices and uncertain-Notify duplicate risk.
 Logs use the diagnostic category allowlist and never expose raw identities.
 
 Selections contain only receive-attempt ID, SQS message ID, an HMAC queue binding,
@@ -433,6 +444,32 @@ to record deployment evidence; local checks cannot supply native proof.
 The user approved always-registered authenticated administration despite this evidence gap.
 
 Authenticated `POST /admin/notification-commands/dlq/verification-command` accepts no body. It creates a random `verification-` key with fixed synthetic fields, confirms matching permanent suppression in Mongo, then enqueues it on the configured DLQ. The response contains `idempotencyKey` and `messageId`; it confirms queuing, not processing. Store rejection or failure never publishes; publication failure leaves safe suppression evidence. Inspect and match the generated key before redriving. The normal consumer then processes it as a terminal duplicate, deletes it and makes no Notify call, with either a null cutover or a boundary before its fixed 2000-01-01 action time. This enables operator verification without recipient mail. It cannot verify successful discard because suppressed evidence is protected. Follow the runbook and retain the native proof gap until it is run against AWS.
+
+### Search retained delivery evidence
+
+Use authenticated `GET /admin/notification-commands/delivery-records` after a queue
+copy has disappeared or before a Notify ID exists. Combine explicit UTC
+`recordedFromUtc`/`recordedToUtc` bounds (inclusive/exclusive), exact
+`notifyNotificationId`, `notificationKey`, and optional
+`outcome`. Bounds use recording time, not business-action time. All retained
+outcomes are included by default; pending records remain `delivery-pending`.
+
+The response contains `records` and `nextCursor`. Pages default to 25, with
+`pageSize` 1–100, newest recording time first and a stable identifier tie-breaker.
+Retain the filters when supplying the opaque cursor for the next page. Concurrent
+updates do not provide a snapshot. Summaries expose retained correlation without
+email payloads or queue/Notify/evidence-write effects. Acceptance does not establish
+recipient delivery. Explicit resend and parent readback are deferred until a
+replacement-command producer exists.
+Search pages contain readable retained summaries: malformed mandatory BSON fields
+are excluded before pagination, while unknown string outcomes remain included.
+Invalid optional fields return null; dates are not invented and evidence is not
+rewritten. An empty exact lookup is not proof that no malformed record exists.
+Inspection classifies matching malformed mandatory evidence as unknown and offers
+engineering escalation. Search failures log a fixed reason without query or
+exception content; caller cancellation is distinct.
+See [the HTTP runbook](runbooks/http/README.md) and
+[service behaviour](docs/service-behaviour.md#retained-delivery-record-search).
 
 ## Code quality and delivery
 

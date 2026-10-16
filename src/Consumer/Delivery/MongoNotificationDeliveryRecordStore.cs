@@ -11,6 +11,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
 {
     internal const string CollectionName = nameof(NotificationDeliveryRecord);
     private const string OutcomeField = "outcome";
+    private const string NotificationTypeField = "notificationType";
+    private const string ActionOccurredAtField = "actionOccurredAtUtc";
     private const string ServerNow = "$$NOW";
     private const string NotificationKeyField = "notificationKey";
     private const string ImmutableFieldsField = "immutableFields";
@@ -18,7 +20,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private const string LeaseExpiresAtField = "leaseExpiresAtUtc";
     private const string LeaseExpiresAtExpression = "$leaseExpiresAtUtc";
     private const string PendingOutcome = "delivery-pending";
-    private const string AbandonedOutcome = "delivery-abandoned";
+    private const string AbandonedOutcome = NotificationDeliveryClassifications.DeliveryAbandoned;
     private readonly INotificationCommandDigest _digest;
     private readonly IMongoCollection<NotificationDeliveryRecord> _records;
 
@@ -45,6 +47,14 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { OutcomeField, 1 },
             { RecordedAtField, 1 },
             { LeaseExpiresAtField, 1 },
+            { NotificationKeyField, 1 },
+            { NotificationTypeField, 1 },
+            { ActionOccurredAtField, 1 },
+            { "acceptedAtUtc", 1 },
+            { "notifyNotificationId", 1 },
+            { "notifyReference", 1 },
+            { "templateId", 1 },
+            { "templateVersion", 1 },
             {
                 "matches",
                 new BsonDocument(
@@ -73,25 +83,80 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             .Project<BsonDocument>(fields)
             .FirstOrDefaultAsync(cancellationToken);
         if (record is null)
-            return new("unrecorded", null, null);
-        var classification = record[OutcomeField].AsString switch
+            return new(NotificationDeliveryClassifications.Unrecorded, null, null);
+        var matches = record.TryGetValue("matches", out var matching) && matching.IsBoolean && matching.AsBoolean;
+        var evidence = matches ? TryReadEvidence(record) : null;
+        var classification = evidence?.Outcome switch
         {
-            PendingOutcome => record["active"].AsBoolean ? "active-claim" : "expired-claim",
-            "delivery-accepted" => "delivery-accepted",
-            "delivery-suppressed" => "delivery-suppressed",
+            PendingOutcome => record["active"].AsBoolean
+                ? NotificationDeliveryClassifications.ActiveClaim
+                : NotificationDeliveryClassifications.ExpiredClaim,
+            NotificationDeliveryClassifications.DeliveryAccepted =>
+                NotificationDeliveryClassifications.DeliveryAccepted,
+            NotificationDeliveryClassifications.DeliverySuppressed =>
+                NotificationDeliveryClassifications.DeliverySuppressed,
             AbandonedOutcome => AbandonedOutcome,
-            _ => "unknown-delivery-state",
+            _ => NotificationDeliveryClassifications.UnknownDeliveryState,
         };
-        if (!record["matches"].AsBoolean)
-            classification = "immutable-conflict";
+        if (!matches)
+            classification = NotificationDeliveryClassifications.ImmutableConflict;
 
-        return new(classification, ReadTimestamp(record, RecordedAtField), ReadTimestamp(record, LeaseExpiresAtField));
+        return new(
+            classification,
+            ReadTimestamp(record, RecordedAtField),
+            ReadTimestamp(record, LeaseExpiresAtField),
+            evidence
+        );
     }
 
     private static DateTimeOffset? ReadTimestamp(BsonDocument record, string name) =>
-        record.TryGetValue(name, out var value) && value.BsonType == BsonType.DateTime
-            ? new DateTimeOffset(value.ToUniversalTime())
+        record.TryGetValue(name, out var value)
+        && value is BsonDateTime date
+        && date.MillisecondsSinceEpoch >= DateTimeOffset.MinValue.ToUnixTimeMilliseconds()
+        && date.MillisecondsSinceEpoch <= DateTimeOffset.MaxValue.ToUnixTimeMilliseconds()
+            ? new DateTimeOffset(date.ToUniversalTime())
             : null;
+
+    private static NotificationDeliveryEvidence? TryReadEvidence(BsonDocument record)
+    {
+        var key = ReadString(record, NotificationKeyField);
+        var type = ReadString(record, NotificationTypeField);
+        var outcome = ReadString(record, OutcomeField);
+        var recorded = ReadTimestamp(record, RecordedAtField);
+        var action = ReadTimestamp(record, ActionOccurredAtField);
+        if (key is null || type is null || outcome is null || recorded is null || action is null)
+            return null;
+
+        return new(
+            key,
+            type,
+            outcome,
+            recorded.Value.UtcDateTime,
+            action.Value.UtcDateTime,
+            ReadTimestamp(record, "acceptedAtUtc")?.UtcDateTime,
+            ReadTimestamp(record, LeaseExpiresAtField)?.UtcDateTime,
+            ReadString(record, "notifyNotificationId"),
+            ReadString(record, "notifyReference"),
+            ReadString(record, "templateId"),
+            ReadTemplateVersion(record)
+        );
+    }
+
+    private static string? ReadString(BsonDocument record, string name) =>
+        record.TryGetValue(name, out var value) && value.IsString ? value.AsString : null;
+
+    private static int? ReadTemplateVersion(BsonDocument record)
+    {
+        if (!record.TryGetValue("templateVersion", out var value))
+            return null;
+
+        return value switch
+        {
+            BsonInt32 version => version.Value,
+            BsonInt64 version when version.Value is >= int.MinValue and <= int.MaxValue => (int)version.Value,
+            _ => null,
+        };
+    }
 
     public async Task<AbandonmentResult> RecordAbandonment(
         NotificationCommand command,
@@ -112,8 +177,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { NotificationKeyField, Literal(notificationKey) },
             { ImmutableFieldsField, Literal(immutableFields) },
             { "recipient", Literal(_digest.CreateRecipientDigest(command.EmailAddress)) },
-            { "notificationType", Literal(command.NotificationType) },
-            { "actionOccurredAtUtc", command.ActionOccurredAtUtc.UtcDateTime },
+            { NotificationTypeField, Literal(command.NotificationType) },
+            { ActionOccurredAtField, command.ActionOccurredAtUtc.UtcDateTime },
             { OutcomeField, AbandonedOutcome },
             { RecordedAtField, ServerNow },
         };
@@ -255,8 +320,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { NotificationKeyField, Literal(notificationKey) },
             { ImmutableFieldsField, Literal(immutableFields) },
             { "recipient", Literal(_digest.CreateRecipientDigest(command.EmailAddress)) },
-            { "notificationType", Literal(command.NotificationType) },
-            { "actionOccurredAtUtc", command.ActionOccurredAtUtc.UtcDateTime },
+            { NotificationTypeField, Literal(command.NotificationType) },
+            { ActionOccurredAtField, command.ActionOccurredAtUtc.UtcDateTime },
             { OutcomeField, PendingOutcome },
             { RecordedAtField, ServerNow },
             { "attemptOwner", Literal(attemptOwner) },
@@ -384,5 +449,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private static BsonDocument Literal(string value) => new("$literal", value);
 
     private static bool IsTerminal(string outcome) =>
-        outcome is "delivery-accepted" or "delivery-suppressed" or AbandonedOutcome;
+        outcome
+            is NotificationDeliveryClassifications.DeliveryAccepted
+                or NotificationDeliveryClassifications.DeliverySuppressed
+                or AbandonedOutcome;
 }

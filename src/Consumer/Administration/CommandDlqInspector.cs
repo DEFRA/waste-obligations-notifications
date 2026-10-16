@@ -67,12 +67,22 @@ public sealed class CommandDlqInspector(
                             null,
                             SentAt(message),
                             ReceiveCount(message),
-                            "invalid-or-unsupported-command",
+                            NotificationDeliveryClassifications.InvalidOrUnsupportedCommand,
                             null,
                             null,
                             null,
                             null,
                             message.MessageId,
+                            null,
+                            null,
+                            null,
+                            null,
+                            CommandDlqRecoveryGuidance.For(
+                                NotificationDeliveryClassifications.InvalidOrUnsupportedCommand
+                            ),
+                            CommandDlqRecoveryGuidance.Actions(
+                                NotificationDeliveryClassifications.InvalidOrUnsupportedCommand
+                            ),
                             null,
                             null,
                             null,
@@ -97,25 +107,7 @@ public sealed class CommandDlqInspector(
                 );
                 diagnostics.Inspected(state.Classification, command.NotificationType);
 
-                inspections.Add(
-                    new(
-                        command.IdempotencyKey,
-                        command.NotificationType,
-                        command.ActionOccurredAtUtc,
-                        SentAt(message),
-                        ReceiveCount(message),
-                        state.Classification,
-                        digest.CreateRecipientDigest(command.EmailAddress),
-                        state.RecordedAtUtc,
-                        state.LeaseExpiresAtUtc,
-                        token,
-                        message.MessageId,
-                        command.SchemaVersion,
-                        command.EmailAddress,
-                        command.TemplateId,
-                        command.Personalisation
-                    )
-                );
+                inspections.Add(CreateSupportedInspection(message, command, state, token));
             }
             EnsureTimely(started, source.Token);
 
@@ -130,6 +122,66 @@ public sealed class CommandDlqInspector(
             throw InspectionFailure();
         }
     }
+
+    private CommandDlqInspection CreateSupportedInspection(
+        Message message,
+        NotificationCommand command,
+        NotificationDeliveryState state,
+        string token
+    ) =>
+        new(
+            command.IdempotencyKey,
+            command.NotificationType,
+            command.ActionOccurredAtUtc,
+            SentAt(message),
+            ReceiveCount(message),
+            state.Classification,
+            digest.CreateRecipientDigest(command.EmailAddress),
+            state.RecordedAtUtc,
+            state.LeaseExpiresAtUtc,
+            token,
+            message.MessageId,
+            command.SchemaVersion,
+            command.EmailAddress,
+            command.TemplateId,
+            command.Personalisation,
+            CommandDlqRecoveryGuidance.For(state.Classification),
+            CommandDlqRecoveryGuidance.Actions(state.Classification),
+            state.Record is { } record ? Summarise(record) : null,
+            state.Record?.NotifyNotificationId,
+            state.Record?.NotifyReference
+                ?? (
+                    state.Classification
+                        is NotificationDeliveryClassifications.Unrecorded
+                            or NotificationDeliveryClassifications.ActiveClaim
+                            or NotificationDeliveryClassifications.ExpiredClaim
+                        ? digest.CreateNotifyReference(command.IdempotencyKey)
+                        : null
+                ),
+            RecordLinks(digest.CreateIdempotencyKeyDigest(command.IdempotencyKey))
+        );
+
+    private static CommandDlqInspectionLinks RecordLinks(string notificationKey)
+    {
+        var encoded = Uri.EscapeDataString(notificationKey);
+
+        return new("/admin/notification-commands/delivery-records?notificationKey=" + encoded);
+    }
+
+    private static DeliveryRecordSummary Summarise(NotificationDeliveryEvidence record) =>
+        new(
+            record.NotificationKey,
+            record.NotificationType,
+            record.Outcome,
+            record.RecordedAtUtc,
+            record.ActionOccurredAtUtc,
+            record.AcceptedAtUtc,
+            record.LeaseExpiresAtUtc,
+            record.NotifyNotificationId,
+            record.NotifyReference,
+            record.TemplateId,
+            record.TemplateVersion
+        );
 
     private InvalidOperationException InspectionFailure()
     {
