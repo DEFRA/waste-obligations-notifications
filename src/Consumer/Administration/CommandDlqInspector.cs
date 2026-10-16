@@ -180,7 +180,8 @@ public sealed class CommandDlqInspector(
             record.NotifyNotificationId,
             record.NotifyReference,
             record.TemplateId,
-            record.TemplateVersion
+            record.TemplateVersion,
+            record.ResendOfNotificationKey
         );
 
     private InvalidOperationException InspectionFailure()

@@ -1216,7 +1216,7 @@ public sealed class CommandDlqInspectionTests
     [InlineData("pageSize=1&pageSize=2")]
     [InlineData("notifyId=private-notify-id")]
     [InlineData("resendOf=private-parent-key")]
-    [InlineData("resendOfNotificationKey=private-parent-key")]
+    [InlineData("resendOfNotificationKey=")]
     [InlineData("notificationKey=known-key&unexpected=value")]
     [InlineData("notificationKey=")]
     [InlineData("outcome=%00")]
@@ -1288,7 +1288,7 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal("delivery-pending", record.GetProperty("outcome").GetString());
         Assert.Equal("2026-10-12T09:00:00Z", record.GetProperty("recordedAtUtc").GetString());
         Assert.Equal(JsonValueKind.Null, record.GetProperty("notifyNotificationId").ValueKind);
-        Assert.False(record.TryGetProperty("resendOfNotificationKey", out _));
+        Assert.Equal(JsonValueKind.Null, record.GetProperty("resendOfNotificationKey").ValueKind);
         Assert.False(record.TryGetProperty("links", out _));
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
         string[] privateFields = ["recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation"];

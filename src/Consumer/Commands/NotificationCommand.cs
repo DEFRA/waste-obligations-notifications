@@ -11,7 +11,8 @@ public sealed record NotificationCommand(
     string NotificationType,
     string EmailAddress,
     string TemplateId,
-    JsonElement Personalisation
+    JsonElement Personalisation,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResendOfNotificationKey = null
 )
 {
     public const int CurrentSchemaVersion = 1;
@@ -41,6 +42,11 @@ public sealed record NotificationCommand(
         RequireValue(EmailAddress, "emailAddress");
         RequireValue(TemplateId, "templateId");
 
+        if (ResendOfNotificationKey is not null && !IsOpaqueNotificationKey(ResendOfNotificationKey))
+        {
+            throw new InvalidDataException("Notification command resendOfNotificationKey must be a valid opaque key.");
+        }
+
         if (
             MongoDateTime.TruncateToMilliseconds(ActionOccurredAtUtc) == default
             || ActionOccurredAtUtc.Offset != TimeSpan.Zero
@@ -54,6 +60,11 @@ public sealed record NotificationCommand(
             throw new InvalidDataException("Notification command personalisation must be an object.");
         }
     }
+
+    internal static bool IsOpaqueNotificationKey(string value) =>
+        value.Length == 67
+        && value.StartsWith("v1:", StringComparison.Ordinal)
+        && value.AsSpan(3).IndexOfAnyExcept("0123456789abcdef") < 0;
 
     private static void RequireValue(string value, string propertyName)
     {

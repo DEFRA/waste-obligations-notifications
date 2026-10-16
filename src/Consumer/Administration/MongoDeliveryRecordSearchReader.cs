@@ -40,6 +40,7 @@ public sealed class MongoDeliveryRecordSearchReader(
                 filters.Add(builder.Lt(RecordedAtField, RoundUpToMillisecond(to)));
             AddExact(filters, "notifyNotificationId", query.NotifyNotificationId);
             AddExact(filters, NotificationKeyField, query.NotificationKey);
+            AddExact(filters, "resendOfNotificationKey", query.ResendOfNotificationKey);
             AddExact(filters, OutcomeField, query.Outcome);
             if (query.ReadCursor() is { } cursor)
                 filters.Add(
@@ -62,6 +63,7 @@ public sealed class MongoDeliveryRecordSearchReader(
                 { "notifyReference", 1 },
                 { "templateId", 1 },
                 { "templateVersion", 1 },
+                { "resendOfNotificationKey", 1 },
             };
             var records = mongoClient
                 .GetDatabase(mongoOptions.Value.DatabaseName)
@@ -156,7 +158,9 @@ public sealed class MongoDeliveryRecordSearchReader(
             ReadString(record, "notifyNotificationId"),
             ReadString(record, "notifyReference"),
             ReadString(record, "templateId"),
-            ReadTemplateVersion(record)
+            ReadTemplateVersion(record),
+            ReadString(record, "resendOfNotificationKey") is { } parent
+                && Commands.NotificationCommand.IsOpaqueNotificationKey(parent) ? parent : null
         );
 
     private static string? ReadString(BsonDocument record, string name) =>
