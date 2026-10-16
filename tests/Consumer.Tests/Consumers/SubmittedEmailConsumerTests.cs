@@ -409,7 +409,9 @@ public sealed class SubmittedEmailConsumerTests
 
         Assert.Single(fixture.Publications);
         Assert.Equal(1, fixture.Deletions);
-        Assert.True(fixture.ReceiveTimes[1] - fixture.ReceiveTimes[0] >= TimeSpan.FromSeconds(failure == "timeout" ? 1.8 : 0.9));
+        Assert.True(
+            fixture.ReceiveTimes[1] - fixture.ReceiveTimes[0] >= TimeSpan.FromSeconds(failure == "timeout" ? 1.8 : 0.9)
+        );
         Assert.Contains(
             fixture.Logs.Entries,
             entry =>
