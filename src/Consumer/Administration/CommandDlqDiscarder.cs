@@ -117,16 +117,6 @@ public sealed class CommandDlqDiscarder(
             return null;
         }
 
-        return
-            digest.CreateImmutableFieldsDigest(command) == selection.ImmutableFieldsDigest
-            && (
-                selection.NotificationKey is null
-                || (
-                    digest.CreateIdempotencyKeyDigest(command.IdempotencyKey) == selection.NotificationKey
-                    && command.ResendOfNotificationKey == selection.ResendOfNotificationKey
-                )
-            )
-            ? (message, command)
-            : null;
+        return selection.Matches(command, digest) ? (message, command) : null;
     }
 }

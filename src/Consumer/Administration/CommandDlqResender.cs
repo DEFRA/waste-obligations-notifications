@@ -133,9 +133,7 @@ public sealed class CommandDlqResender(
         if (
             command is null
             || selection.NotificationKey is null
-            || digest.CreateIdempotencyKeyDigest(command.IdempotencyKey) != selection.NotificationKey
-            || digest.CreateImmutableFieldsDigest(command) != selection.ImmutableFieldsDigest
-            || command.ResendOfNotificationKey != selection.ResendOfNotificationKey
+            || !selection.Matches(command, digest)
         )
             return null;
 

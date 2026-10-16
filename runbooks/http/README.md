@@ -19,6 +19,9 @@ For deployed environments:
 - [Health](health.http): anonymous readiness and extended checks, plus authenticated readiness.
 - [Command DLQ](command-dlq.http): run readiness, then inspect before redrive, discard or accepted-command resend.
 
+Executable response examples are recorded in the Verify `*.verified.json` snapshots in
+[`tests/Consumer.Tests/Administration`](../../tests/Consumer.Tests/Administration).
+
 Retained evidence can be searched independently of DLQ inspection through
 `GET /admin/notification-commands/delivery-records`. Use explicit UTC recording-time
 bounds: `recordedFromUtc` includes its boundary and `recordedToUtc` excludes it.
