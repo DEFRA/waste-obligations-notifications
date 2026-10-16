@@ -264,6 +264,9 @@ public sealed class CommandDlqRedriveTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(target.Sqs.ReceivedCalls());
         await AssertPrivacy(target, response, token);
+
+        if (condition == "missing")
+            await response.VerifyResponse(condition);
     }
 
     [Theory]
@@ -309,6 +312,9 @@ public sealed class CommandDlqRedriveTests
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Single(factory.Sqs.ReceivedCalls());
         await AssertPrivacy(factory, response, token);
+
+        if (condition == "empty")
+            await response.VerifyResponse(condition);
     }
 
     [Theory]

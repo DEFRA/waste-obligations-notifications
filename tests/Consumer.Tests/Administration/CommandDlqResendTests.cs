@@ -233,6 +233,9 @@ public sealed class CommandDlqResendTests
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Single(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
+
+        if (condition == "content")
+            await response.VerifyResponse(condition);
     }
 
     [Theory]
@@ -256,6 +259,9 @@ public sealed class CommandDlqResendTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
+
+        if (condition == "legacy")
+            await response.VerifyResponse(condition);
     }
 
     [Theory]

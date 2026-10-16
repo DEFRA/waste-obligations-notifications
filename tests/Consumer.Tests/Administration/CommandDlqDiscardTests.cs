@@ -160,6 +160,9 @@ public sealed class CommandDlqDiscardTests
         Assert.Empty(target.Sqs.ReceivedCalls());
         Assert.Empty(target.Store.ReceivedCalls());
         await AssertPrivacy(target, response, token);
+
+        if (condition == "missing")
+            await response.VerifyResponse(condition);
     }
 
     [Theory]
@@ -206,6 +209,9 @@ public sealed class CommandDlqDiscardTests
         Assert.Single(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
         await AssertPrivacy(factory, response, token);
+
+        if (condition == "empty")
+            await response.VerifyResponse(condition);
     }
 
     [Fact]

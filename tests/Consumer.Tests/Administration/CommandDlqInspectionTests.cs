@@ -368,8 +368,7 @@ public sealed class CommandDlqInspectionTests
         Assert.Single(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
 
-        if (classification is "active-claim" or "expired-claim" or "delivery-suppressed")
-            await response.VerifyResponse(classification);
+        await response.VerifyResponse(classification);
     }
 
     [Theory]
@@ -1272,6 +1271,9 @@ public sealed class CommandDlqInspectionTests
         Assert.Empty(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
+
+        if (query == "pageSize=0")
+            await response.VerifyResponse("invalidPageSize");
     }
 
     [Theory]
