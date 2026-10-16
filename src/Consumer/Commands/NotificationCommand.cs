@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Defra.WasteObligations.Consumer.Data;
@@ -16,6 +17,7 @@ public sealed record NotificationCommand(
 )
 {
     public const int CurrentSchemaVersion = 1;
+    private static readonly SearchValues<char> s_opaqueKeyCharacters = SearchValues.Create("0123456789abcdef");
 
     public NotificationCommand NormaliseRecipient() =>
         this with
@@ -64,7 +66,7 @@ public sealed record NotificationCommand(
     internal static bool IsOpaqueNotificationKey(string value) =>
         value.Length == 67
         && value.StartsWith("v1:", StringComparison.Ordinal)
-        && value.AsSpan(3).IndexOfAnyExcept("0123456789abcdef") < 0;
+        && value.AsSpan(3).IndexOfAnyExcept(s_opaqueKeyCharacters) < 0;
 
     private static void RequireValue(string value, string propertyName)
     {

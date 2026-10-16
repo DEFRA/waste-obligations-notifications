@@ -50,24 +50,10 @@ public sealed class CommandDlqResender(
                 source.Token
             );
             EnsureTimely();
-            if (
-                response.HttpStatusCode != HttpStatusCode.OK
-                || response.Messages?.Count > (selection.MaxNumberOfMessages ?? 1)
-            )
-                throw new InvalidOperationException("Command DLQ replay was not confirmed.");
-            var message = response.Messages?.SingleOrDefault(item => item.MessageId == selection.MessageId);
-            if (message is null || string.IsNullOrEmpty(message.ReceiptHandle))
+            var selected = ReadSelection(response, selection);
+            if (selected is null)
                 return null;
-
-            var command = ReadCommand(message);
-            if (
-                command is null
-                || selection.NotificationKey is null
-                || digest.CreateIdempotencyKeyDigest(command.IdempotencyKey) != selection.NotificationKey
-                || digest.CreateImmutableFieldsDigest(command) != selection.ImmutableFieldsDigest
-                || command.ResendOfNotificationKey != selection.ResendOfNotificationKey
-            )
-                return null;
+            var (message, command) = selected.Value;
 
             EnsureTimely();
             var state = await store.Inspect(command, source.Token);
@@ -127,6 +113,33 @@ public sealed class CommandDlqResender(
             if (Stopwatch.GetElapsedTime(started) >= budget || selections.RemainingLifetime(selection) <= TimeSpan.Zero)
                 throw new TimeoutException("Command DLQ resend exceeded its deadline.");
         }
+    }
+
+    private (Message Message, NotificationCommand Command)? ReadSelection(
+        ReceiveMessageResponse response,
+        CommandDlqSelection selection
+    )
+    {
+        if (
+            response.HttpStatusCode != HttpStatusCode.OK
+            || response.Messages?.Count > (selection.MaxNumberOfMessages ?? 1)
+        )
+            throw new InvalidOperationException("Command DLQ replay was not confirmed.");
+        var message = response.Messages?.SingleOrDefault(item => item.MessageId == selection.MessageId);
+        if (message is null || string.IsNullOrEmpty(message.ReceiptHandle))
+            return null;
+
+        var command = ReadCommand(message);
+        if (
+            command is null
+            || selection.NotificationKey is null
+            || digest.CreateIdempotencyKeyDigest(command.IdempotencyKey) != selection.NotificationKey
+            || digest.CreateImmutableFieldsDigest(command) != selection.ImmutableFieldsDigest
+            || command.ResendOfNotificationKey != selection.ResendOfNotificationKey
+        )
+            return null;
+
+        return (message, command);
     }
 
     private static NotificationCommand? ReadCommand(Message message)

@@ -78,18 +78,21 @@ public sealed class CommandDlqSelectionTokens(
                 return null;
             var selection = JsonSerializer.Deserialize<CommandDlqSelection>(Decode(parts[1]), s_jsonOptions);
 
+            if (selection is null)
+                return null;
+
             var hasExpectedReplaySize = parts[0] switch
             {
-                "v2" => selection?.MaxNumberOfMessages is null
-                    && selection?.NotificationKey is null
-                    && selection?.ResendOfNotificationKey is null,
-                "v3" => selection?.MaxNumberOfMessages is not null
-                    && selection?.NotificationKey is null
-                    && selection?.ResendOfNotificationKey is null,
-                _ => selection?.NotificationKey is not null,
+                "v2" => selection.MaxNumberOfMessages is null
+                    && selection.NotificationKey is null
+                    && selection.ResendOfNotificationKey is null,
+                "v3" => selection.MaxNumberOfMessages is not null
+                    && selection.NotificationKey is null
+                    && selection.ResendOfNotificationKey is null,
+                _ => selection.NotificationKey is not null,
             };
 
-            return selection is not null && IsValid(selection) && hasExpectedReplaySize ? selection : null;
+            return IsValid(selection) && hasExpectedReplaySize ? selection : null;
         }
         catch (Exception)
         {

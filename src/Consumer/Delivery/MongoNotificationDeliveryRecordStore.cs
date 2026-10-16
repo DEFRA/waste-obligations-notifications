@@ -13,6 +13,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private const string OutcomeField = "outcome";
     private const string NotificationTypeField = "notificationType";
     private const string ActionOccurredAtField = "actionOccurredAtUtc";
+    private const string IfNullOperator = "$ifNull";
     private const string ServerNow = "$$NOW";
     private const string NotificationKeyField = "notificationKey";
     private const string ImmutableFieldsField = "immutableFields";
@@ -80,7 +81,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                     new BsonArray
                     {
                         new BsonDocument(
-                            "$ifNull",
+                            IfNullOperator,
                             new BsonArray { LeaseExpiresAtExpression, new BsonDateTime(DateTime.UnixEpoch) }
                         ),
                         ServerNow,
@@ -202,7 +203,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             new BsonArray
             {
                 new BsonDocument(
-                    "$ifNull",
+                    IfNullOperator,
                     new BsonArray { LeaseExpiresAtExpression, new BsonDateTime(DateTime.UnixEpoch) }
                 ),
                 ServerNow,
@@ -392,7 +393,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             new BsonArray
             {
                 new BsonDocument(
-                    "$ifNull",
+                    IfNullOperator,
                     new BsonArray { LeaseExpiresAtExpression, new BsonDateTime(DateTime.UnixEpoch) }
                 ),
                 ServerNow,
@@ -530,7 +531,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             "$eq",
             new BsonArray
             {
-                new BsonDocument("$ifNull", new BsonArray { "$" + ParentField, BsonNull.Value }),
+                new BsonDocument(IfNullOperator, new BsonArray { "$" + ParentField, BsonNull.Value }),
                 parent is null ? BsonNull.Value : Literal(parent),
             }
         );
