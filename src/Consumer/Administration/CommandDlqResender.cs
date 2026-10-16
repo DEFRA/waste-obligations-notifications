@@ -53,7 +53,7 @@ public sealed class CommandDlqResender(
             var selected = ReadSelection(response, selection);
             if (selected is null)
                 return null;
-            var (message, command) = selected.Value;
+            var (message, command, sourceNotificationKey) = selected.Value;
 
             EnsureTimely();
             var state = await store.Inspect(command, source.Token);
@@ -64,8 +64,8 @@ public sealed class CommandDlqResender(
             // One immediate source always has one replacement, independent of selections and transport copies.
             var replacement = command with
             {
-                IdempotencyKey = "resend:" + selection.NotificationKey,
-                ResendOfNotificationKey = selection.NotificationKey,
+                IdempotencyKey = "resend:" + sourceNotificationKey,
+                ResendOfNotificationKey = sourceNotificationKey,
             };
             replacement.Validate();
 
@@ -95,7 +95,7 @@ public sealed class CommandDlqResender(
                 throw new InvalidOperationException("Selected source removal was not confirmed.");
             diagnostics.Resent(command.NotificationType);
 
-            return new(selection.NotificationKey, digest.CreateIdempotencyKeyDigest(replacement.IdempotencyKey));
+            return new(sourceNotificationKey, digest.CreateIdempotencyKeyDigest(replacement.IdempotencyKey));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -115,7 +115,7 @@ public sealed class CommandDlqResender(
         }
     }
 
-    private (Message Message, NotificationCommand Command)? ReadSelection(
+    private (Message Message, NotificationCommand Command, string NotificationKey)? ReadSelection(
         ReceiveMessageResponse response,
         CommandDlqSelection selection
     )
@@ -139,7 +139,7 @@ public sealed class CommandDlqResender(
         )
             return null;
 
-        return (message, command);
+        return (message, command, selection.NotificationKey);
     }
 
     private static NotificationCommand? ReadCommand(Message message)
