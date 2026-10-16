@@ -639,16 +639,26 @@ identifiers or exception content; caller cancellation emits no failure diagnosti
 
 Optional forward migration 002 adds three full, visible, nonunique search indexes:
 recording time/ObjectId descending, and exact Notify ID or outcome
-followed by the same descending pair. The critical unique notification-key index
+followed by the same descending pair. Optional migration 003 adds a visible,
+nonunique parent/time/ObjectId index with keys
+`{ resendOfNotificationKey: 1, recordedAtUtc: -1, _id: -1 }` and partial predicate
+`{ resendOfNotificationKey: { $type: "string" } }`. The reader exposes that predicate
+alongside its scalar guard so parent-only matching and empty lookups can use the
+index. Valid parentless originals add no entries. Retention is indefinite; no
+small-collection assumption or required date bound underlies parent navigation.
+The critical unique notification-key index
 continues to guard delivery identity. Search uses no index hints. Integration
 tests check representative query plans for bounded ordered reads; combined filters can retain
 residual filtering, and skew may increase examined records. No universal
 performance guarantee is implied.
 
-The search-index migration does not gate critical delivery readiness. Investigate
+The search-index migrations do not gate critical delivery readiness. Investigate
 optional migration failures and confirm completion before relying on efficient
 search. Builds consume resources, can outlive a client timeout, and require
-monitoring. The three indexes add storage and delivery-state write maintenance.
+monitoring. Initial parent-index construction scans retained evidence; subsequent
+storage and maintenance applies to indexed parent values. Confirm migration 003
+and its index build have completed before relying on replacement navigation.
+The three full indexes also add storage and delivery-state write maintenance.
 Incompatible owned definitions are preserved and rejected; rollback drops only
 these owned search indexes. No data backfill, payload or configuration change is
 required.
@@ -660,7 +670,7 @@ excluded. Recorded acceptance is not proof of recipient delivery. Replacements
 retain their validated opaque parent and expose an encoded `links.sourceRecord`.
 Exact `resendOfNotificationKey` filtering combines with other filters and is bound
 into continuation cursors. Search does not create replacement commands or alter
-stored evidence. No backfill or new index is introduced.
+stored evidence. No evidence backfill is introduced.
 
 ## Accepted-command resend
 

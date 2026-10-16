@@ -541,6 +541,14 @@ recipient delivery. Replacements retain `resendOfNotificationKey` and an encoded
 `links.sourceRecord`; inspection links to the source and its replacements.
 An empty replacement lookup immediately after publication is not proof of failure.
 
+Confirm optional migration 003 and its parent-index build have completed before
+relying on replacement navigation. Evidence is retained indefinitely; the partial
+`resendOfNotificationKey`/recording-time/ObjectId index supports exact parent
+lookup without scanning parentless originals. Delivery readiness alone does not
+prove optional-index completion. Initial construction scans retained evidence and
+can continue after a client timeout, so monitor resources and investigate migration
+failures. No evidence backfill or configuration change is required.
+
 Use `POST /admin/notification-commands/dlq/resend` with
 `{ "selectionToken": "<current-selection>" }` for one accepted command still on
 the DLQ. Pending, suppressed, abandoned, conflicting, invalid and unknown states

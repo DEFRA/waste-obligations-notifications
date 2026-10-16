@@ -262,6 +262,85 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
                 Assert.NotNull(deep.Result.NextCursor);
                 AssertOrderedBounded(deep.Explain);
             }
+
+            const string parentKey = "v1:retained-parent";
+            var replacements = Enumerable
+                .Range(1, 40)
+                .Select(index =>
+                    Record(
+                        index + 7000,
+                        "v1:replacement-" + index.ToString("D2", CultureInfo.InvariantCulture),
+                        time.AddMinutes(index <= 20 ? 6 : 7),
+                        AcceptedOutcome,
+                        parentKey: parentKey
+                    )
+                );
+            var newerParentNonmatches = Enumerable
+                .Range(1, 2000)
+                .Select(index =>
+                    Record(
+                        index + 8000,
+                        "v1:newer-parent-nonmatch-" + index.ToString(CultureInfo.InvariantCulture),
+                        time.AddMinutes(8).AddMilliseconds(index),
+                        AcceptedOutcome,
+                        parentKey: index % 2 == 0 ? "v1:other-parent" : null
+                    )
+                );
+
+            await records.InsertManyAsync(replacements.Concat(newerParentNonmatches), cancellationToken: token);
+
+            var parentQuery = new DeliveryRecordSearchQuery { PageSize = 5, ResendOfNotificationKey = parentKey };
+            var parentPage = parentQuery;
+            for (var page = 0; page < 8; page++)
+            {
+                var actual = await SearchAndExplain(reader, database, commands, parentPage, token);
+                var expectedKeys = Enumerable
+                    .Range(36 - page * 5, 5)
+                    .Reverse()
+                    .Select(index => "v1:replacement-" + index.ToString("D2", CultureInfo.InvariantCulture));
+                Assert.Equal(expectedKeys, actual.Result.Records.Select(record => record.NotificationKey));
+                AssertParentIndex(actual.Explain);
+                AssertOrderedBounded(actual.Explain, page == 7 ? 5 : 6);
+                if (page == 7)
+                {
+                    Assert.Null(actual.Result.NextCursor);
+                }
+                else
+                {
+                    Assert.NotNull(actual.Result.NextCursor);
+                    parentPage = parentQuery with { Cursor = actual.Result.NextCursor };
+                }
+            }
+
+            var absentParent = await SearchAndExplain(
+                reader,
+                database,
+                commands,
+                parentQuery with { ResendOfNotificationKey = "v1:absent-parent" },
+                token
+            );
+            Assert.Empty(absentParent.Result.Records);
+            Assert.Null(absentParent.Result.NextCursor);
+            AssertParentIndex(absentParent.Explain);
+            Assert.Equal(0, absentParent.Explain["executionStats"]["nReturned"].ToInt64());
+            Assert.Equal(0, absentParent.Explain["executionStats"]["totalDocsExamined"].ToInt64());
+            Assert.InRange(absentParent.Explain["executionStats"]["totalKeysExamined"].ToInt64(), 0, 2);
+
+            var malformedParent = Record(11000, "v1:array-parent", time.AddMinutes(9), AcceptedOutcome);
+            malformedParent.Add("resendOfNotificationKey", new BsonArray { parentKey });
+
+            await records.InsertOneAsync(malformedParent, cancellationToken: token);
+
+            var scalarParent = await SearchAndExplain(reader, database, commands, parentQuery, token);
+            string[] scalarParentKeys =
+            [
+                "v1:replacement-40",
+                "v1:replacement-39",
+                "v1:replacement-38",
+                "v1:replacement-37",
+                "v1:replacement-36",
+            ];
+            Assert.Equal(scalarParentKeys, scalarParent.Result.Records.Select(record => record.NotificationKey));
         }
         finally
         {
@@ -299,29 +378,41 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
         return (result, explain);
     }
 
-    private static void AssertOrderedBounded(BsonDocument explain)
+    private static void AssertOrderedBounded(BsonDocument explain, int returned = 6)
     {
         var stages = WinningStages(explain).ToArray();
         Assert.Contains("IXSCAN", stages);
         Assert.DoesNotContain("COLLSCAN", stages);
         Assert.DoesNotContain("SORT", stages);
-        Assert.Equal(6, explain["executionStats"]["nReturned"].ToInt64());
-        Assert.InRange(explain["executionStats"]["totalKeysExamined"].ToInt64(), 6, 24);
-        Assert.InRange(explain["executionStats"]["totalDocsExamined"].ToInt64(), 6, 12);
+        Assert.Equal(returned, explain["executionStats"]["nReturned"].ToInt64());
+        Assert.InRange(explain["executionStats"]["totalKeysExamined"].ToInt64(), returned, 24);
+        Assert.InRange(explain["executionStats"]["totalDocsExamined"].ToInt64(), returned, 12);
+    }
+
+    private static void AssertParentIndex(BsonDocument explain)
+    {
+        Assert.Contains(
+            "resendOfNotificationKey_recordedAtUtc_id_desc",
+            Stages(explain["queryPlanner"]["winningPlan"], "indexName")
+        );
+        var stages = WinningStages(explain).ToArray();
+        Assert.Contains("IXSCAN", stages);
+        Assert.DoesNotContain("COLLSCAN", stages);
+        Assert.DoesNotContain("SORT", stages);
     }
 
     private static IEnumerable<string> WinningStages(BsonDocument explain) =>
         Stages(explain["queryPlanner"]["winningPlan"]);
 
-    private static IEnumerable<string> Stages(BsonValue node)
+    private static IEnumerable<string> Stages(BsonValue node, string field = "stage")
     {
         if (node is BsonDocument document)
         {
-            if (document.TryGetValue("stage", out var stage) && stage.IsString)
+            if (document.TryGetValue(field, out var stage) && stage.IsString)
                 yield return stage.AsString;
             foreach (var value in document.Values)
             {
-                foreach (var nested in Stages(value))
+                foreach (var nested in Stages(value, field))
                 {
                     yield return nested;
                 }
@@ -331,7 +422,7 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
         {
             foreach (var value in array)
             {
-                foreach (var nested in Stages(value))
+                foreach (var nested in Stages(value, field))
                 {
                     yield return nested;
                 }
@@ -339,7 +430,14 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
         }
     }
 
-    private static BsonDocument Record(int id, string key, DateTime recorded, string outcome, string? notifyId = null)
+    private static BsonDocument Record(
+        int id,
+        string key,
+        DateTime recorded,
+        string outcome,
+        string? notifyId = null,
+        string? parentKey = null
+    )
     {
         var record = new BsonDocument
         {
@@ -354,6 +452,8 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
         };
         if (notifyId is not null)
             record.Add("notifyNotificationId", notifyId);
+        if (parentKey is not null)
+            record.Add("resendOfNotificationKey", parentKey);
 
         return record;
     }

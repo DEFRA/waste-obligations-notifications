@@ -113,9 +113,8 @@ inspection. Use a separate Mongo reader, preserving the delivery write-store
 interface. Project only retained identity/state/timestamps and available Notify,
 template correlation; exclude payloads, recipient/immutable digests and attempt
 ownership. The explicit resend producer now supplies parent correlation. Search
-projects
-that retained opaque relationship, provides exact parent filtering and navigation,
-and binds it into cursors. No lineage backfill or additional index is introduced.
+projects that retained opaque relationship, provides exact parent filtering and navigation,
+and binds it into cursors. No lineage backfill is introduced.
 
 Use recording time for inclusive/exclusive UTC ranges and exact combined
 identifier filters. Sort newest first with Mongo ObjectId as a stable tie-breaker,
@@ -128,12 +127,29 @@ and exact Notify ID or outcome followed by that same descending pair.
 They support bounded ordered listing and the selected exact filters without
 changing the critical unique notification-key index or using query hints.
 
-Migration 002 is noncritical. Its failure does not gate delivery readiness; check
+Delivery evidence is retained indefinitely (ADR 0001); no collection-size bound
+is established. Parent-only navigation must also work when a source has no
+replacements, without walking all retained original evidence. Optional migration
+003 therefore adds the nonunique visible index
+`{ resendOfNotificationKey: 1, recordedAtUtc: -1, _id: -1 }`, with partial predicate
+`{ resendOfNotificationKey: { $type: "string" } }`. Valid parentless originals add
+no entries. Parent queries expose this predicate to the planner while retaining
+the scalar-string guard, exact matching, ordering and cursor contracts.
+No index hint or date bounds are required for ordinary parent navigation.
+
+Migration 003 preserves incompatible owned definitions, confirms completed builds
+and rolls back only its own index. Initial construction scans retained evidence;
+subsequent storage and write-maintenance cost applies to indexed parent values.
+Monitor build completion before relying on replacement links. This remains an
+optional search migration, separate from critical delivery readiness; failures
+must be investigated rather than replacing existing index definitions.
+
+Migrations 002 and 003 are noncritical. Their failure does not gate delivery readiness; check
 optional migration completion before relying on efficient administration search.
 Reject incompatible owned indexes without replacing them, confirm index-build
 completion before recording migration history, and remove only owned names on
 rollback. Index builds consume resources and may continue after a client timeout;
-monitor completion and investigate conflicts before retrying. The three indexes
+monitor completion and investigate conflicts before retrying. The three full indexes
 increase storage and maintenance on delivery-state writes. No data backfill or
 new configuration is introduced.
 

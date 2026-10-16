@@ -282,9 +282,9 @@ public sealed class MongoMigrationTests : IntegrationTestBase
         {
             await runner.Run(cancellationToken);
             Assert.True(readiness.IsCompleted);
-            Assert.Equal([2], logger.AppliedMigrationCounts);
+            Assert.Equal([3], logger.AppliedMigrationCounts);
             await runner.Run(cancellationToken);
-            Assert.Equal([2, 0], logger.AppliedMigrationCounts);
+            Assert.Equal([3, 0], logger.AppliedMigrationCounts);
             var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
             using var cursor = await records.Indexes.ListAsync(cancellationToken);
             var indexes = await cursor.ToListAsync(cancellationToken);
