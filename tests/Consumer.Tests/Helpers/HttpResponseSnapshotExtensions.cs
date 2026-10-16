@@ -25,11 +25,11 @@ public static class HttpResponseSnapshotExtensions
             ["location"] = response.Headers.Location?.OriginalString,
             ["body"] = body,
         };
+        var methodName = variant is null ? sourceMember : $"{sourceMember}_{variant}";
 
         await Verifier
             .VerifyJson(snapshot.ToJsonString(), sourceFile: sourceFile)
-            .UseTypeName(Path.GetFileNameWithoutExtension(sourceFile))
-            .UseMethodName(variant is null ? sourceMember : $"{sourceMember}_{variant}")
+            .UseFileName($"{Path.GetFileNameWithoutExtension(sourceFile)}.{methodName}")
             .DontScrubDateTimes()
             .DontScrubGuids();
     }
