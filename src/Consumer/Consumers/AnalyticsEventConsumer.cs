@@ -8,6 +8,7 @@ using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Options;
+using Polly.Timeout;
 
 namespace Defra.WasteObligations.Consumer.Consumers;
 
@@ -200,7 +201,7 @@ public sealed class AnalyticsEventConsumer(
         var reason = exception switch
         {
             SubmissionProcessingException failure => failure.Reason,
-            TimeoutException or OperationCanceledException => "dependency-timeout",
+            TimeoutException or OperationCanceledException or TimeoutRejectedException => "dependency-timeout",
             _ when stage == "publish-command" => "unconfirmed-publication",
             _ when stage is "parse" or "validate-event" => "invalid-event-data",
             _ => "dependency-failure",

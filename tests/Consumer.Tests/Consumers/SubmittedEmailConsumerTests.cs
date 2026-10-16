@@ -12,6 +12,7 @@ using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using Polly.Timeout;
 
 namespace Defra.WasteObligations.Consumer.Tests.Consumers;
 
@@ -276,8 +277,31 @@ public sealed class SubmittedEmailConsumerTests
     }
 
     [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"action\":null}")]
+    [InlineData("{\"action\":\"\"}")]
+    [InlineData("{\"action\":\" \"}")]
+    public async Task WhenUnrelatedAuditHasNoAction_ShouldUseFirstSubmittedAudit(string entry)
+    {
+        var body = Declaration().Replace("\"audit\":[", $"\"audit\":[{entry},", StringComparison.Ordinal);
+        using var fixture = new Fixture((_, _) => Task.FromResult(Response(body)));
+
+        await fixture.Run([Event("01JZ8RXBMTY2K15SJB3PCFN3D5")]);
+
+        var publication = Assert.Single(fixture.Publications);
+        var command = JsonSerializer.Deserialize<NotificationCommand>(publication.MessageBody, s_webOptions)!;
+        Assert.Equal(PrivateEmail.Trim().ToLowerInvariant(), command.EmailAddress);
+        Assert.Equal(PrivateName, command.Personalisation.GetProperty("user").GetString());
+        Assert.Equal(DateTimeOffset.Parse("2026-09-20T11:12:13Z"), command.ActionOccurredAtUtc);
+        Assert.Equal(1, fixture.Deletions);
+        fixture.AssertSafeLogs();
+    }
+
+    [Theory]
     [InlineData("not-found", "declaration-not-found")]
     [InlineData("older", "older-declaration-version")]
+    [InlineData("missing-version", "invalid-declaration-data")]
+    [InlineData("null-version", "invalid-declaration-data")]
     [InlineData("identity", "identity-mismatch")]
     [InlineData("organisation", "identity-mismatch")]
     [InlineData("audit", "invalid-declaration-data")]
@@ -294,6 +318,8 @@ public sealed class SubmittedEmailConsumerTests
         var body = Declaration();
         body = fault switch
         {
+            "missing-version" => body.Replace("\"version\": 1,", "", StringComparison.Ordinal),
+            "null-version" => body.Replace("\"version\": 1", "\"version\": null", StringComparison.Ordinal),
             "older" => body.Replace("\"version\": 1", "\"version\": 0", StringComparison.Ordinal),
             "identity" => body.Replace(DeclarationId, "65f1f6570bb08052a8a27b02", StringComparison.Ordinal),
             "organisation" => body.Replace(
@@ -358,9 +384,10 @@ public sealed class SubmittedEmailConsumerTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task WhenReadTimesOutOrDependencyCancels_ShouldBackOffAndPublishNextUsableEvent(bool timeout)
+    [InlineData("timeout")]
+    [InlineData("cancelled")]
+    [InlineData("polly-timeout")]
+    public async Task WhenReadTimesOutOrDependencyCancels_ShouldBackOffAndPublishNextUsableEvent(string failure)
     {
         var count = 0;
         using var fixture = new Fixture(
@@ -368,7 +395,9 @@ public sealed class SubmittedEmailConsumerTests
             {
                 if (Interlocked.Increment(ref count) == 1)
                 {
-                    if (timeout)
+                    if (failure == "polly-timeout")
+                        throw new TimeoutRejectedException(UnsafeDependency);
+                    if (failure == "timeout")
                         await Task.Delay(Timeout.InfiniteTimeSpan, token);
                     throw new OperationCanceledException(UnsafeDependency);
                 }
@@ -380,7 +409,7 @@ public sealed class SubmittedEmailConsumerTests
 
         Assert.Single(fixture.Publications);
         Assert.Equal(1, fixture.Deletions);
-        Assert.True(fixture.ReceiveTimes[1] - fixture.ReceiveTimes[0] >= TimeSpan.FromSeconds(timeout ? 1.8 : 0.9));
+        Assert.True(fixture.ReceiveTimes[1] - fixture.ReceiveTimes[0] >= TimeSpan.FromSeconds(failure == "timeout" ? 1.8 : 0.9));
         Assert.Contains(
             fixture.Logs.Entries,
             entry =>

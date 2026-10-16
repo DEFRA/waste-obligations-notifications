@@ -27,11 +27,14 @@ public sealed class SubmittedEmailProducer(IWasteObligationsClient reader, IOpti
             if (Required(declaration.Id) != declarationId || Guid.Parse(Required(organisation.Id)) != organisationId)
                 throw new SubmissionProcessingException("identity-mismatch");
 
+            if (declaration.Version is null)
+                throw new SubmissionProcessingException(InvalidDeclarationData);
+
             if (declaration.Version < eventVersion)
                 throw new SubmissionProcessingException("older-declaration-version");
 
             var submitted =
-                declaration.Audit?.First(entry => Required(entry.Action) == "Submitted")
+                declaration.Audit?.First(entry => entry.Action == "Submitted")
                 ?? throw new SubmissionProcessingException(InvalidDeclarationData);
             var user = submitted.User ?? throw new SubmissionProcessingException(InvalidDeclarationData);
             if (!UtcTimestamp.TryParse(Required(submitted.Timestamp), out var actionTime))

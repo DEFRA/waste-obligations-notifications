@@ -1,4 +1,3 @@
-using System.Net;
 using Defra.WasteObligations.Consumer.Consumers;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -35,11 +34,8 @@ public static class ServiceCollectionExtensions
                             address.Path += "/";
 
                         client.BaseAddress = address.Uri;
-                        client.DefaultRequestVersion =
-                            address.Scheme == Uri.UriSchemeHttps ? HttpVersion.Version20 : HttpVersion.Version11;
                     }
 
-                    client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower;
                     client.Timeout = Timeout.InfiniteTimeSpan;
                 }
             )
@@ -54,7 +50,6 @@ public static class ServiceCollectionExtensions
                 (builder, context) =>
                 {
                     var options = context.ServiceProvider.GetRequiredService<IOptions<WasteObligationsOptions>>().Value;
-                    options.Retry.DisableForUnsafeHttpMethods();
 
                     // Exception text can contain private downstream data. Scope suppression to this pipeline.
                     builder.ConfigureTelemetry(NullLoggerFactory.Instance);
