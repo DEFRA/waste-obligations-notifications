@@ -47,26 +47,47 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
             else
             {
                 Assert.Equal(DeliveryClaimResult.Claimed, await context.Store.Claim(command, "retry-owner", 60, token));
-                Assert.True(await context.Store.RecordAcceptance(command, "retry-owner", Acceptance(context, command), token));
+                Assert.True(
+                    await context.Store.RecordAcceptance(command, "retry-owner", Acceptance(context, command), token)
+                );
             }
         }
 
         var record = await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token);
         Assert.Equal(ParentKey, record["resendOfNotificationKey"].AsString);
         Assert.Equal(ParentKey, (await context.Store.Inspect(command, token)).Record?.ResendOfNotificationKey);
-        Assert.Equal(DeliveryClaimResult.TerminalDuplicate, await context.Store.Claim(command, "later-owner", 60, token));
+        Assert.Equal(
+            DeliveryClaimResult.TerminalDuplicate,
+            await context.Store.Claim(command, "later-owner", 60, token)
+        );
         Assert.Equal(SuppressionClaimResult.TerminalDuplicate, await context.Store.RecordSuppression(command, token));
         Assert.Equal(record, await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
 
         var reader = new Administration.MongoDeliveryRecordSearchReader(
             context.Client,
-            Options.Create(new MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = context.Database.DatabaseNamespace.DatabaseName }),
+            Options.Create(
+                new MongoDbOptions
+                {
+                    DatabaseUri = "mongodb://localhost:27017",
+                    DatabaseName = context.Database.DatabaseNamespace.DatabaseName,
+                }
+            ),
             Options.Create(new Administration.CommandDlqAdministrationOptions())
         );
-        var result = await reader.Search(new Administration.DeliveryRecordSearchQuery { ResendOfNotificationKey = ParentKey }, token);
+        var result = await reader.Search(
+            new Administration.DeliveryRecordSearchQuery { ResendOfNotificationKey = ParentKey },
+            token
+        );
 
         Assert.Equal(ParentKey, Assert.Single(result.Records).ResendOfNotificationKey);
-        Assert.Empty((await reader.Search(new Administration.DeliveryRecordSearchQuery { ResendOfNotificationKey = "different-parent" }, token)).Records);
+        Assert.Empty(
+            (
+                await reader.Search(
+                    new Administration.DeliveryRecordSearchQuery { ResendOfNotificationKey = "different-parent" },
+                    token
+                )
+            ).Records
+        );
         AssertPrivacy(command, record);
     }
 
@@ -125,7 +146,10 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         Assert.Equal(SuppressionClaimResult.TerminalDuplicate, await context.Store.RecordSuppression(command, token));
         Assert.Equal(AbandonmentResult.AlreadyAbandoned, await context.Store.RecordAbandonment(command, token));
         Assert.Equal("delivery-abandoned", (await context.Store.Inspect(command, token)).Classification);
-        Assert.Equal(DeliveryClaimResult.Conflict, await context.Store.Claim(command with { ResendOfNotificationKey = ParentKey }, "owner", 60, token));
+        Assert.Equal(
+            DeliveryClaimResult.Conflict,
+            await context.Store.Claim(command with { ResendOfNotificationKey = ParentKey }, "owner", 60, token)
+        );
         Assert.Equal(before, await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
     }
 

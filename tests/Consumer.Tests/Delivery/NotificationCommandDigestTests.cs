@@ -12,11 +12,20 @@ public sealed class NotificationCommandDigestTests
     {
         var digest = CreateDigest();
         var original = Command("{}");
-        var replacement = original with { ResendOfNotificationKey = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" };
+        var replacement = original with
+        {
+            ResendOfNotificationKey = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        };
 
         Assert.Equal(digest.CreateImmutableFieldsDigest(original), digest.CreateImmutableFieldsDigest(replacement));
-        Assert.Equal(digest.CreateIdempotencyKeyDigest(original.IdempotencyKey), digest.CreateIdempotencyKeyDigest(replacement.IdempotencyKey));
-        Assert.Equal(digest.CreateNotifyReference(original.IdempotencyKey), digest.CreateNotifyReference(replacement.IdempotencyKey));
+        Assert.Equal(
+            digest.CreateIdempotencyKeyDigest(original.IdempotencyKey),
+            digest.CreateIdempotencyKeyDigest(replacement.IdempotencyKey)
+        );
+        Assert.Equal(
+            digest.CreateNotifyReference(original.IdempotencyKey),
+            digest.CreateNotifyReference(replacement.IdempotencyKey)
+        );
     }
 
     [Fact]

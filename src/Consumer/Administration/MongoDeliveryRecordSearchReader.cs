@@ -160,7 +160,9 @@ public sealed class MongoDeliveryRecordSearchReader(
             ReadString(record, "templateId"),
             ReadTemplateVersion(record),
             ReadString(record, "resendOfNotificationKey") is { } parent
-                && Commands.NotificationCommand.IsOpaqueNotificationKey(parent) ? parent : null
+            && Commands.NotificationCommand.IsOpaqueNotificationKey(parent)
+                ? parent
+                : null
         );
 
     private static string? ReadString(BsonDocument record, string name) =>

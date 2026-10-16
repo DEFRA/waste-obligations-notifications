@@ -14,7 +14,11 @@ public sealed class NotificationCommandMessageReaderTests
     public void WhenResendParentIsOptionalOpaqueKey_ShouldPreserveMetadata(string? parent)
     {
         var message = CreateMessage("\"2026-10-01T00:00:00Z\"");
-        message.Body = message.Body.Replace("\"personalisation\": {}", $"\"personalisation\": {{}}, \"resendOfNotificationKey\": {JsonSerializer.Serialize(parent)}", StringComparison.Ordinal);
+        message.Body = message.Body.Replace(
+            "\"personalisation\": {}",
+            $"\"personalisation\": {{}}, \"resendOfNotificationKey\": {JsonSerializer.Serialize(parent)}",
+            StringComparison.Ordinal
+        );
 
         var command = NotificationCommandMessageReader.Read(message);
 
@@ -30,7 +34,11 @@ public sealed class NotificationCommandMessageReaderTests
     public void WhenResendParentIsMalformed_ShouldRejectWithoutExposingValue(string parent)
     {
         var message = CreateMessage("\"2026-10-01T00:00:00Z\"");
-        message.Body = message.Body.Replace("\"personalisation\": {}", $"\"personalisation\": {{}}, \"resendOfNotificationKey\": {JsonSerializer.Serialize(parent)}", StringComparison.Ordinal);
+        message.Body = message.Body.Replace(
+            "\"personalisation\": {}",
+            $"\"personalisation\": {{}}, \"resendOfNotificationKey\": {JsonSerializer.Serialize(parent)}",
+            StringComparison.Ordinal
+        );
 
         var exception = Assert.Throws<InvalidDataException>(() => NotificationCommandMessageReader.Read(message));
 
