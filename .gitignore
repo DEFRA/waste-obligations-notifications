@@ -274,3 +274,6 @@ http-client.private.env.json
 # Verify
 *.received.*
 *.received/
+
+# Local Notify credential fallback
+/.env

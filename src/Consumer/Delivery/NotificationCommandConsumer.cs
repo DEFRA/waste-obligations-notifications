@@ -133,14 +133,7 @@ public sealed class NotificationCommandConsumer(
             );
 
         metrics.RecordOutcome(notificationType, outcome);
-        if (logger.IsEnabled(LogLevel.Information))
-            logger.LogInformation(
-                "Notification command outcome {Outcome} for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}",
-                outcome,
-                notificationType,
-                message.MessageId,
-                reference
-            );
+        LogOutcome(message, command, reference, notificationType, outcome, cutover);
         stoppingToken.ThrowIfCancellationRequested();
         await RunBounded(
             token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
@@ -148,6 +141,35 @@ public sealed class NotificationCommandConsumer(
             stoppingToken,
             failureReason: NotificationCommandFailureReason.QueueError
         );
+    }
+
+    private void LogOutcome(
+        Message message,
+        NotificationCommand command,
+        string reference,
+        string notificationType,
+        string outcome,
+        DateTimeOffset? cutover
+    )
+    {
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation(
+                "Notification command outcome {Outcome} ({OutcomeMeaning}) for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}, template {TemplateId}, action {ActionOccurredAtUtc}",
+                outcome,
+                outcome switch
+                {
+                    "terminal-duplicate" => "matching terminal evidence; no new request or suppression",
+                    _ when outcome == NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue() =>
+                        "email request accepted by Notify; acceptance recorded",
+                    _ when cutover is null => "would request this template; suppressed because cutover is unset",
+                    _ => "would request this template; suppressed because action precedes cutover",
+                },
+                notificationType,
+                message.MessageId,
+                reference,
+                Guid.TryParse(command.TemplateId, out _) ? command.TemplateId : null,
+                command.ActionOccurredAtUtc
+            );
     }
 
     private async Task<string> ProcessPostCutover(
@@ -247,7 +269,8 @@ public sealed class NotificationCommandConsumer(
                     new ReceiveMessageRequest
                     {
                         QueueUrl = options.Value.QueueUrl,
-                        MaxNumberOfMessages = options.Value.BatchSize,
+                        // Larger receives require a reviewed visibility/claim budget.
+                        MaxNumberOfMessages = 1,
                         MessageAttributeNames = ["All"],
                         WaitTimeSeconds = options.Value.WaitTimeSeconds,
                         VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,

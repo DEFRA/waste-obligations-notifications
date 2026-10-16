@@ -646,14 +646,17 @@ public sealed class CommandDlqInspectionTests
     [InlineData(true)]
     public async Task WhenReceiveDoesNotComplete_ShouldCancelActualDependencyWithoutSelection(bool callerCancellation)
     {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var factory = new InspectionApplicationFactory(
-            new() { ["CommandDlqAdministration:DependencyTimeoutSeconds"] = "1" }
+            new() { ["CommandDlqAdministration:DependencyTimeoutSeconds"] = callerCancellation ? "30" : "1" }
         );
         factory
             .Sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
             .Returns(async call =>
             {
+                started.TrySetResult();
+
                 try
                 {
                     await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
@@ -669,14 +672,18 @@ public sealed class CommandDlqInspectionTests
         using var client = factory.CreateClient();
         using var request = Request("admin");
         using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        if (callerCancellation)
-            source.CancelAfter(TimeSpan.FromMilliseconds(100));
+        var sending = client.SendAsync(request, source.Token);
 
         if (callerCancellation)
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.SendAsync(request, source.Token));
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            await source.CancelAsync();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sending);
+        }
         else
         {
-            using var response = await client.SendAsync(request, source.Token);
+            using var response = await sending;
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
             AssertPrivacy(factory, await response.Content.ReadAsStringAsync(source.Token));
         }

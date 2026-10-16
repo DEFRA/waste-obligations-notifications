@@ -128,6 +128,13 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
                 Arg.Any<CancellationToken>()
             );
+        var outcomeMeaning = (suppressed, cutover) switch
+        {
+            (true, null) => "suppressed because cutover is unset",
+            (true, _) => "suppressed because action precedes cutover",
+            _ => "email request accepted by Notify; acceptance recorded",
+        };
+        Assert.Contains(logger.Messages, message => message.Contains(outcomeMeaning, StringComparison.Ordinal));
         await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
         await notify
             .Received(suppressed ? 0 : 1)
@@ -230,6 +237,7 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                     ),
                 call =>
                 {
+                    Assert.Equal(1, call.Arg<ReceiveMessageRequest>().MaxNumberOfMessages);
                     Assert.Equal(hasCommand, deleted);
                     receivedAgain.TrySetResult();
 
@@ -548,12 +556,22 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 Arg.Any<CancellationToken>()
             )
             .Returns(SuppressionClaimResult.TerminalDuplicate);
-        var subject = CreateSubject(sqsClient, recordStore);
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        var subject = CreateSubject(sqsClient, recordStore, logger);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
         await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
+        Assert.Contains(
+            logger.Messages,
+            message =>
+                message.Contains(
+                    "terminal-duplicate (matching terminal evidence; no new request or suppression)",
+                    StringComparison.Ordinal
+                )
+        );
+        Assert.DoesNotContain(logger.Messages, message => message.Contains("would request", StringComparison.Ordinal));
         await sqsClient.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
     }
 

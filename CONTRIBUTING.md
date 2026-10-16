@@ -23,6 +23,16 @@ and use, update local examples, and assess deployed CDP configuration separately
 Local Compose values do not configure CDP environments. Add new `appsettings.json`
 sections at the end of the relevant file.
 
+Document deployment order when new startup validation affects an existing enabled
+feature. Provision its configuration and access first, or disable it before the
+new image deploys; a host startup failure can also stop unrelated consumers and
+administration. See [deployment ownership](docs/service-behaviour.md#deployment-ownership).
+
+Treat configuration used in immutable command evidence as part of replay identity.
+Finalize template mappings before dry-run suppression and assess conflicts from
+later changes while commands remain replayable. Do not present a configuration
+override as an unrestricted rollout change.
+
 ## Required checks
 
 For production or test code, runtime configuration, dependencies, Docker, or
@@ -30,6 +40,7 @@ Compose changes, run the full local check. Always tear Compose down, including
 after a failed build or test:
 
 ```bash
+python3 -m unittest discover -s tests/Script.Tests
 docker compose up --build -d --wait
 DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 dotnet build waste-obligations-notifications.slnx --no-restore -m:1 -nodeReuse:false --disable-build-servers -v:minimal
 DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1 dotnet test --test-modules tests/Consumer.Tests/bin/Debug/net10.0/Consumer.Tests.dll --no-build -v:minimal
@@ -60,7 +71,15 @@ including vulnerabilities without an available fix. Findings and scanner failure
 fail validation. The scanner reads an exported image archive without access to the
 Docker socket. CI reports show blocking findings without matched secret content.
 
-Run actionlint v1.7.12 locally when changing workflows. CI verifies its release
+Keep required image builds and security scans ahead of external provider checks,
+so missing provider credentials or outages cannot skip those checks. Preserve
+report uploads on failure. Required Notify previews use test-type API keys in both
+Actions and Dependabot secret stores; never supply live sending keys to PR-built
+tests or dependencies. A missing key must fail the preview gate, not exempt bots.
+
+Run actionlint v1.7.12 with ShellCheck available on `PATH` when changing workflows.
+Actionlint skips shell analysis when ShellCheck is missing, so an actionlint-only
+pass does not reproduce CI validation. CI verifies its release
 archive against a pinned SHA256 checksum before running it. Review action commits,
 container digests, and the actionlint version and checksum manually when updating
 these pins.

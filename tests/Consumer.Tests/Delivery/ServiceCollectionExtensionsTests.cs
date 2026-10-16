@@ -53,7 +53,6 @@ public sealed class ServiceCollectionExtensionsTests
         {
             Assert.Equal(waitTimeSeconds, options.Value.WaitTimeSeconds);
             Assert.Equal(receiveTimeoutSeconds, options.Value.ReceiveTimeoutSeconds);
-            Assert.Equal(1, options.Value.BatchSize);
             Assert.True(options.Value.HasValidProcessingBudget);
         }
         else

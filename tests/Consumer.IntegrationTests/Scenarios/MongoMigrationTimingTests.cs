@@ -220,12 +220,11 @@ public sealed class MongoMigrationTimingTests : IntegrationTestBase
             await peerLease.Release(token);
             await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), token);
             Assert.True(completion.IsCompleted);
-            Assert.Equal(
-                3,
-                await database
-                    .GetCollection<BsonDocument>("_migrations")
-                    .CountDocumentsAsync(new BsonDocument(), cancellationToken: token)
-            );
+            var history = await database
+                .GetCollection<BsonDocument>("_migrations")
+                .Find(new BsonDocument())
+                .ToListAsync(token);
+            Assert.Equal(["1.0.0", "2.0.0", "3.0.0"], history.Select(entry => entry["v"].AsString).Order());
         }
         finally
         {

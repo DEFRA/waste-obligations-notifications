@@ -11,11 +11,35 @@ public sealed record AnalyticsEventConsumerOptions
 
     public bool ProcessingEnabled { get; init; }
 
-    [Range(1, 10)]
-    public int BatchSize { get; init; } = 10;
-
-    [Range(0, 20)]
+    [Range(1, 20)]
     public int WaitTimeSeconds { get; init; } = 20;
+
+    [Range(1, 300)]
+    public int ReceiveTimeoutSeconds { get; init; } = 30;
+
+    [Range(1, 300)]
+    public int ReadTimeoutSeconds { get; init; } = 20;
+
+    [Range(1, 300)]
+    public int PublishTimeoutSeconds { get; init; } = 10;
+
+    [Range(1, 300)]
+    public int DeleteTimeoutSeconds { get; init; } = 5;
+
+    [Range(1, 300)]
+    public int SafetyHeadroomSeconds { get; init; } = 10;
+
+    [Range(1, 43200)]
+    public int VisibilityTimeoutSeconds { get; init; } = 90;
+
+    public bool HasValidProcessingBudget =>
+        ReceiveTimeoutSeconds > WaitTimeSeconds
+        && VisibilityTimeoutSeconds
+            >= ReceiveTimeoutSeconds
+                + ReadTimeoutSeconds
+                + PublishTimeoutSeconds
+                + DeleteTimeoutSeconds
+                + SafetyHeadroomSeconds;
 
     [Range(1, 300)]
     public int PollIntervalSeconds { get; init; } = 15;

@@ -1,6 +1,10 @@
 {
   "status": "Healthy",
   "results": {
+    "DeclarationRead": {
+      "status": "Healthy",
+      "description": "Analytics processing disabled"
+    },
     "EmailDeliveryCutover": {
       "status": "Healthy",
       "data": {

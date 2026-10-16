@@ -33,6 +33,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/actionlint"
           tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
           "$RUNNER_TEMP/actionlint/actionlint"
+      - name: Verify CI report summaries
+        run: python3 -m unittest discover -s tests/Script.Tests
 
   dependency-review:
     name: Dependency security review
@@ -116,6 +118,14 @@ jobs:
             aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c \
             image --input /scan/image.tar --exit-code 1 --severity HIGH,CRITICAL \
             --scanners vuln,secret --format json --output /reports/trivy.json
+      - name: Require Notify submission previews
+        env:
+          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
+          NOTIFY_PREVIEWS_REQUIRED: "1"
+        run: |
+          rm -rf TestResults/NotifySubmissionPreviews
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifySubmissionPreviews -- --filter-class '*NotifySubmissionPreviewTests' --report-trx --report-trx-filename NotifySubmissionPreviews.trx
+          python3 scripts/require-notify-previews.py TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx
       - name: Upload CI reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -174,6 +184,57 @@ jobs:
             fi
           }
 
+          integration_summary() {
+            python3 - "$1" "$2" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          def read_results(path):
+              root = ET.parse(path).getroot()
+              methods = {}
+              for definition in root.findall("{*}TestDefinitions/{*}UnitTest"):
+                  identifier = definition.attrib["id"]
+                  if identifier in methods:
+                      raise ValueError("Duplicate definition")
+                  methods[identifier] = definition.find("{*}TestMethod")
+              results = {}
+              for result in root.findall("{*}Results/{*}UnitTestResult"):
+                  method = methods[result.attrib["testId"]]
+                  if method is None:
+                      raise ValueError("Missing method")
+                  identity = (
+                      method.attrib["className"].split(",")[0],
+                      method.attrib["name"],
+                      result.attrib["testName"],
+                  )
+                  if not all(identity) or identity in results:
+                      raise ValueError("Invalid or duplicate test identity")
+                  results[identity] = result.attrib["outcome"]
+              counters = root.find("{*}ResultSummary/{*}Counters")
+              if not results or counters is None or int(counters.attrib["total"]) != len(results):
+                  raise ValueError("Incomplete results")
+              return results
+
+          try:
+              combined = read_results(sys.argv[1])
+              previews = read_results(sys.argv[2])
+              for identity, outcome in previews.items():
+                  if identity not in combined or combined[identity] in {"Passed", "NotExecuted"}:
+                      combined[identity] = outcome
+              passed = sum(outcome == "Passed" for outcome in combined.values())
+              skipped = sum(outcome == "NotExecuted" for outcome in combined.values())
+              failed = len(combined) - passed - skipped
+              if failed:
+                  print(f"❌ {passed}/{len(combined)} passed, {failed} failed, {skipped} skipped")
+              elif skipped:
+                  print(f"⚠️ {passed}/{len(combined)} passed, {skipped} skipped")
+              else:
+                  print(f"✅ {passed}/{len(combined)} passed")
+          except (OSError, ET.ParseError, KeyError, ValueError):
+              print("⚪ Combined integration results unavailable (missing or invalid TRX evidence)")
+          PY
+          }
+
           step_summary() {
             case "$1" in
               success) printf '✅ Passed' ;;
@@ -219,7 +280,8 @@ jobs:
             printf '| Dependency security review | %s |\n' "$(step_summary "$DEPENDENCY_REVIEW")"
             printf '| CI report download | %s |\n' "$(step_summary "$REPORT_DOWNLOAD")"
             printf '| Unit tests | %s |\n' "$(test_summary TestResults/Consumer.Tests/Consumer.Tests.trx)"
-            printf '| Integration tests | %s |\n' "$(test_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx)"
+            printf '| Integration tests (including Notify previews) | %s |\n' "$(integration_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx)"
+            printf '| Notify submission previews | %s |\n' "$(test_summary TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx)"
             printf '| Docker image | %s |\n' "$(step_summary "$DOCKER_BUILD")"
             printf '| Trivy (Critical/High) | %s |\n' "$(trivy_summary)"
             echo

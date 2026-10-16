@@ -74,7 +74,14 @@ public abstract class IntegrationTestBase : IAsyncLifetime
             }
             catch (Exception) when (!timeoutSource.IsCancellationRequested)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(100), timeoutSource.Token);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), timeoutSource.Token);
+                }
+                catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
+                {
+                    break;
+                }
             }
         }
 

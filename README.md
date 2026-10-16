@@ -1,13 +1,14 @@
 # Waste Obligations Notifications
 
-A CDP consumer service for analytics events and notification commands published by Waste Obligations.
+A CDP service that consumes Waste Obligations analytics events and delivers email notification commands.
 
 ## Scope
 
 The service receives every message from its service-owned SQS subscription to the
-`waste_obligations_analytics_events` SNS topic. It logs the analytics event ID and
-entity ID, then deletes the successfully processed message. It deliberately does
-not send notifications, persist data, or act on the event payload.
+`waste_obligations_analytics_events` SNS topic. It enriches compliance-declaration
+submission events through the Waste Obligations read API and publishes submitted-email
+commands before acknowledging them. Other valid analytics messages retain their
+log-and-delete behaviour. Analytics does not send email directly or persist events.
 
 With the default null cutover, the command consumer durably suppresses every
 valid command and deletes it without Notify. With a supplied boundary, it
@@ -114,7 +115,81 @@ unit tests, integration tests, and Compose teardown.
 set `AnalyticsEventConsumer__ProcessingEnabled` to `true` and provide the
 service-owned `AnalyticsEventConsumer__QueueUrl`. The deployed queue must be a
 separate subscription from the producer queue and must have the CDP dead-letter
-queue convention configured.
+queue convention configured. Each host requests one message per receive;
+normal consumers have no batch-size setting. A larger receive requires a reviewed
+processing/visibility budget. Analytics immediately receives again after success
+or an empty response. `AnalyticsEventConsumer__PollIntervalSeconds` controls
+cancellation-aware error backoff only; SQS long polling supplies idle waiting.
+
+Submitted compliance-declaration events read the persisted declaration and publish
+commands using the first `Submitted` audit and stored organisation fields. Latest
+Accepted/Cancelled status does not replace the original submission. Outside-scope
+events retain their existing acknowledgement behaviour. Read/validation/publication
+failures are retried; an acknowledgement failure after confirmed publication can
+cause a matching replay. Publication and Notify acceptance do not prove delivery.
+
+Analytics has a separate processing budget. `AnalyticsEventConsumer__ReceiveTimeoutSeconds`
+(default 30) must exceed its long poll. `WaitTimeSeconds` must be 1–20 seconds;
+zero is rejected to prevent continuous empty receives. `ReadTimeoutSeconds` (20),
+`PublishTimeoutSeconds` (10), `DeleteTimeoutSeconds` (5) and `SafetyHeadroomSeconds`
+(10), plus receive time, must fit `VisibilityTimeoutSeconds` (90). These settings
+share the `AnalyticsEventConsumer__` environment prefix. Each receive requests
+explicit visibility; increasing batching requires a reviewed budget change.
+
+Before this image reaches an environment with analytics processing already enabled,
+provision the Waste Obligations read address, credentials and Read ACL. Alternatively,
+confirm `AnalyticsEventConsumer__ProcessingEnabled=false` before deployment.
+Missing read configuration with processing enabled rejects startup for the whole
+host, including command delivery and DLQ administration.
+
+Configure `WasteObligations__BaseAddress`, `WasteObligations__Username` and
+`WasteObligations__Password` for Waste Obligations Basic Read access. Disabled analytics
+needs no read credentials. Local development values are synthetic examples, not a
+running declaration API. HTTPS requests prefer HTTP/2 with HTTP/1.1 fallback.
+The service client retries transient GET failures up to twice with exponential
+jitter, within a ten-second total and three-second attempt timeout; the analytics
+read budget and cancellation still bound the complete operation. `DeclarationRead` extended health calls `health/authorized` with Basic credentials;
+successful authentication does not prove the deployed Read ACL or MO-562
+version/identity response; validate both before activation.
+Compose disables analytics processing because it has no declaration API. The
+submitted-email integration scenarios enable their own hosts with a controlled
+declaration endpoint. To process submissions locally, configure a reachable Read
+service and explicitly enable analytics processing.
+
+The four overridable UUID mappings are:
+
+| Environment setting | Default template |
+| --- | --- |
+| `Submission__DirectEnglishTemplateId` | `5f64e3bd-d454-4a45-a9c6-9409bf940d7a` |
+| `Submission__DirectWelshTemplateId` | `b3223b0b-a467-40c1-9150-f78b76d11fd8` |
+| `Submission__SchemeEnglishTemplateId` | `b103685d-de8a-4ea9-abc8-d244ca26841b` |
+| `Submission__SchemeWelshTemplateId` | `95d8c2aa-a229-4ecb-9774-78ec06d0cbac` |
+
+Only persisted `GB-WLS` selects Welsh, and `ComplianceScheme` selects scheme.
+The five fields are integer `obligationYear` and strings `regulatorLeading`,
+`regulatorInline`, `regulatorEmail`, `user`. English regulator articles are `The `
+and `the `; Welsh preserves the stored regulator without articles. Original audit
+recipient/name/time take precedence over current actor, locale or submitter name.
+
+Publication logs connect safe analytics IDs to the opaque Notify reference, template,
+variant and original action time. Delivery logs distinguish null/before-cutover
+suppression, recorded Notify acceptance and terminal duplicate without claiming a
+new send for a duplicate. Retry warnings name a fixed stage/reason and acknowledge
+uncertain deletion accurately, without dependency text or PII. Existing metrics allow
+four bounded categories: `declaration-submitted-direct-en`,
+`declaration-submitted-direct-cy`, `declaration-submitted-scheme-en`,
+`declaration-submitted-scheme-cy`. Keep these in the deployed
+`NotificationCommandDelivery__DiagnosticNotificationTypes__0` (and subsequent indices)
+allowlist to distinguish variants.
+
+Finalize all template overrides before the producer dry run begins. Changing a
+template ID for an existing submission creates an immutable-command conflict on
+replay, which follows the command retry/DLQ policy.
+
+Use null cutover for the producer dry run: commands are published and terminally
+suppressed. Read ACL/deployed DTO, effective template overrides/account access and
+queue redrive policies remain activation prerequisites. Shared live handover remains
+gated on both submitted and cancellation producers.
 
 `NotificationCommandDelivery` is deployment-owned. Every host consumes commands
 after successful startup readiness; there is no command-processing enablement
@@ -148,7 +223,7 @@ error backoff only (15 seconds initially). Each host processes one command
 at a time. `WaitTimeSeconds` defaults to a 20-second long poll;
 `ReceiveTimeoutSeconds` bounds the entire receive request, including SDK
 retries, and defaults to 30 seconds. It must exceed `WaitTimeSeconds`. These
-command settings leave analytics polling and the shared SQS client unchanged.
+command settings are separate from analytics settings and the shared SQS client.
 CDP can override them through the `NotificationCommandDelivery` section;
 local Compose values do not configure deployed environments.
 
@@ -545,3 +620,85 @@ deployment deadline. Metrics and startup logging remain available for diagnosis.
 Suppression recorded with an unset cutover remains terminal after configuration,
 including an action at or after the new boundary. Delete matching replays without
 changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.
+
+## Submitted-email verification and local Notify credentials
+
+`DockerSubmittedEmailTests` publishes to an isolated SNS topic and waits for the
+Docker consumer to read a WireMock declaration, publish a command and receive a
+WireMock Notify acceptance. Its second consumer, queues and database are isolated
+from the default Compose consumer. The four hosted scenarios retain detailed
+variant and replay assertions.
+
+The isolated integration suite exercises all four direct/scheme and English/Welsh
+variants from hosted analytics consumption through the real declaration client,
+producer, SQS publisher, command consumer and Mongo claims to the Compose Notify
+HTTP fixture. Only the external declaration HTTP response is controlled. The
+scenarios verify the original audit recipient, configured template and all five
+personalisation fields, acceptance before successful deletion, and terminal replay
+suppression. Compose continues to use its generated dummy key and fixture endpoint.
+
+The four `NotifySubmissionPreviewTests` use the genuine GOV.UK Notify preview API;
+they render synthetic personalisation without sending emails. They read the
+`Submission` template mappings from `src/Consumer/appsettings.json` and process
+`Submission__DirectEnglishTemplateId`, `Submission__DirectWelshTemplateId`,
+`Submission__SchemeEnglishTemplateId` and `Submission__SchemeWelshTemplateId`
+overrides. PR, main and hotfix checks supply the Actions `GOVUKNOTIFY_APIKEY` secret
+only to a dedicated preview process. Required previews also apply to Dependabot PRs;
+repository administrators must provision a GOV.UK Notify **test-type API key** as
+`GOVUKNOTIFY_APIKEY` in both the Actions and Dependabot secret stores. Never use
+a live sending key for previews; PR-built tests and dependencies can read this environment value. Missing credentials keep this required gate red;
+there is no bot exemption. The PR image build and Trivy scan run before previews,
+so missing credentials or provider outages do not prevent those security checks.
+Required mode fails on missing credentials,
+provider errors or incorrect rendering, and a fresh TRX guard requires all four
+cases to execute and pass with zero skips. Publishing depends on that build job.
+Normal isolated integration execution in CI has no provider key and explicitly
+skips previews; it does not substitute for the required step. The CI report
+combines isolated integration results with the dedicated preview results using
+test identities, counting each test once. Missing reports remain unavailable,
+and failures or unrelated skips remain visible. Preview results also appear
+in their own row. Counts come from TRX evidence rather than a fixed case list.
+
+For local previews, create the Git-ignored root `.env` (also excluded from Docker
+build inputs) with a placeholder replaced privately:
+
+```dotenv
+GovukNotify_ApiKey=replace-with-your-private-notify-key
+```
+
+Direct preview execution reads this fallback when `GOVUKNOTIFY_APIKEY` is absent:
+
+```bash
+dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build -- --filter-class '*NotifySubmissionPreviewTests'
+```
+
+Without a key, local previews report explicit skips. To require provider execution
+locally, set `NOTIFY_PREVIEWS_REQUIRED=1`. No credential, rendered email or provider
+exception text is written to the preview reports.
+
+For a local consumer using real Notify, the wrapper supplies the same `.env`
+fallback independently to `GOVUKNOTIFY_APIKEY` and `Notify__ApiKey`. Explicit
+process destination settings take precedence, including an explicitly empty value
+and uppercase `NOTIFY__APIKEY`. The wrapper parses only the named value; it never
+executes `.env` content or prints the key. It accepts only `run` and launches the
+fixed consumer command without forwarding CLI arguments. Direct preview tests read their own `.env` fallback; use the
+preview command above instead of this wrapper:
+
+```bash
+Notify__BaseAddress=https://api.notifications.service.gov.uk \
+  python3 scripts/with-notify-env.py run
+```
+
+Set that base address explicitly when using Development settings, which otherwise
+point at the isolated fixture. This command is a real Notify runtime configuration;
+normal `docker compose up --build -d --wait` remains the isolated fixture setup.
+Declaration Read access, effective template access, cutover and both producer
+readiness remain deployment prerequisites described above.
+
+Waste Obligations resilience defaults remain ten seconds total, three seconds per
+attempt and two transient GET retries. Override inherited settings through
+`WasteObligations__Retry__MaxRetryAttempts`, `WasteObligations__Retry__Delay`,
+`WasteObligations__AttemptTimeout__Timeout` or
+`WasteObligations__TotalRequestTimeout__Timeout`. The analytics processing budget
+remains the outer bound; increasing client timeouts does not extend it. The client
+uses timeout, retry and attempt timeout strategies without a circuit breaker.

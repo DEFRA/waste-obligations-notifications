@@ -30,12 +30,28 @@ jobs:
           docker compose up -d --wait
           dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj
           dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build
+      - name: Require Notify submission previews
+        env:
+          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
+          NOTIFY_PREVIEWS_REQUIRED: "1"
+        run: |
+          rm -rf TestResults/NotifySubmissionPreviews
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifySubmissionPreviews -- --filter-class '*NotifySubmissionPreviewTests' --report-trx --report-trx-filename NotifySubmissionPreviews.trx
+          python3 scripts/require-notify-previews.py TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx
       - name: Docker Compose logs
         if: always()
         run: docker compose logs
       - name: Stop local environment
         if: always()
         run: docker compose down -v --remove-orphans
+      - name: Upload Notify preview report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: notify-preview-report
+          path: TestResults/NotifySubmissionPreviews
+          if-no-files-found: warn
+          retention-days: 7
 
   sonarcloud-scan:
     name: CDP SonarCloud Scan

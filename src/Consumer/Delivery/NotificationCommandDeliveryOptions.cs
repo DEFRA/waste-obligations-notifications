@@ -18,9 +18,6 @@ public sealed record NotificationCommandDeliveryOptions
     [Required]
     public required string RecipientLaneSecret { get; init; }
 
-    [Range(1, 1)]
-    public int BatchSize { get; init; } = 1;
-
     [Range(0, 20)]
     public int WaitTimeSeconds { get; init; } = 20;
 
