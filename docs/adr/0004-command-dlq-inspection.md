@@ -112,10 +112,9 @@ Add read-only authenticated delivery-record search independently of queue
 inspection. Use a separate Mongo reader, preserving the delivery write-store
 interface. Project only retained identity/state/timestamps and available Notify,
 template correlation; exclude payloads, recipient/immutable digests and attempt
-ownership. Explicit resend and parent readback are deferred until a
-replacement-command producer exists. No current production writer persists parent
-correlation, so its filter, navigation and index would add unused surface and
-storage/write-maintenance cost. Stored evidence remains unchanged.
+ownership. The explicit resend producer now supplies parent correlation. Search projects
+that retained opaque relationship, provides exact parent filtering and navigation,
+and binds it into cursors. No lineage backfill or additional index is introduced.
 
 Use recording time for inclusive/exclusive UTC ranges and exact combined
 identifier filters. Sort newest first with Mongo ObjectId as a stable tie-breaker,
@@ -152,13 +151,14 @@ implemented usable actions, represented by HTTP method, endpoint and description
 Keep action-time selection, immutable identity and state guards unchanged.
 Recorded acceptance is distinct from recipient delivery; accepted redrive cleans
 up a terminal queue copy, including after a later provider delivery failure.
-Explicit resend is unavailable. Pending guidance treats rejection and lost
+Explicit resend requests one stable replacement only for a matching accepted
+source on the DLQ, after operator Notify investigation. Pending guidance treats rejection and lost
 responses as conditional investigations and makes inconclusive-lookup duplicate
 risk explicit. Invalid, conflicting and unknown states direct engineering
 escalation without a new removal action.
 
-Extend only the existing read projection to return matching minimal retained
-evidence and available Notify correlation; no delivery write path changes.
+Return matching minimal retained evidence and available Notify correlation.
+Delivery writes also preserve and separately guard replacement parent metadata.
 Keep the evidence model in Delivery and map it to the Administration search-summary
 contract. Do not expose a mismatched record as matching evidence. Valid pending or
 unrecorded commands can derive the original Notify reference for investigation;
@@ -235,3 +235,24 @@ redrive and consumption delete the terminal duplicate without Notify or evidence
 changes. This supplies an operator probe for inspect/replay/redrive while native
 AWS proof is unavailable. It does not prove successful discard or authorise
 agent testing of shared queues or cloud provisioning.
+
+### Stable accepted-command replacement
+
+Ordinary terminal replay remains cleanup. Explicit resend derives B's raw key
+from A's validated opaque key in the reserved `resend:` namespace, rather than a
+request ID or transport message ID. This prevents fresh selections or other hosts
+from creating multiple intentions from A after uncertain queue/HTTP responses.
+B can be an immediate source later without rewriting A or bypassing terminal B.
+
+Carry A's opaque key as optional command metadata and retain it through all
+pending and terminal transitions. Compare it separately from the existing
+immutable digest so original-command identities stay compatible. Contradictory
+parent evidence refuses sending and history changes. Publish before deleting
+the selected copy; do not authorise resend from retained history alone.
+
+Selection format `v4` additionally signs the source key and parent, preventing a
+same-content identity substitution. Old selections retain ordinary cleanup
+compatibility but require fresh inspection for resend. All consumers must support
+and preserve lineage before operator use; schema compatibility alone cannot
+establish mixed-version readiness. Native accepted-source verification remains a
+separate controlled-resource operation described in the recovery runbook.

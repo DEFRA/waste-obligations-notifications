@@ -20,6 +20,69 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 public sealed class NotificationCommandSendTests : IntegrationTestBase
 {
     [Fact]
+    public async Task WhenReplacementIsPublishedAgain_ShouldSendOnceRetainParentAndKeepOriginalEvidence()
+    {
+        await using var fixture = await DeliveryFixture.Create();
+        var original = DeliveryFixture.Command("submitted", "template-1");
+        await fixture.Send(original, "resend-lane");
+        await WaitForAsync(async () => Assert.Equal("delivery-accepted", (await fixture.Record(original))["outcome"].AsString));
+        var originalRecord = await fixture.Record(original);
+        var parent = fixture.Digest.CreateIdempotencyKeyDigest(original.IdempotencyKey);
+        var replacement = original with { IdempotencyKey = "resend:" + parent, ResendOfNotificationKey = parent };
+
+        await fixture.Send(replacement, "resend-lane", "first-replacement-transport");
+        await WaitForAsync(async () =>
+        {
+            Assert.Equal("delivery-accepted", (await fixture.Record(replacement))["outcome"].AsString);
+            Assert.Equal(2, fixture.Sqs.AcceptedDeleteAttempts);
+        });
+        var replacementRecord = await fixture.Record(replacement);
+        await fixture.Send(replacement, "resend-lane", "second-replacement-transport");
+        await WaitForAsync(() =>
+        {
+            Assert.Equal(3, fixture.Sqs.AcceptedDeleteAttempts);
+
+            return Task.CompletedTask;
+        });
+
+        Assert.Equal(originalRecord, await fixture.Record(original));
+        Assert.Equal(replacementRecord, await fixture.Record(replacement));
+        Assert.Equal(parent, replacementRecord["resendOfNotificationKey"].AsString);
+        Assert.False(originalRecord.Contains("resendOfNotificationKey"));
+        Assert.Single(await fixture.NotifyRequests(original));
+        var sent = Assert.Single(await fixture.NotifyRequests(replacement));
+        Assert.Equal("recipient@example.com", sent.GetProperty("email_address").GetString());
+        Assert.Equal(original.TemplateId, sent.GetProperty("template_id").GetString());
+        Assert.Equal("private-body", sent.GetProperty("personalisation").GetProperty("body").GetString());
+    }
+
+    [Fact]
+    public async Task WhenReplacementParentConflictsWithDurablePendingEvidence_ShouldReachDlqWithoutCallingNotify()
+    {
+        await using var fixture = await DeliveryFixture.Create(shortBudget: true);
+        const string parent = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const string conflictingParent = "v1:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        var command = DeliveryFixture.Command("submitted", "template-1") with { ResendOfNotificationKey = parent };
+        var filter = new BsonDocument("notificationKey", fixture.Digest.CreateIdempotencyKeyDigest(command.IdempotencyKey));
+        var store = new MongoNotificationDeliveryRecordStore(fixture.Mongo, Microsoft.Extensions.Options.Options.Create(new Data.MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = fixture.DatabaseName }), fixture.Digest);
+        Assert.Equal(DeliveryClaimResult.Claimed, await store.Claim(command, "previous-owner", 60, TestContext.Current.CancellationToken));
+        await fixture.Records.UpdateOneAsync(filter, new BsonDocument("$set", new BsonDocument { { "resendOfNotificationKey", conflictingParent }, { "leaseExpiresAtUtc", DateTime.UnixEpoch } }), cancellationToken: TestContext.Current.CancellationToken);
+        var before = await fixture.Record(command);
+
+        await fixture.Send(command, "conflicting-parent-lane");
+        await WaitForAsync(async () =>
+        {
+            var response = await fixture.Sqs.ReceiveMessageAsync(new ReceiveMessageRequest { QueueUrl = fixture.DlqUrl, WaitTimeSeconds = 0 }, TestContext.Current.CancellationToken);
+            var message = Assert.Single(response.Messages ?? []);
+            Assert.Equal(command.IdempotencyKey, JsonDocument.Parse(message.Body).RootElement.GetProperty("idempotencyKey").GetString());
+        }, TimeSpan.FromSeconds(40));
+
+        Assert.Empty(await fixture.NotifyRequests(command));
+        Assert.Equal(0, fixture.Sqs.AcceptedDeleteAttempts);
+        Assert.Equal(before, await fixture.Record(command));
+    }
+
+    [Fact]
     public async Task WhenNotifyAcceptsAndDeleteFails_ShouldPersistBeforeDeletionAndSuppressRealQueueRedelivery()
     {
         await using var fixture = await DeliveryFixture.Create(failFirstDelete: true);
@@ -147,6 +210,9 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
         public ObservingSqsClient Sqs { get; private set; } = null!;
         public string QueueUrl { get; private set; } = "";
         public string DlqUrl { get; private set; } = "";
+        public IMongoClient Mongo => _mongo;
+        public string DatabaseName => _databaseName;
+        public IMongoCollection<BsonDocument> Records => _mongo.GetDatabase(_databaseName).GetCollection<BsonDocument>("NotificationDeliveryRecord");
         public NotificationCommandDigest Digest { get; } =
             new(
                 Microsoft.Extensions.Options.Options.Create(
@@ -276,13 +342,13 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
                 JsonDocument.Parse("{\"body\":\"private-body\"}").RootElement.Clone()
             );
 
-        public async Task Send(NotificationCommand command, string lane) =>
+        public async Task Send(NotificationCommand command, string lane, string? transportIdentity = null) =>
             await Sqs.SendMessageAsync(
                 new SendMessageRequest
                 {
                     QueueUrl = QueueUrl,
                     MessageBody = JsonSerializer.Serialize(command, s_commandJsonOptions),
-                    MessageDeduplicationId = command.IdempotencyKey,
+                    MessageDeduplicationId = transportIdentity ?? command.IdempotencyKey,
                     MessageGroupId = lane,
                 },
                 TestContext.Current.CancellationToken

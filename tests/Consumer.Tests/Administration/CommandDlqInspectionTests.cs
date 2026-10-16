@@ -200,6 +200,7 @@ public sealed class CommandDlqInspectionTests
             body.RootElement.GetProperty("messages")[0].EnumerateObject().Select(property => property.Name).Order()
         );
         var token = body.RootElement.GetProperty("messages")[0].GetProperty("selectionToken").GetString()!;
+        Assert.StartsWith("v4.", token);
         using var payload = JsonDocument.Parse(DecodePayload(token));
         Assert.Equal(
             [
@@ -207,6 +208,7 @@ public sealed class CommandDlqInspectionTests
                 "immutableFieldsDigest",
                 "maxNumberOfMessages",
                 "messageId",
+                "notificationKey",
                 "queueBinding",
                 "receiveRequestAttemptId",
                 "visibilityTimeoutSeconds",
@@ -314,7 +316,7 @@ public sealed class CommandDlqInspectionTests
     }
 
     [Theory]
-    [InlineData("delivery-accepted", "inspect,redrive", "does not confirm recipient delivery")]
+    [InlineData("delivery-accepted", "inspect,redrive,resend", "does not confirm recipient delivery")]
     [InlineData("active-claim", "inspect", "not proof that its process is running")]
     [InlineData("expired-claim", "inspect,redrive,discard", "inconclusive lookup leaves a duplicate-email risk")]
     [InlineData("unrecorded", "redrive,discard", "fix the processing failure")]
@@ -352,7 +354,7 @@ public sealed class CommandDlqInspectionTests
             available.Select(action => action.GetProperty("endpoint").GetString())
         );
         Assert.All(available, action => Assert.Equal("POST", action.GetProperty("method").GetString()));
-        Assert.DoesNotContain(available, action => action.GetProperty("endpoint").GetString()!.EndsWith("/resend"));
+        Assert.Equal(classification == "delivery-accepted", available.Any(action => action.GetProperty("endpoint").GetString()!.EndsWith("/resend", StringComparison.Ordinal)));
         Assert.Equal(JsonValueKind.Null, item.GetProperty("deliveryRecord").ValueKind);
         Assert.Single(factory.Store.ReceivedCalls());
         Assert.Single(factory.Sqs.ReceivedCalls());
@@ -371,7 +373,7 @@ public sealed class CommandDlqInspectionTests
         "accepted then delivery failed",
         "delivery-accepted",
         "the record remains accepted",
-        "Explicit resend is unavailable"
+        "explicit resend requests the one stable replacement"
     )]
     public async Task WhenInvestigatingAgreedFailureScenario_ShouldGiveConditionalRecoveryWithoutInventingTheCause(
         string scenario,
@@ -455,8 +457,7 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(key, summary.GetProperty("notificationKey").GetString());
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("resendOfNotificationKey").ValueKind);
-        Assert.False(summary.TryGetProperty("links", out _));
-        Assert.False(item.GetProperty("links").TryGetProperty("resends", out _));
+        Assert.Equal(JsonValueKind.Null, summary.GetProperty("links").ValueKind);
         Assert.Equal("11111111-1111-1111-1111-111111111111", item.GetProperty("notifyNotificationId").GetString());
         Assert.Equal("v1:retained-reference", item.GetProperty("notifyReference").GetString());
         Assert.Equal("v1:retained-reference", summary.GetProperty("notifyReference").GetString());
@@ -464,6 +465,7 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal("retained-template", summary.GetProperty("templateId").GetString());
         Assert.Equal(3, summary.GetProperty("templateVersion").GetInt32());
         var encodedKey = "v1%3A" + key[3..];
+        Assert.Equal("/admin/notification-commands/delivery-records?resendOfNotificationKey=" + encodedKey, item.GetProperty("links").GetProperty("resends").GetString());
         Assert.Equal(
             "/admin/notification-commands/delivery-records?notificationKey=" + encodedKey,
             item.GetProperty("links").GetProperty("deliveryRecord").GetString()
@@ -1200,13 +1202,14 @@ public sealed class CommandDlqInspectionTests
     public void WhenSearchQueryNamesUseDifferentCase_ShouldReadSupportedValues()
     {
         var values = new QueryCollection(
-            Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery("?PAGESIZE=7&NOTIFICATIONKEY=exact-key")
+            Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery("?PAGESIZE=7&NOTIFICATIONKEY=exact-key&RESENDOFNOTIFICATIONKEY=parent-key")
         );
 
         var query = DeliveryRecordSearchQuery.Parse(values);
 
         Assert.Equal(7, query.PageSize);
         Assert.Equal("exact-key", query.NotificationKey);
+        Assert.Equal("parent-key", query.ResendOfNotificationKey);
     }
 
     [Theory]
@@ -1241,9 +1244,12 @@ public sealed class CommandDlqInspectionTests
         Assert.Empty(factory.Notify.ReceivedCalls());
     }
 
-    [Fact]
-    public async Task WhenAdminSearchesRetainedEvidence_ShouldReturnSummaryThroughRealReaderWithoutEffects()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenAdminSearchesRetainedEvidence_ShouldReturnSummaryThroughRealReaderWithoutEffects(bool validParent)
     {
+        const string parent = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         var mongo = Substitute.For<IMongoClient>();
         var database = Substitute.For<IMongoDatabase>();
         var collection = Substitute.For<IMongoCollection<BsonDocument>>();
@@ -1259,7 +1265,7 @@ public sealed class CommandDlqInspectionTests
                 {
                     { "_id", ObjectId.Parse("000000000000000000000001") },
                     { "notificationKey", "v1:replacement" },
-                    { "resendOfNotificationKey", "v1:parent/+?" },
+                    { "resendOfNotificationKey", validParent ? parent : "v1:parent/+?" },
                     { "notificationType", "submitted" },
                     { "outcome", "delivery-pending" },
                     { "recordedAtUtc", new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc) },
@@ -1288,8 +1294,16 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal("delivery-pending", record.GetProperty("outcome").GetString());
         Assert.Equal("2026-10-12T09:00:00Z", record.GetProperty("recordedAtUtc").GetString());
         Assert.Equal(JsonValueKind.Null, record.GetProperty("notifyNotificationId").ValueKind);
-        Assert.Equal(JsonValueKind.Null, record.GetProperty("resendOfNotificationKey").ValueKind);
-        Assert.False(record.TryGetProperty("links", out _));
+        if (validParent)
+        {
+            Assert.Equal(parent, record.GetProperty("resendOfNotificationKey").GetString());
+            Assert.Equal("/admin/notification-commands/delivery-records?notificationKey=v1%3A" + parent[3..], record.GetProperty("links").GetProperty("sourceRecord").GetString());
+        }
+        else
+        {
+            Assert.Equal(JsonValueKind.Null, record.GetProperty("resendOfNotificationKey").ValueKind);
+            Assert.Equal(JsonValueKind.Null, record.GetProperty("links").ValueKind);
+        }
         Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
         string[] privateFields = ["recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation"];
         foreach (var field in privateFields)

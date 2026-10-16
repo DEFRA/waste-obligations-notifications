@@ -56,6 +56,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IDeliveryRecordSearchReader, MongoDeliveryRecordSearchReader>();
         services.AddSingleton<CommandDlqRedriver>();
         services.AddSingleton<CommandDlqDiscarder>();
+        services.AddSingleton<CommandDlqResender>();
         services.AddSingleton<CommandDlqVerificationCommandCreator>();
         services.AddSingleton<CommandDlqQueueOperations>();
 

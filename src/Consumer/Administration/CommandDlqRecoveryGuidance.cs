@@ -27,7 +27,7 @@ public static class CommandDlqRecoveryGuidance
                         + "notification ID/reference. If still processing, wait. "
                         + "If delivered, redrive only to clean up the terminal queue copy without another send. "
                         + "If Notify later reports delivery failed, investigate; the record remains accepted and "
-                        + "redrive still performs terminal-copy cleanup only. Explicit resend is unavailable.",
+                        + "redrive still performs terminal-copy cleanup only. Check existing replacements and their progress. After checking Notify and investigating a confirmed delivery failure, explicit resend requests the one stable replacement. An inconclusive lookup leaves a duplicate-email risk.",
                 NotificationDeliveryClassifications.ActiveClaim => Unconfirmed
                     + "An unexpired lease owns the attempt, but is not proof that its process is running. "
                     + "Wait and inspect again. Selected redrive is not offered while the lease is active; "
@@ -67,8 +67,13 @@ public static class CommandDlqRecoveryGuidance
     public static IReadOnlyList<CommandDlqAction> Actions(string classification) =>
         classification switch
         {
-            NotificationDeliveryClassifications.DeliveryAccepted
-            or NotificationDeliveryClassifications.DeliverySuppressed =>
+            NotificationDeliveryClassifications.DeliveryAccepted =>
+            [
+                new("POST", InspectEndpoint, "Inspect again"),
+                new("POST", RedriveEndpoint, "Clean up the terminal queue copy without another send"),
+                new("POST", "/admin/notification-commands/dlq/resend", "Request the one stable replacement after checking Notify and existing replacements"),
+            ],
+            NotificationDeliveryClassifications.DeliverySuppressed =>
             [
                 new("POST", InspectEndpoint, "Inspect again"),
                 new("POST", RedriveEndpoint, "Clean up the terminal queue copy without another send"),

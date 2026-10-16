@@ -9,5 +9,7 @@ public sealed record CommandDlqSelection(
     DateTimeOffset ExpiresAtUtc,
     string ImmutableFieldsDigest,
     int VisibilityTimeoutSeconds,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MaxNumberOfMessages = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MaxNumberOfMessages = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NotificationKey = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResendOfNotificationKey = null
 );

@@ -123,6 +123,9 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             Record(4, "v1:accepted", "delivery-accepted", time, "notify-id"),
             Record(5, "v1:new", "future-retained-outcome", time.AddMinutes(1)),
         };
+        const string parent = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        foreach (var replacement in fixtures.Skip(1).Take(3))
+            replacement["resendOfNotificationKey"] = parent;
         try
         {
             using var loggerFactory = LoggerFactory.Create(_ => { });
@@ -158,6 +161,18 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             Assert.Equal("v1:old", Assert.Single(third.Records).NotificationKey);
             Assert.Null(third.NextCursor);
             var pending = await reader.Search(new DeliveryRecordSearchQuery { NotificationKey = "v1:pending" }, token);
+            var parentQuery = new DeliveryRecordSearchQuery { ResendOfNotificationKey = parent, PageSize = 1 };
+            var parentFirst = await reader.Search(parentQuery, token);
+            Assert.Equal("v1:accepted", Assert.Single(parentFirst.Records).NotificationKey);
+            var parentSecond = await reader.Search(parentQuery with { Cursor = parentFirst.NextCursor }, token);
+            Assert.Equal("v1:pending", Assert.Single(parentSecond.Records).NotificationKey);
+            var parentThird = await reader.Search(parentQuery with { Cursor = parentSecond.NextCursor }, token);
+            Assert.Equal("v1:abandoned", Assert.Single(parentThird.Records).NotificationKey);
+            Assert.Null(parentThird.NextCursor);
+            Assert.All(parentFirst.Records.Concat(parentSecond.Records).Concat(parentThird.Records), record => Assert.Equal(parent, record.ResendOfNotificationKey));
+            await Assert.ThrowsAsync<ArgumentException>(() => reader.Search(parentQuery with { Cursor = parentFirst.NextCursor, ResendOfNotificationKey = "another-parent" }, token));
+            var acceptedReplacement = await reader.Search(parentQuery with { Outcome = "delivery-accepted" }, token);
+            Assert.Equal("v1:accepted", Assert.Single(acceptedReplacement.Records).NotificationKey);
             Assert.Equal("delivery-pending", Assert.Single(pending.Records).Outcome);
             Assert.Null(pending.Records[0].NotifyNotificationId);
             var missingId = await reader.Search(
