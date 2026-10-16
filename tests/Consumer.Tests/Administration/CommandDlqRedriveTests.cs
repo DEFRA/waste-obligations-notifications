@@ -11,6 +11,7 @@ using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Tests.Helpers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -94,6 +95,8 @@ public sealed class CommandDlqRedriveTests
         Assert.Equal(Receipt, deleted.ReceiptHandle);
         Assert.Empty(factory.Store.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
+
+        await response.VerifyResponse();
     }
 
     [Fact]
@@ -731,6 +734,8 @@ public sealed class CommandDlqRedriveTests
             deleted
         );
         await AssertPrivacy(factory, response, tokens[0]);
+
+        await response.VerifyResponse(failSecond ? "partialFailure" : "success");
     }
 
     [Theory]

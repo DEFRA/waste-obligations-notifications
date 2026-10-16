@@ -9,6 +9,7 @@ using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Tests.Helpers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -75,6 +76,8 @@ public sealed class CommandDlqDiscardTests
         );
         Assert.Equal(Identity, abandoned.EmailAddress);
         await AssertPrivacy(factory, response, token);
+
+        await response.VerifyResponse();
     }
 
     [Theory]

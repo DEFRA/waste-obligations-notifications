@@ -9,6 +9,7 @@ using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Tests.Helpers;
 using Elastic.CommonSchema.Serilog;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -254,6 +255,8 @@ public sealed class CommandDlqInspectionTests
             factory.Logs.Messages,
             message => message.Contains("unrecorded for other", StringComparison.Ordinal)
         );
+
+        await response.VerifyResponse();
     }
 
     [Theory]
@@ -364,6 +367,9 @@ public sealed class CommandDlqInspectionTests
         Assert.Single(factory.Store.ReceivedCalls());
         Assert.Single(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
+
+        if (classification is "active-claim" or "expired-claim" or "delivery-suppressed")
+            await response.VerifyResponse(classification);
     }
 
     [Theory]
@@ -485,6 +491,8 @@ public sealed class CommandDlqInspectionTests
         Assert.Single(factory.Store.ReceivedCalls());
         Assert.Single(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
+
+        await response.VerifyResponse();
     }
 
     [Fact]
@@ -548,6 +556,8 @@ public sealed class CommandDlqInspectionTests
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Empty(factory.Store.ReceivedCalls());
+
+        await response.VerifyResponse();
     }
 
     [Fact]
@@ -609,6 +619,9 @@ public sealed class CommandDlqInspectionTests
             factory.Sqs.ReceivedCalls(),
             call => Assert.Equal(nameof(IAmazonSQS.ReceiveMessageAsync), call.GetMethodInfo().Name)
         );
+
+        if (storage)
+            await response.VerifyResponse();
     }
 
     [Theory]
@@ -764,6 +777,8 @@ public sealed class CommandDlqInspectionTests
         Assert.Empty(factory.Store.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
         AssertPrivacy(factory, body.RootElement.GetRawText());
+
+        await response.VerifyResponse();
     }
 
     [Theory]
@@ -869,6 +884,8 @@ public sealed class CommandDlqInspectionTests
         Assert.Empty(factory.Store.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
         AssertPrivacy(factory, body.RootElement.GetRawText());
+
+        await response.VerifyResponse();
     }
 
     [Theory]
@@ -982,6 +999,9 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(DlqArn, listing.SourceArn);
         Assert.Equal(1, listing.MaxResults);
         AssertPrivacy(factory, body.RootElement.GetRawText());
+
+        if (status == "RUNNING")
+            await response.VerifyResponse();
     }
 
     [Theory]
@@ -1270,21 +1290,48 @@ public sealed class CommandDlqInspectionTests
         database
             .GetCollection<BsonDocument>("NotificationDeliveryRecord", Arg.Any<MongoCollectionSettings>())
             .Returns(collection);
-        cursor.Current.Returns(
-            new[]
+        var documents = new List<BsonDocument>
+        {
+            new BsonDocument
             {
-                new BsonDocument
-                {
-                    { "_id", ObjectId.Parse("000000000000000000000001") },
-                    { "notificationKey", "v1:replacement" },
-                    { "resendOfNotificationKey", validParent ? parent : "v1:parent/+?" },
-                    { "notificationType", "submitted" },
-                    { "outcome", "delivery-pending" },
-                    { "recordedAtUtc", new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc) },
-                    { "actionOccurredAtUtc", new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc) },
-                },
-            }
-        );
+                { "_id", ObjectId.Parse("000000000000000000000001") },
+                { "notificationKey", "v1:replacement" },
+                { "resendOfNotificationKey", validParent ? parent : "v1:parent/+?" },
+                { "notificationType", "submitted" },
+                { "outcome", "delivery-pending" },
+                { "recordedAtUtc", new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc) },
+                { "actionOccurredAtUtc", new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc) },
+                { "leaseExpiresAtUtc", new DateTime(2026, 10, 12, 9, 5, 0, DateTimeKind.Utc) },
+            },
+        };
+        if (validParent)
+        {
+            documents.Add(new BsonDocument
+            {
+                { "_id", ObjectId.Parse("000000000000000000000002") },
+                { "notificationKey", "v1:accepted-replacement" },
+                { "resendOfNotificationKey", parent },
+                { "notificationType", "submitted" },
+                { "outcome", "delivery-accepted" },
+                { "recordedAtUtc", new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc) },
+                { "actionOccurredAtUtc", new DateTime(2026, 10, 10, 9, 0, 0, DateTimeKind.Utc) },
+                { "acceptedAtUtc", new DateTime(2026, 10, 11, 9, 1, 0, DateTimeKind.Utc) },
+                { "notifyNotificationId", "11111111-1111-1111-1111-111111111111" },
+                { "notifyReference", "v1:retained-reference" },
+                { "templateId", "22222222-2222-2222-2222-222222222222" },
+                { "templateVersion", 3 },
+            });
+            documents.Add(new BsonDocument
+            {
+                { "_id", ObjectId.Parse("000000000000000000000003") },
+                { "notificationKey", "v1:next-page" },
+                { "notificationType", "submitted" },
+                { "outcome", "delivery-suppressed" },
+                { "recordedAtUtc", new DateTime(2026, 10, 10, 9, 0, 0, DateTimeKind.Utc) },
+                { "actionOccurredAtUtc", new DateTime(2026, 10, 9, 9, 0, 0, DateTimeKind.Utc) },
+            });
+        }
+        cursor.Current.Returns(documents);
         cursor.MoveNextAsync(Arg.Any<CancellationToken>()).Returns(true, false);
         collection
             .FindAsync(
@@ -1295,19 +1342,39 @@ public sealed class CommandDlqInspectionTests
             .Returns(cursor);
         await using var factory = new InspectionApplicationFactory(searchMongo: mongo);
         using var client = factory.CreateClient();
-        using var request = SearchRequest("admin", "notificationKey=v1%3Areplacement");
+        using var request = SearchRequest("admin", "recordedFromUtc=2026-10-01T00%3A00%3A00Z&pageSize=2");
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         using var body = JsonDocument.Parse(text);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var record = Assert.Single(body.RootElement.GetProperty("records").EnumerateArray());
+        var records = body.RootElement.GetProperty("records");
+        Assert.Equal(validParent ? 2 : 1, records.GetArrayLength());
+        var record = records[0];
         Assert.Equal("v1:replacement", record.GetProperty("notificationKey").GetString());
         Assert.Equal("delivery-pending", record.GetProperty("outcome").GetString());
         Assert.Equal("2026-10-12T09:00:00Z", record.GetProperty("recordedAtUtc").GetString());
         Assert.Equal(JsonValueKind.Null, record.GetProperty("notifyNotificationId").ValueKind);
+        Assert.Equal("2026-10-12T09:05:00Z", record.GetProperty("leaseExpiresAtUtc").GetString());
         if (validParent)
         {
+            var accepted = records[1];
+            Assert.Equal("delivery-accepted", accepted.GetProperty("outcome").GetString());
+            Assert.Equal("2026-10-11T09:01:00Z", accepted.GetProperty("acceptedAtUtc").GetString());
+            Assert.Equal("11111111-1111-1111-1111-111111111111", accepted.GetProperty("notifyNotificationId").GetString());
+            Assert.Equal("v1:retained-reference", accepted.GetProperty("notifyReference").GetString());
+            Assert.Equal("22222222-2222-2222-2222-222222222222", accepted.GetProperty("templateId").GetString());
+            Assert.Equal(3, accepted.GetProperty("templateVersion").GetInt32());
+            Assert.Equal(JsonValueKind.Null, accepted.GetProperty("leaseExpiresAtUtc").ValueKind);
+            var nextCursor = body.RootElement.GetProperty("nextCursor").GetString();
+            Assert.False(string.IsNullOrEmpty(nextCursor));
+            var nextPage = new DeliveryRecordSearchQuery
+            {
+                RecordedFromUtc = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc),
+                PageSize = 2,
+                Cursor = nextCursor,
+            };
+            nextPage.Validate();
             Assert.Equal(parent, record.GetProperty("resendOfNotificationKey").GetString());
             Assert.Equal(
                 "/admin/notification-commands/delivery-records?notificationKey=v1%3A" + parent[3..],
@@ -1318,16 +1385,19 @@ public sealed class CommandDlqInspectionTests
         {
             Assert.Equal(JsonValueKind.Null, record.GetProperty("resendOfNotificationKey").ValueKind);
             Assert.Equal(JsonValueKind.Null, record.GetProperty("links").ValueKind);
+            Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
         }
-        Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
         string[] privateFields = ["recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation"];
-        foreach (var field in privateFields)
-            Assert.False(record.TryGetProperty(field, out _));
+        foreach (var item in records.EnumerateArray())
+            foreach (var field in privateFields)
+                Assert.False(item.TryGetProperty(field, out _));
         Assert.Equal("FindAsync", Assert.Single(collection.ReceivedCalls()).GetMethodInfo().Name);
         Assert.Empty(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
         AssertPrivacy(factory, text);
+
+        await response.VerifyResponse(validParent ? "validParent" : "invalidParent");
     }
 
     [Fact]

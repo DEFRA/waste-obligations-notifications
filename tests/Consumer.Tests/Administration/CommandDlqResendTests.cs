@@ -8,6 +8,7 @@ using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Tests.Helpers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -107,6 +108,8 @@ public sealed class CommandDlqResendTests
         );
         Assert.Single(factory.Store.ReceivedCalls());
         Assert.Empty(factory.Notify.ReceivedCalls());
+
+        await response.VerifyResponse();
     }
 
     [Theory]
