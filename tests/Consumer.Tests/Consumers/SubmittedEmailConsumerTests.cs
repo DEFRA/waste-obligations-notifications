@@ -492,6 +492,7 @@ public sealed class SubmittedEmailConsumerTests
 
     [Theory]
     [InlineData("schema")]
+    [InlineData("malformed-schema")]
     [InlineData("version")]
     [InlineData("organisation")]
     public async Task WhenMatchingSubmissionEventIsInvalid_ShouldRetainWithoutReadingOrPublishing(string fault)
@@ -500,6 +501,11 @@ public sealed class SubmittedEmailConsumerTests
         body = fault switch
         {
             "schema" => body.Replace(
+                "compliance_declaration_v1.3",
+                "compliance_declaration_v0.0",
+                StringComparison.Ordinal
+            ),
+            "malformed-schema" => body.Replace(
                 "compliance_declaration_v1.3",
                 "compliance_declaration_v0",
                 StringComparison.Ordinal
