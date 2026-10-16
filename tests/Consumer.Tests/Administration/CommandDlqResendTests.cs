@@ -67,10 +67,15 @@ public sealed class CommandDlqResendTests
         var send = Sent(factory);
         var replacement = JsonSerializer.Deserialize<NotificationCommand>(send.MessageBody, s_json)!;
         var source = Command();
-        var sourceKey = factory.Digest.CreateIdempotencyKeyDigest(source.IdempotencyKey);
+
+        // Independent HMAC-SHA256 vectors for the fixture's evidence secret and source-intention key.
+        const string sourceKey = "v1:e33ba528eafbf3e486775ef0ec83fa5ba46c3b33e497449a02350db65302b3d8";
+        const string replacementKey = "v1:23e2e9431616823e2925d46c55ca429d28a659a579ac24eeba0728eb7896711c";
+        const string replacementIdempotencyKey = "resend:" + sourceKey;
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.NotEqual(source.IdempotencyKey, replacement.IdempotencyKey);
+        Assert.Equal(replacementIdempotencyKey, replacement.IdempotencyKey);
         Assert.Equal(sourceKey, replacement.ResendOfNotificationKey);
         Assert.Equal(source.Personalisation.GetRawText(), replacement.Personalisation.GetRawText());
         Assert.Equal(
@@ -84,11 +89,10 @@ public sealed class CommandDlqResendTests
         );
         Assert.Equal("http://sqs.local/commands.fifo", send.QueueUrl);
         Assert.Equal(factory.Digest.CreateRecipientLane(source.EmailAddress), send.MessageGroupId);
-        Assert.Equal(replacement.IdempotencyKey, send.MessageDeduplicationId);
+        Assert.Equal(replacementIdempotencyKey, send.MessageDeduplicationId);
         var deleted = Assert.IsType<DeleteMessageRequest>(factory.Sqs.ReceivedCalls().Last().GetArguments()[0]);
         Assert.Equal("selected-receipt", deleted.ReceiptHandle);
         Assert.Equal("http://sqs.local/commands-dlq.fifo", deleted.QueueUrl);
-        var replacementKey = factory.Digest.CreateIdempotencyKeyDigest(replacement.IdempotencyKey);
         Assert.Equal(sourceKey, body.RootElement.GetProperty("sourceNotificationKey").GetString());
         Assert.Equal(replacementKey, body.RootElement.GetProperty("replacementNotificationKey").GetString());
         Assert.Equal("confirmed", body.RootElement.GetProperty("publicationStatus").GetString());
