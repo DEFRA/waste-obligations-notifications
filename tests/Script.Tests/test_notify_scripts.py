@@ -69,23 +69,19 @@ class NotifyEnvironmentTests(unittest.TestCase):
             with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True):
                 self.assertEqual(wrapper.notify_environment(self.root), expected)
 
-    def test_fixed_operations_pass_only_their_known_arguments_and_child_status(self):
-        commands = {
-            "run": ["dotnet", "run", "--project", "src/Consumer"],
-            "preview": ["dotnet", "test", "--test-modules",
-                        "tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll",
-                        "--no-build", "--", "--filter-class", "*NotifySubmissionPreviewTests"],
-        }
-        for mode, command in commands.items():
-            with self.subTest(mode=mode), patch.object(sys, "argv", ["wrapper", mode]), \
-                    patch.object(wrapper, "notify_environment", return_value={"synthetic": "value"}) as environment, \
-                    patch.object(wrapper.subprocess, "run", return_value=Mock(returncode=7)) as launch:
-                self.assertEqual(wrapper.main(), 7)
-                environment.assert_called_once_with(ROOT)
-                launch.assert_called_once_with(command, cwd=ROOT, env={"synthetic": "value"}, check=False)
+    def test_run_passes_only_known_arguments_and_child_status(self):
+        with patch.object(sys, "argv", ["wrapper", "run"]), \
+                patch.object(wrapper, "notify_environment", return_value={"synthetic": "value"}) as environment, \
+                patch.object(wrapper.subprocess, "run", return_value=Mock(returncode=7)) as launch:
+            self.assertEqual(wrapper.main(), 7)
+            environment.assert_called_once_with(ROOT)
+            launch.assert_called_once_with(
+                ["dotnet", "run", "--project", "src/Consumer"],
+                cwd=ROOT, env={"synthetic": "value"}, check=False,
+            )
 
     def test_arbitrary_executables_and_extra_arguments_are_rejected_before_launch(self):
-        cases = [[], ["sh"], ["run", "--project", "attacker"],
+        cases = [[], ["preview"], ["sh"], ["run", "--project", "attacker"],
                  ["preview;touch SHOULD_NOT_EXIST"], ["dotnet", "run"]]
         for arguments in cases:
             with self.subTest(arguments=arguments), patch.object(sys, "argv", ["wrapper"] + arguments), \

@@ -32,19 +32,14 @@ def notify_environment(root):
 
 
 def main():
-    # Select a fixed operation; never forward caller-supplied executable or arguments.
-    if len(sys.argv) != 2 or sys.argv[1] not in ("run", "preview"):
-        sys.exit("Usage: python3 scripts/with-notify-env.py {run|preview}")
+    # Never forward caller-supplied executable or arguments.
+    if len(sys.argv) != 2 or sys.argv[1] != "run":
+        sys.exit("Usage: python3 scripts/with-notify-env.py run")
     root = Path(__file__).resolve().parent.parent
-    commands = {
-        "run": ["dotnet", "run", "--project", "src/Consumer"],
-        "preview": [
-            "dotnet", "test", "--test-modules",
-            "tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll",
-            "--no-build", "--", "--filter-class", "*NotifySubmissionPreviewTests",
-        ],
-    }
-    return subprocess.run(commands[sys.argv[1]], cwd=root, env=notify_environment(root), check=False).returncode
+    return subprocess.run(
+        ["dotnet", "run", "--project", "src/Consumer"],
+        cwd=root, env=notify_environment(root), check=False,
+    ).returncode
 
 
 if __name__ == "__main__":

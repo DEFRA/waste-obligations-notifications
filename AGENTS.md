@@ -22,14 +22,15 @@
 - Separate key statements with blank lines at logical boundaries: validation,
   dependency calls, publication and acknowledgement. Apply this readability check
   across the complete diff, alongside CSharpier formatting.
-
 - Reuse downstream service client conventions, including configurable resilience,
   from the companion Waste Obligations service; avoid global logging overrides.
 - Put reusable HTTP stubbing and request inspection in test helper extensions.
 - Distinguish isolated integration results from separately required provider
   previews when reporting test totals and skips. Derive combined integration
   totals from TRX evidence and count repeated preview cases once. Never hard-code
-  preview counts or case lists in CI summaries or step titles.
+  preview counts or case lists in CI summaries or step titles. This reporting
+  rule does not replace the explicit four-case contract enforced by
+  `scripts/require-notify-previews.py`.
 
 ## Build guidance for agents
 

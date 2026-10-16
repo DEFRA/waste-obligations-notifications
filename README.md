@@ -643,8 +643,9 @@ For a local consumer using real Notify, the wrapper supplies the same `.env`
 fallback independently to `GOVUKNOTIFY_APIKEY` and `Notify__ApiKey`. Explicit
 process destination settings take precedence, including an explicitly empty value
 and uppercase `NOTIFY__APIKEY`. The wrapper parses only the named value; it never
-executes `.env` content or prints the key. It accepts only `run` or `preview` and
-launches the corresponding fixed .NET command without forwarding CLI arguments:
+executes `.env` content or prints the key. It accepts only `run` and launches the
+fixed consumer command without forwarding CLI arguments. Direct preview tests read their own `.env` fallback; use the
+preview command above instead of this wrapper:
 
 ```bash
 Notify__BaseAddress=https://api.notifications.service.gov.uk \
