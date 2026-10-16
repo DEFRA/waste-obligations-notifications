@@ -130,11 +130,7 @@ public sealed class CommandDlqResender(
             return null;
 
         var command = ReadCommand(message);
-        if (
-            command is null
-            || selection.NotificationKey is null
-            || !selection.Matches(command, digest)
-        )
+        if (command is null || selection.NotificationKey is null || !selection.Matches(command, digest))
             return null;
 
         return (message, command, selection.NotificationKey);
