@@ -25,7 +25,9 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
         await using var fixture = await DeliveryFixture.Create();
         var original = DeliveryFixture.Command("submitted", "template-1");
         await fixture.Send(original, "resend-lane");
-        await WaitForAsync(async () => Assert.Equal("delivery-accepted", (await fixture.Record(original))["outcome"].AsString));
+        await WaitForAsync(async () =>
+            Assert.Equal("delivery-accepted", (await fixture.Record(original))["outcome"].AsString)
+        );
         var originalRecord = await fixture.Record(original);
         var parent = fixture.Digest.CreateIdempotencyKeyDigest(original.IdempotencyKey);
         var replacement = original with { IdempotencyKey = "resend:" + parent, ResendOfNotificationKey = parent };
@@ -63,19 +65,55 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
         const string parent = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const string conflictingParent = "v1:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
         var command = DeliveryFixture.Command("submitted", "template-1") with { ResendOfNotificationKey = parent };
-        var filter = new BsonDocument("notificationKey", fixture.Digest.CreateIdempotencyKeyDigest(command.IdempotencyKey));
-        var store = new MongoNotificationDeliveryRecordStore(fixture.Mongo, Microsoft.Extensions.Options.Options.Create(new Data.MongoDbOptions { DatabaseUri = "mongodb://localhost:27017", DatabaseName = fixture.DatabaseName }), fixture.Digest);
-        Assert.Equal(DeliveryClaimResult.Claimed, await store.Claim(command, "previous-owner", 60, TestContext.Current.CancellationToken));
-        await fixture.Records.UpdateOneAsync(filter, new BsonDocument("$set", new BsonDocument { { "resendOfNotificationKey", conflictingParent }, { "leaseExpiresAtUtc", DateTime.UnixEpoch } }), cancellationToken: TestContext.Current.CancellationToken);
+        var filter = new BsonDocument(
+            "notificationKey",
+            fixture.Digest.CreateIdempotencyKeyDigest(command.IdempotencyKey)
+        );
+        var store = new MongoNotificationDeliveryRecordStore(
+            fixture.Mongo,
+            Microsoft.Extensions.Options.Options.Create(
+                new Data.MongoDbOptions
+                {
+                    DatabaseUri = "mongodb://localhost:27017",
+                    DatabaseName = fixture.DatabaseName,
+                }
+            ),
+            fixture.Digest
+        );
+        Assert.Equal(
+            DeliveryClaimResult.Claimed,
+            await store.Claim(command, "previous-owner", 60, TestContext.Current.CancellationToken)
+        );
+        await fixture.Records.UpdateOneAsync(
+            filter,
+            new BsonDocument(
+                "$set",
+                new BsonDocument
+                {
+                    { "resendOfNotificationKey", conflictingParent },
+                    { "leaseExpiresAtUtc", DateTime.UnixEpoch },
+                }
+            ),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
         var before = await fixture.Record(command);
 
         await fixture.Send(command, "conflicting-parent-lane");
-        await WaitForAsync(async () =>
-        {
-            var response = await fixture.Sqs.ReceiveMessageAsync(new ReceiveMessageRequest { QueueUrl = fixture.DlqUrl, WaitTimeSeconds = 0 }, TestContext.Current.CancellationToken);
-            var message = Assert.Single(response.Messages ?? []);
-            Assert.Equal(command.IdempotencyKey, JsonDocument.Parse(message.Body).RootElement.GetProperty("idempotencyKey").GetString());
-        }, TimeSpan.FromSeconds(40));
+        await WaitForAsync(
+            async () =>
+            {
+                var response = await fixture.Sqs.ReceiveMessageAsync(
+                    new ReceiveMessageRequest { QueueUrl = fixture.DlqUrl, WaitTimeSeconds = 0 },
+                    TestContext.Current.CancellationToken
+                );
+                var message = Assert.Single(response.Messages ?? []);
+                Assert.Equal(
+                    command.IdempotencyKey,
+                    JsonDocument.Parse(message.Body).RootElement.GetProperty("idempotencyKey").GetString()
+                );
+            },
+            TimeSpan.FromSeconds(40)
+        );
 
         Assert.Empty(await fixture.NotifyRequests(command));
         Assert.Equal(0, fixture.Sqs.AcceptedDeleteAttempts);
@@ -212,7 +250,8 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
         public string DlqUrl { get; private set; } = "";
         public IMongoClient Mongo => _mongo;
         public string DatabaseName => _databaseName;
-        public IMongoCollection<BsonDocument> Records => _mongo.GetDatabase(_databaseName).GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        public IMongoCollection<BsonDocument> Records =>
+            _mongo.GetDatabase(_databaseName).GetCollection<BsonDocument>("NotificationDeliveryRecord");
         public NotificationCommandDigest Digest { get; } =
             new(
                 Microsoft.Extensions.Options.Options.Create(

@@ -4,8 +4,11 @@ public sealed record CommandDlqResendResult(string SourceNotificationKey, string
 {
     public string PublicationStatus => "confirmed";
     public bool SourceMessageRemoved => true;
-    public CommandDlqResendLinks Links => new(
-        "/admin/notification-commands/delivery-records?notificationKey=" + Uri.EscapeDataString(SourceNotificationKey),
-        "/admin/notification-commands/delivery-records?notificationKey=" + Uri.EscapeDataString(ReplacementNotificationKey)
-    );
+    public CommandDlqResendLinks Links =>
+        new(
+            "/admin/notification-commands/delivery-records?notificationKey="
+                + Uri.EscapeDataString(SourceNotificationKey),
+            "/admin/notification-commands/delivery-records?notificationKey="
+                + Uri.EscapeDataString(ReplacementNotificationKey)
+        );
 }

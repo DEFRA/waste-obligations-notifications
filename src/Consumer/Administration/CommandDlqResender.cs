@@ -21,7 +21,10 @@ public sealed class CommandDlqResender(
 {
     private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web);
 
-    public async Task<CommandDlqResendResult?> Resend(CommandDlqSelection selection, CancellationToken cancellationToken)
+    public async Task<CommandDlqResendResult?> Resend(
+        CommandDlqSelection selection,
+        CancellationToken cancellationToken
+    )
     {
         var started = Stopwatch.GetTimestamp();
         var remaining = selections.RemainingLifetime(selection);
@@ -43,20 +46,27 @@ public sealed class CommandDlqResender(
                     VisibilityTimeout = selection.VisibilityTimeoutSeconds,
                     MessageAttributeNames = ["All"],
                     MessageSystemAttributeNames = ["ApproximateReceiveCount", "SentTimestamp"],
-                }, source.Token);
+                },
+                source.Token
+            );
             EnsureTimely();
-            if (response.HttpStatusCode != HttpStatusCode.OK || response.Messages?.Count > (selection.MaxNumberOfMessages ?? 1))
+            if (
+                response.HttpStatusCode != HttpStatusCode.OK
+                || response.Messages?.Count > (selection.MaxNumberOfMessages ?? 1)
+            )
                 throw new InvalidOperationException("Command DLQ replay was not confirmed.");
             var message = response.Messages?.SingleOrDefault(item => item.MessageId == selection.MessageId);
             if (message is null || string.IsNullOrEmpty(message.ReceiptHandle))
                 return null;
 
             var command = ReadCommand(message);
-            if (command is null
+            if (
+                command is null
                 || selection.NotificationKey is null
                 || digest.CreateIdempotencyKeyDigest(command.IdempotencyKey) != selection.NotificationKey
                 || digest.CreateImmutableFieldsDigest(command) != selection.ImmutableFieldsDigest
-                || command.ResendOfNotificationKey != selection.ResendOfNotificationKey)
+                || command.ResendOfNotificationKey != selection.ResendOfNotificationKey
+            )
                 return null;
 
             EnsureTimely();
@@ -86,11 +96,14 @@ public sealed class CommandDlqResender(
             if (published.HttpStatusCode != HttpStatusCode.OK || published.MessageId is not { Length: > 0 and <= 100 })
                 throw new InvalidOperationException("Replacement publication was not confirmed.");
 
-            var deleted = await sqs.DeleteMessageAsync(new DeleteMessageRequest
-            {
-                QueueUrl = administration.Value.QueueUrl,
-                ReceiptHandle = message.ReceiptHandle,
-            }, source.Token);
+            var deleted = await sqs.DeleteMessageAsync(
+                new DeleteMessageRequest
+                {
+                    QueueUrl = administration.Value.QueueUrl,
+                    ReceiptHandle = message.ReceiptHandle,
+                },
+                source.Token
+            );
             EnsureTimely();
             if (deleted.HttpStatusCode != HttpStatusCode.OK)
                 throw new InvalidOperationException("Selected source removal was not confirmed.");

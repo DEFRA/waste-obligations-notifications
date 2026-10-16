@@ -169,8 +169,20 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             var parentThird = await reader.Search(parentQuery with { Cursor = parentSecond.NextCursor }, token);
             Assert.Equal("v1:abandoned", Assert.Single(parentThird.Records).NotificationKey);
             Assert.Null(parentThird.NextCursor);
-            Assert.All(parentFirst.Records.Concat(parentSecond.Records).Concat(parentThird.Records), record => Assert.Equal(parent, record.ResendOfNotificationKey));
-            await Assert.ThrowsAsync<ArgumentException>(() => reader.Search(parentQuery with { Cursor = parentFirst.NextCursor, ResendOfNotificationKey = "another-parent" }, token));
+            Assert.All(
+                parentFirst.Records.Concat(parentSecond.Records).Concat(parentThird.Records),
+                record => Assert.Equal(parent, record.ResendOfNotificationKey)
+            );
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                reader.Search(
+                    parentQuery with
+                    {
+                        Cursor = parentFirst.NextCursor,
+                        ResendOfNotificationKey = "another-parent",
+                    },
+                    token
+                )
+            );
             var acceptedReplacement = await reader.Search(parentQuery with { Outcome = "delivery-accepted" }, token);
             Assert.Equal("v1:accepted", Assert.Single(acceptedReplacement.Records).NotificationKey);
             Assert.Equal("delivery-pending", Assert.Single(pending.Records).Outcome);

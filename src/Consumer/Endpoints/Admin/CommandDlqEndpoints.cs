@@ -116,16 +116,20 @@ public static class CommandDlqEndpoints
     {
         var selection = selections.Validate(request.SelectionToken);
         if (request.SelectionTokens is not null || selection?.NotificationKey is null)
-            return Results.Problem(statusCode: StatusCodes.Status400BadRequest,
-                detail: "Resend requires one current identity-bound selection.");
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                detail: "Resend requires one current identity-bound selection."
+            );
 
         try
         {
             var result = await resender.Resend(selection, cancellationToken);
 
             return result is null
-                ? Results.Problem(statusCode: StatusCodes.Status409Conflict,
-                    detail: "Selected command is unavailable or has no matching accepted evidence.")
+                ? Results.Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    detail: "Selected command is unavailable or has no matching accepted evidence."
+                )
                 : Results.Ok(result);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -134,8 +138,10 @@ public static class CommandDlqEndpoints
         }
         catch (Exception)
         {
-            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable,
-                detail: "Command DLQ resend failed; publication or removal may be unconfirmed.");
+            return Results.Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                detail: "Command DLQ resend failed; publication or removal may be unconfirmed."
+            );
         }
     }
 

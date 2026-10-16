@@ -71,7 +71,11 @@ public static class CommandDlqRecoveryGuidance
             [
                 new("POST", InspectEndpoint, "Inspect again"),
                 new("POST", RedriveEndpoint, "Clean up the terminal queue copy without another send"),
-                new("POST", "/admin/notification-commands/dlq/resend", "Request the one stable replacement after checking Notify and existing replacements"),
+                new(
+                    "POST",
+                    "/admin/notification-commands/dlq/resend",
+                    "Request the one stable replacement after checking Notify and existing replacements"
+                ),
             ],
             NotificationDeliveryClassifications.DeliverySuppressed =>
             [

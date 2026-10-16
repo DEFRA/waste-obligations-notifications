@@ -354,7 +354,12 @@ public sealed class CommandDlqInspectionTests
             available.Select(action => action.GetProperty("endpoint").GetString())
         );
         Assert.All(available, action => Assert.Equal("POST", action.GetProperty("method").GetString()));
-        Assert.Equal(classification == "delivery-accepted", available.Any(action => action.GetProperty("endpoint").GetString()!.EndsWith("/resend", StringComparison.Ordinal)));
+        Assert.Equal(
+            classification == "delivery-accepted",
+            available.Any(action =>
+                action.GetProperty("endpoint").GetString()!.EndsWith("/resend", StringComparison.Ordinal)
+            )
+        );
         Assert.Equal(JsonValueKind.Null, item.GetProperty("deliveryRecord").ValueKind);
         Assert.Single(factory.Store.ReceivedCalls());
         Assert.Single(factory.Sqs.ReceivedCalls());
@@ -465,7 +470,10 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal("retained-template", summary.GetProperty("templateId").GetString());
         Assert.Equal(3, summary.GetProperty("templateVersion").GetInt32());
         var encodedKey = "v1%3A" + key[3..];
-        Assert.Equal("/admin/notification-commands/delivery-records?resendOfNotificationKey=" + encodedKey, item.GetProperty("links").GetProperty("resends").GetString());
+        Assert.Equal(
+            "/admin/notification-commands/delivery-records?resendOfNotificationKey=" + encodedKey,
+            item.GetProperty("links").GetProperty("resends").GetString()
+        );
         Assert.Equal(
             "/admin/notification-commands/delivery-records?notificationKey=" + encodedKey,
             item.GetProperty("links").GetProperty("deliveryRecord").GetString()
@@ -1202,7 +1210,9 @@ public sealed class CommandDlqInspectionTests
     public void WhenSearchQueryNamesUseDifferentCase_ShouldReadSupportedValues()
     {
         var values = new QueryCollection(
-            Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery("?PAGESIZE=7&NOTIFICATIONKEY=exact-key&RESENDOFNOTIFICATIONKEY=parent-key")
+            Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(
+                "?PAGESIZE=7&NOTIFICATIONKEY=exact-key&RESENDOFNOTIFICATIONKEY=parent-key"
+            )
         );
 
         var query = DeliveryRecordSearchQuery.Parse(values);
@@ -1247,7 +1257,9 @@ public sealed class CommandDlqInspectionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WhenAdminSearchesRetainedEvidence_ShouldReturnSummaryThroughRealReaderWithoutEffects(bool validParent)
+    public async Task WhenAdminSearchesRetainedEvidence_ShouldReturnSummaryThroughRealReaderWithoutEffects(
+        bool validParent
+    )
     {
         const string parent = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         var mongo = Substitute.For<IMongoClient>();
@@ -1297,7 +1309,10 @@ public sealed class CommandDlqInspectionTests
         if (validParent)
         {
             Assert.Equal(parent, record.GetProperty("resendOfNotificationKey").GetString());
-            Assert.Equal("/admin/notification-commands/delivery-records?notificationKey=v1%3A" + parent[3..], record.GetProperty("links").GetProperty("sourceRecord").GetString());
+            Assert.Equal(
+                "/admin/notification-commands/delivery-records?notificationKey=v1%3A" + parent[3..],
+                record.GetProperty("links").GetProperty("sourceRecord").GetString()
+            );
         }
         else
         {

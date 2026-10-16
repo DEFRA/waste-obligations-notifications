@@ -167,8 +167,10 @@ public sealed class CommandDlqInspector(
     {
         var encoded = Uri.EscapeDataString(notificationKey);
 
-        return new("/admin/notification-commands/delivery-records?notificationKey=" + encoded,
-            "/admin/notification-commands/delivery-records?resendOfNotificationKey=" + encoded);
+        return new(
+            "/admin/notification-commands/delivery-records?notificationKey=" + encoded,
+            "/admin/notification-commands/delivery-records?resendOfNotificationKey=" + encoded
+        );
     }
 
     private static DeliveryRecordSummary Summarise(NotificationDeliveryEvidence record) =>

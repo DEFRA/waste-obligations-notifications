@@ -19,7 +19,15 @@ public sealed class CommandDlqSelectionTokensTests
         var issuer = Create(clock, 120);
         var verifier = Create(clock, 60);
         const string parent = "v1:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-        var token = issuer.Create("11111111-1111-1111-1111-111111111111", "opaque-message-id", clock.Now.AddSeconds(100), Evidence, 10, Evidence, parent);
+        var token = issuer.Create(
+            "11111111-1111-1111-1111-111111111111",
+            "opaque-message-id",
+            clock.Now.AddSeconds(100),
+            Evidence,
+            10,
+            Evidence,
+            parent
+        );
 
         var selection = verifier.Validate(token);
 
@@ -30,10 +38,26 @@ public sealed class CommandDlqSelectionTokensTests
         Assert.Equal(10, selection.MaxNumberOfMessages);
         var parts = token.Split('.');
         var encoded = parts[1].Replace('-', '+').Replace('_', '/');
-        var payload = Encoding.UTF8.GetString(Convert.FromBase64String(encoded.PadRight((encoded.Length + 3) / 4 * 4, '=')));
-        foreach (var changed in new[] { payload.Replace(parent, Evidence, StringComparison.Ordinal), payload.Replace("\"notificationKey\":\"" + Evidence, "\"notificationKey\":\"" + parent, StringComparison.Ordinal) })
+        var payload = Encoding.UTF8.GetString(
+            Convert.FromBase64String(encoded.PadRight((encoded.Length + 3) / 4 * 4, '='))
+        );
+        foreach (
+            var changed in new[]
+            {
+                payload.Replace(parent, Evidence, StringComparison.Ordinal),
+                payload.Replace(
+                    "\"notificationKey\":\"" + Evidence,
+                    "\"notificationKey\":\"" + parent,
+                    StringComparison.Ordinal
+                ),
+            }
+        )
         {
-            parts[1] = Convert.ToBase64String(Encoding.UTF8.GetBytes(changed)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+            parts[1] = Convert
+                .ToBase64String(Encoding.UTF8.GetBytes(changed))
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
             Assert.Null(verifier.Validate(string.Join('.', parts)));
         }
     }
