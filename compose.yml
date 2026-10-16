@@ -33,7 +33,7 @@ services:
       retries: 10
 
   mongo:
-    image: mongo:7.0.43@sha256:9854f7139445d766a9523571d6f047530c45547460ffcf8259eb2bf4264632ca
+    image: mongo:8.3.11@sha256:d731d77bfd7afd66bd487bdf627b5bf7ce4c3602ec461d635977021db529ebbc
     command: ["mongod", "--bind_ip_all", "--setParameter", "enableTestCommands=1"]
     ports:
       - '27017:27017'
