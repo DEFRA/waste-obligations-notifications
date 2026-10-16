@@ -112,7 +112,8 @@ Add read-only authenticated delivery-record search independently of queue
 inspection. Use a separate Mongo reader, preserving the delivery write-store
 interface. Project only retained identity/state/timestamps and available Notify,
 template correlation; exclude payloads, recipient/immutable digests and attempt
-ownership. The explicit resend producer now supplies parent correlation. Search projects
+ownership. The explicit resend producer now supplies parent correlation. Search
+projects
 that retained opaque relationship, provides exact parent filtering and navigation,
 and binds it into cursors. No lineage backfill or additional index is introduced.
 
@@ -152,7 +153,8 @@ Keep action-time selection, immutable identity and state guards unchanged.
 Recorded acceptance is distinct from recipient delivery; accepted redrive cleans
 up a terminal queue copy, including after a later provider delivery failure.
 Explicit resend requests one stable replacement only for a matching accepted
-source on the DLQ, after operator Notify investigation. Pending guidance treats rejection and lost
+source on the DLQ, after operator Notify investigation. Pending guidance treats
+rejection and lost
 responses as conditional investigations and makes inconclusive-lookup duplicate
 risk explicit. Invalid, conflicting and unknown states direct engineering
 escalation without a new removal action.

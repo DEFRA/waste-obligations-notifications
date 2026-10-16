@@ -56,10 +56,9 @@ public sealed class CommandDlqSelectionTokens(
             throw new InvalidOperationException("Command DLQ selection is invalid or expired.");
         var payload = Encode(JsonSerializer.SerializeToUtf8Bytes(selection, s_jsonOptions));
 
-        var version =
-            notificationKey is not null ? "v4"
-            : maxNumberOfMessages == 1 ? "v2"
-            : "v3";
+        var version = maxNumberOfMessages == 1 ? "v2" : "v3";
+        if (notificationKey is not null)
+            version = "v4";
 
         return $"{version}.{payload}.{Encode(Sign($"selection-{version}", payload))}";
     }

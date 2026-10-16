@@ -453,7 +453,8 @@ records as matching evidence. Guidance separates recorded acceptance from
 recipient delivery and conditional investigation from historical failure causes.
 Accepted redrive cleans up terminal queue copies. Explicit resend requests one
 stable replacement after the operator checks Notify and any existing replacement.
-Deploy compatible command consumers on every active host before using resend. See the [operator matrix](docs/service-behaviour.md#command-dlq-inspection)
+Deploy compatible command consumers on every active host before using resend.
+See the [operator matrix](docs/service-behaviour.md#command-dlq-inspection)
 for guarded recovery choices and uncertain-Notify duplicate risk.
 Logs use the diagnostic category allowlist and never expose raw identities.
 
@@ -539,6 +540,7 @@ email payloads or queue/Notify/evidence-write effects. Acceptance does not estab
 recipient delivery. Replacements retain `resendOfNotificationKey` and an encoded
 `links.sourceRecord`; inspection links to the source and its replacements.
 An empty replacement lookup immediately after publication is not proof of failure.
+
 Use `POST /admin/notification-commands/dlq/resend` with
 `{ "selectionToken": "<current-selection>" }` for one accepted command still on
 the DLQ. Pending, suppressed, abandoned, conflicting, invalid and unknown states
@@ -552,9 +554,11 @@ Publication must be confirmed before selected-source deletion. Success returns
 `sourceNotificationKey`, `replacementNotificationKey`, `publicationStatus: confirmed`,
 `sourceMessageRemoved: true` and encoded `links.sourceRecord` / `links.replacementRecord`.
 This confirms queue operations, not Notify acceptance, recipient delivery or an
-immediately available B record. After an uncertain publication or deletion, keep
-these identities, check B's retained evidence and Notify where available, then
-retry the current selection or wait for visibility and reinspect A. Every copy of
+immediately available B record. After uncertain publication/deletion or a lost
+HTTP response, use A's replacement-search link to check retained evidence and
+Notify where available. If a successful response was retained, B's record link
+also supports lookup. Retry the current selection or wait for visibility and
+reinspect A. Every copy of
 A still maps to B; an unconfirmed Notify result retains the normal duplicate risk.
 Once all A copies disappear, history alone cannot request another replacement.
 Never reset A's evidence, override suppression/abandonment or change cutover to
