@@ -15,6 +15,11 @@ Follow [CODING_STANDARDS.md](CODING_STANDARDS.md) when writing code.
   must never run against a shared or deployed Mongo instance.
 - Journey tests are not currently part of this repository. Do not add their
   workflows or secrets unless explicitly brought into scope.
+- When adding, changing or removing a mapped admin or health endpoint, update
+  `runbooks/http` with its method, path and required authentication. Keep request
+  examples and recovery guidance aligned with the endpoint contract. The script
+  tests check route parity using the current literal route-mapping conventions;
+  update that check when introducing a different mapping convention.
 
 ## Configuration changes
 

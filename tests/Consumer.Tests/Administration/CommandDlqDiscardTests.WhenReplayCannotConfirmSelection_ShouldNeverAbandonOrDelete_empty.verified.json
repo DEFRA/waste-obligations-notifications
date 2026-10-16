@@ -1,0 +1,12 @@
+﻿{
+  "statusCode": 409,
+  "contentType": "application/problem+json",
+  "location": null,
+  "body": {
+    "type": "https://tools.ietf.org/html/rfc9110#section-15.5.10",
+    "title": "Conflict",
+    "status": 409,
+    "detail": "Selected command cannot be discarded.",
+    "traceId": "<request-trace-id>"
+  }
+}

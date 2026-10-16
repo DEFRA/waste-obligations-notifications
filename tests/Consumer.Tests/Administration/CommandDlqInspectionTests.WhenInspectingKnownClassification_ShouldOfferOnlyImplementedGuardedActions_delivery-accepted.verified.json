@@ -1,0 +1,53 @@
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "messages": [
+      {
+        "idempotencyKey": "private-recipient@example.com",
+        "notificationType": "private-recipient@example.com",
+        "actionOccurredAtUtc": "2026-10-01T00:00:00+00:00",
+        "sentAtUtc": "2026-10-01T00:00:00+00:00",
+        "receiveCount": 3,
+        "failureClassification": "delivery-accepted",
+        "recipientDigest": "v1:04aba480afd3113d2e6a23584ee4b512a5ccbba4ec0dd32f1bb419f062d3aa51",
+        "recordedAtUtc": null,
+        "leaseExpiresAtUtc": null,
+        "selectionToken": "<opaque-selection-token>",
+        "messageId": "opaque-message-id",
+        "schemaVersion": 1,
+        "emailAddress": "private-recipient@example.com",
+        "templateId": "private-personalisation-template-notify",
+        "personalisation": {
+          "content": "private-personalisation-template-notify"
+        },
+        "operatorGuidance": "This is current evidence, not a historical failure cause or live Notify delivery status. Notify acceptance is recorded; this does not confirm recipient delivery. Check Notify by notification ID/reference. If still processing, wait. If delivered, redrive only to clean up the terminal queue copy without another send. If Notify later reports delivery failed, investigate; the record remains accepted and redrive still performs terminal-copy cleanup only. Check existing replacements and their progress. After checking Notify and investigating a confirmed delivery failure, explicit resend requests the one stable replacement. An inconclusive lookup leaves a duplicate-email risk.",
+        "availableActions": [
+          {
+            "method": "POST",
+            "endpoint": "/admin/notification-commands/dlq/inspect",
+            "description": "Inspect again"
+          },
+          {
+            "method": "POST",
+            "endpoint": "/admin/notification-commands/dlq/redrive",
+            "description": "Clean up the terminal queue copy without another send"
+          },
+          {
+            "method": "POST",
+            "endpoint": "/admin/notification-commands/dlq/resend",
+            "description": "Request the one stable replacement after checking Notify and existing replacements"
+          }
+        ],
+        "deliveryRecord": null,
+        "notifyNotificationId": null,
+        "notifyReference": null,
+        "links": {
+          "deliveryRecord": "/admin/notification-commands/delivery-records?notificationKey=v1%3Aab5657e52267c26769cb5b4d8d94686da2a60c210b03c0fd7174e496e4868692",
+          "resends": "/admin/notification-commands/delivery-records?resendOfNotificationKey=v1%3Aab5657e52267c26769cb5b4d8d94686da2a60c210b03c0fd7174e496e4868692"
+        }
+      }
+    ]
+  }
+}

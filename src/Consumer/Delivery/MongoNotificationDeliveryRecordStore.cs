@@ -13,9 +13,11 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private const string OutcomeField = "outcome";
     private const string NotificationTypeField = "notificationType";
     private const string ActionOccurredAtField = "actionOccurredAtUtc";
+    private const string IfNullOperator = "$ifNull";
     private const string ServerNow = "$$NOW";
     private const string NotificationKeyField = "notificationKey";
     private const string ImmutableFieldsField = "immutableFields";
+    private const string ParentField = "resendOfNotificationKey";
     private const string RecordedAtField = "recordedAtUtc";
     private const string LeaseExpiresAtField = "leaseExpiresAtUtc";
     private const string LeaseExpiresAtExpression = "$leaseExpiresAtUtc";
@@ -41,6 +43,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
+        command.Validate();
+
         var fields = new BsonDocument
         {
             { "_id", 0 },
@@ -55,11 +59,19 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { "notifyReference", 1 },
             { "templateId", 1 },
             { "templateVersion", 1 },
+            { ParentField, 1 },
             {
                 "matches",
                 new BsonDocument(
-                    "$eq",
-                    new BsonArray { "$immutableFields", Literal(_digest.CreateImmutableFieldsDigest(command)) }
+                    "$and",
+                    new BsonArray
+                    {
+                        new BsonDocument(
+                            "$eq",
+                            new BsonArray { "$immutableFields", Literal(_digest.CreateImmutableFieldsDigest(command)) }
+                        ),
+                        ParentMatches(command.ResendOfNotificationKey),
+                    }
                 )
             },
             {
@@ -69,7 +81,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                     new BsonArray
                     {
                         new BsonDocument(
-                            "$ifNull",
+                            IfNullOperator,
                             new BsonArray { LeaseExpiresAtExpression, new BsonDateTime(DateTime.UnixEpoch) }
                         ),
                         ServerNow,
@@ -138,7 +150,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             ReadString(record, "notifyNotificationId"),
             ReadString(record, "notifyReference"),
             ReadString(record, "templateId"),
-            ReadTemplateVersion(record)
+            ReadTemplateVersion(record),
+            ReadString(record, ParentField)
         );
     }
 
@@ -163,6 +176,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
+        command.Validate();
+
         var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
         var filter = new BsonDocument
@@ -170,6 +185,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { NotificationKeyField, notificationKey },
             { ImmutableFieldsField, immutableFields },
             { OutcomeField, PendingOutcome },
+            { "$or", ParentFilters(command.ResendOfNotificationKey) },
         };
         var abandoned = new BsonDocument
         {
@@ -187,12 +203,15 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             new BsonArray
             {
                 new BsonDocument(
-                    "$ifNull",
+                    IfNullOperator,
                     new BsonArray { LeaseExpiresAtExpression, new BsonDateTime(DateTime.UnixEpoch) }
                 ),
                 ServerNow,
             }
         );
+        if (command.ResendOfNotificationKey is { } parent)
+            abandoned.Add(ParentField, Literal(parent));
+
         var update = new PipelineUpdateDefinition<NotificationDeliveryRecord>(
             new[]
             {
@@ -219,17 +238,28 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         }
         catch (MongoCommandException exception) when (exception.Code == 11000)
         {
-            return await ReadExistingAbandonment(notificationKey, immutableFields, cancellationToken);
+            return await ReadExistingAbandonment(
+                notificationKey,
+                immutableFields,
+                command.ResendOfNotificationKey,
+                cancellationToken
+            );
         }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            return await ReadExistingAbandonment(notificationKey, immutableFields, cancellationToken);
+            return await ReadExistingAbandonment(
+                notificationKey,
+                immutableFields,
+                command.ResendOfNotificationKey,
+                cancellationToken
+            );
         }
     }
 
     private async Task<AbandonmentResult> ReadExistingAbandonment(
         string notificationKey,
         string immutableFields,
+        string? parent,
         CancellationToken cancellationToken
     )
     {
@@ -241,6 +271,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                     { "_id", 0 },
                     { ImmutableFieldsField, 1 },
                     { OutcomeField, 1 },
+                    { ParentField, 1 },
                 }
             )
             .FirstOrDefaultAsync(cancellationToken);
@@ -248,6 +279,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         return
             record is not null
             && record.GetValue(ImmutableFieldsField, BsonNull.Value) == immutableFields
+            && HasMatchingParent(record, parent)
             && record.GetValue(OutcomeField, BsonNull.Value) == AbandonedOutcome
             ? AbandonmentResult.AlreadyAbandoned
             : AbandonmentResult.Conflict;
@@ -258,6 +290,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
+        command.Validate();
+
         var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
         var update = Builders<NotificationDeliveryRecord>
@@ -271,6 +305,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             )
             .SetOnInsert(record => record.Outcome, NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue())
             .CurrentDate(record => record.RecordedAtUtc);
+        if (command.ResendOfNotificationKey is { } parent)
+            update = update.SetOnInsert(record => record.ResendOfNotificationKey, parent);
 
         try
         {
@@ -283,7 +319,15 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             var existing = await _records
-                .Find(existingRecord => existingRecord.NotificationKey == notificationKey)
+                .Find(new BsonDocument(NotificationKeyField, notificationKey))
+                .Project<BsonDocument>(
+                    new BsonDocument
+                    {
+                        { ImmutableFieldsField, 1 },
+                        { OutcomeField, 1 },
+                        { ParentField, 1 },
+                    }
+                )
                 .FirstOrDefaultAsync(cancellationToken);
 
             if (existing is null)
@@ -291,10 +335,13 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                 throw;
             }
 
-            if (existing.ImmutableFields != immutableFields)
+            if (
+                existing.GetValue(ImmutableFieldsField, BsonNull.Value) != immutableFields
+                || !HasMatchingParent(existing, command.ResendOfNotificationKey)
+            )
                 return SuppressionClaimResult.Conflict;
 
-            return IsTerminal(existing.Outcome)
+            return IsTerminal(ReadString(existing, OutcomeField) ?? "")
                 ? SuppressionClaimResult.TerminalDuplicate
                 : SuppressionClaimResult.ActiveClaim;
         }
@@ -307,6 +354,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
+        command.Validate();
+
         var notificationKey = _digest.CreateIdempotencyKeyDigest(command.IdempotencyKey);
         var immutableFields = _digest.CreateImmutableFieldsDigest(command);
         var filter = new BsonDocument
@@ -314,6 +363,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { NotificationKeyField, notificationKey },
             { ImmutableFieldsField, immutableFields },
             { OutcomeField, PendingOutcome },
+            { "$or", ParentFilters(command.ResendOfNotificationKey) },
         };
         var fields = new BsonDocument
         {
@@ -343,12 +393,15 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             new BsonArray
             {
                 new BsonDocument(
-                    "$ifNull",
+                    IfNullOperator,
                     new BsonArray { LeaseExpiresAtExpression, new BsonDateTime(DateTime.UnixEpoch) }
                 ),
                 ServerNow,
             }
         );
+        if (command.ResendOfNotificationKey is { } parent)
+            fields.Add(ParentField, Literal(parent));
+
         var update = new PipelineUpdateDefinition<NotificationDeliveryRecord>(
             new[]
             {
@@ -383,11 +436,21 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         }
         catch (MongoCommandException exception) when (exception.Code == 11000)
         {
-            return await ReadExistingClaim(notificationKey, immutableFields, cancellationToken);
+            return await ReadExistingClaim(
+                notificationKey,
+                immutableFields,
+                command.ResendOfNotificationKey,
+                cancellationToken
+            );
         }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            return await ReadExistingClaim(notificationKey, immutableFields, cancellationToken);
+            return await ReadExistingClaim(
+                notificationKey,
+                immutableFields,
+                command.ResendOfNotificationKey,
+                cancellationToken
+            );
         }
     }
 
@@ -398,6 +461,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
         CancellationToken cancellationToken
     )
     {
+        command.Validate();
+
         if (!acceptance.Matches(command, _digest.CreateNotifyReference(command.IdempotencyKey)))
             throw new InvalidDataException("Notify acceptance evidence is incomplete or inconsistent.");
         var filter = new BsonDocument
@@ -406,6 +471,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { ImmutableFieldsField, _digest.CreateImmutableFieldsDigest(command) },
             { "attemptOwner", attemptOwner },
             { OutcomeField, PendingOutcome },
+            { "$or", ParentFilters(command.ResendOfNotificationKey) },
         };
         var fields = new BsonDocument
         {
@@ -432,18 +498,67 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private async Task<DeliveryClaimResult> ReadExistingClaim(
         string notificationKey,
         string immutableFields,
+        string? parent,
         CancellationToken cancellationToken
     )
     {
         var existing = await _records
-            .Find(record => record.NotificationKey == notificationKey)
+            .Find(new BsonDocument(NotificationKeyField, notificationKey))
+            .Project<BsonDocument>(
+                new BsonDocument
+                {
+                    { ImmutableFieldsField, 1 },
+                    { OutcomeField, 1 },
+                    { ParentField, 1 },
+                }
+            )
             .FirstOrDefaultAsync(cancellationToken);
         if (existing is null)
             return DeliveryClaimResult.Unavailable;
-        if (existing.ImmutableFields != immutableFields)
+        if (
+            existing.GetValue(ImmutableFieldsField, BsonNull.Value) != immutableFields
+            || !HasMatchingParent(existing, parent)
+        )
             return DeliveryClaimResult.Conflict;
 
-        return IsTerminal(existing.Outcome) ? DeliveryClaimResult.TerminalDuplicate : DeliveryClaimResult.ActiveClaim;
+        return IsTerminal(ReadString(existing, OutcomeField) ?? "")
+            ? DeliveryClaimResult.TerminalDuplicate
+            : DeliveryClaimResult.ActiveClaim;
+    }
+
+    private static BsonDocument ParentMatches(string? parent) =>
+        new(
+            "$eq",
+            new BsonArray
+            {
+                new BsonDocument(IfNullOperator, new BsonArray { "$" + ParentField, BsonNull.Value }),
+                parent is null ? BsonNull.Value : Literal(parent),
+            }
+        );
+
+    private static BsonArray ParentFilters(string? parent) =>
+        parent is null
+            ? new BsonArray
+            {
+                new BsonDocument(ParentField, new BsonDocument("$exists", false)),
+                new BsonDocument(
+                    ParentField,
+                    new BsonDocument { { "$type", "null" }, { "$not", new BsonDocument("$type", "array") } }
+                ),
+            }
+            : new BsonArray
+            {
+                new BsonDocument(
+                    ParentField,
+                    new BsonDocument { { "$eq", parent }, { "$not", new BsonDocument("$type", "array") } }
+                ),
+            };
+
+    private static bool HasMatchingParent(BsonDocument record, string? parent)
+    {
+        var value = record.GetValue(ParentField, BsonNull.Value);
+
+        return parent is null ? value.IsBsonNull : value.IsString && value.AsString == parent;
     }
 
     private static BsonDocument Literal(string value) => new("$literal", value);

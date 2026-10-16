@@ -1,0 +1,17 @@
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "messages": [
+      {
+        "messageId": "opaque-message-id",
+        "outcome": "redriven"
+      },
+      {
+        "messageId": "second-message",
+        "outcome": "redriven"
+      }
+    ]
+  }
+}

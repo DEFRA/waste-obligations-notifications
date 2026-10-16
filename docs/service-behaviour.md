@@ -328,7 +328,7 @@ does not authorise a later action. Matching retained evidence appears in
 also exposed at the item level. Conflicting evidence is never returned as a
 matching summary. Pending or unrecorded commands expose their derived original
 Notify reference for investigating uncertain results, not proof of acceptance.
-Valid commands provide an encoded `links.deliveryRecord` search URL.
+Valid commands provide encoded `links.deliveryRecord` and `links.resends` search URLs.
 Malformed/unsupported entries expose no command identity, correlation, record,
 navigation or usable selected action, and direct engineering escalation.
 
@@ -337,7 +337,7 @@ recipient delivery. The implemented recovery choices are:
 
 | Classification | Guidance and available actions |
 | --- | --- |
-| `delivery-accepted` | Check Notify. Recorded acceptance does not prove recipient delivery. Wait if processing; redrive cleans up a terminal queue copy without another send. Later delivery failure leaves acceptance intact. Explicit resend is unavailable. Inspect/redrive only. |
+| `delivery-accepted` | Check Notify. Recorded acceptance does not prove recipient delivery. Wait if processing; redrive cleans up a terminal queue copy without another send. Later delivery failure leaves acceptance intact. Check existing replacements and investigate before requesting the one stable replacement through resend. An inconclusive lookup leaves duplicate risk. Inspect/redrive/resend. |
 | `active-claim` | Wait and inspect again. The lease does not prove the owning process is running. Selected redrive is not offered while active; discard refuses active claims. |
 | `expired-claim` | Check Notify using the original reference. If delivered, discard to stop further attempts; if processing, wait. If rejection is confirmed, fix its cause, including credentials where relevant, before redrive. An inconclusive lookup retains duplicate risk. Inspect/redrive/discard. |
 | `unrecorded` | Investigate and fix the processing failure before redrive, or discard if further attempts are no longer required. Redrive/discard. |
@@ -348,7 +348,7 @@ recipient delivery. The implemented recovery choices are:
 Pending evidence cannot distinguish rejection, a lost response, a crash before
 sending or failed acceptance persistence. Absence in Notify is not proof that no
 request was accepted. Neither suppression nor abandonment can be overridden.
-No resend endpoint or new removal action is provided.
+Explicit resend is limited to matching accepted commands still on the DLQ; no new direct removal action is provided.
 
 Command content is permitted only in authenticated inspection responses; it must
 not appear in logs, metrics, tokens or Mongo evidence. Rendered emails and Notify
@@ -359,7 +359,9 @@ classification, with no partially extracted command fields or usable selection.
 The shared-secret, versioned HMAC selection contains only FIFO receive-attempt
 ID, opaque SQS message ID, HMAC queue binding, absolute UTC expiry, immutable
 evidence digest and original receive visibility timeout. Batch format `v3` also
-binds the original maximum receive size. Single-message format `v2` remains valid. Replay uses
+binds the original maximum receive size. Inspection now issues `v4`, also binding
+the opaque notification key and optional parent. `v2`/`v3` remain valid for
+redrive/discard; resend requires fresh identity-bound inspection. Replay uses
 the original size and timeout across hosts with different local settings. Old `v1`
 selections require fresh inspection. Replay resets visibility and may leave the
 message hidden after token expiry; it never extends authorization to act.
@@ -637,16 +639,26 @@ identifiers or exception content; caller cancellation emits no failure diagnosti
 
 Optional forward migration 002 adds three full, visible, nonunique search indexes:
 recording time/ObjectId descending, and exact Notify ID or outcome
-followed by the same descending pair. The critical unique notification-key index
+followed by the same descending pair. Optional migration 003 adds a visible,
+nonunique parent/time/ObjectId index with keys
+`{ resendOfNotificationKey: 1, recordedAtUtc: -1, _id: -1 }` and partial predicate
+`{ resendOfNotificationKey: { $type: "string" } }`. The reader exposes that predicate
+alongside its scalar guard so parent-only matching and empty lookups can use the
+index. Valid parentless originals add no entries. Retention is indefinite; no
+small-collection assumption or required date bound underlies parent navigation.
+The critical unique notification-key index
 continues to guard delivery identity. Search uses no index hints. Integration
 tests check representative query plans for bounded ordered reads; combined filters can retain
 residual filtering, and skew may increase examined records. No universal
 performance guarantee is implied.
 
-The search-index migration does not gate critical delivery readiness. Investigate
+The search-index migrations do not gate critical delivery readiness. Investigate
 optional migration failures and confirm completion before relying on efficient
 search. Builds consume resources, can outlive a client timeout, and require
-monitoring. The three indexes add storage and delivery-state write maintenance.
+monitoring. Initial parent-index construction scans retained evidence; subsequent
+storage and maintenance applies to indexed parent values. Confirm migration 003
+and its index build have completed before relying on replacement navigation.
+The three full indexes also add storage and delivery-state write maintenance.
 Incompatible owned definitions are preserved and rejected; rollback drops only
 these owned search indexes. No data backfill, payload or configuration change is
 required.
@@ -654,7 +666,43 @@ required.
 Summaries include opaque identity, retained outcome/type, business-action and
 recording timestamps, and available acceptance, lease, template and Notify
 correlation. Recipient/immutable digests, attempt owners and email payloads are
-excluded. Recorded acceptance is not proof of recipient delivery. Explicit resend,
-parent correlation, parent search filters/navigation and their index are deferred
-until a replacement-command producer exists. Search does not create replacement
-commands or alter stored evidence.
+excluded. Recorded acceptance is not proof of recipient delivery. Replacements
+retain their validated opaque parent and expose an encoded `links.sourceRecord`.
+Exact `resendOfNotificationKey` filtering combines with other filters and is bound
+into continuation cursors. Search does not create replacement commands or alter
+stored evidence. No evidence backfill is introduced.
+
+## Accepted-command resend
+
+Authenticated `POST /admin/notification-commands/dlq/resend` accepts exactly one
+current `selectionToken`. It replays the signed FIFO receive parameters, checks
+source identity, immutable content and parent, and rechecks matching accepted
+evidence before acting. Every other classification is refused without publication
+or deletion. No request-ID, batch or Mongo-history resend is provided.
+
+For immediate source A, the reserved raw key `resend:<A opaque notification key>`
+identifies B. This is stable across copies, selections, retries and hosts, and B
+carries A's key in optional `resendOfNotificationKey`. Selecting eligible accepted
+B later derives a separate replacement. Email inputs and original action time
+remain unchanged. The original immutable digest format remains unchanged;
+parent equality is guarded separately on every claim, duplicate, suppression,
+acceptance and abandonment path. Contradictory or malformed parent evidence
+cannot overwrite history or permit sending. Expired pending abandonment retains
+its parent. Parentless original records need no migration or backfill.
+
+Confirmed publication precedes selected-source deletion. Success returns source
+and replacement opaque keys, `publicationStatus: confirmed`,
+`sourceMessageRemoved: true` and encoded source/replacement record links. B's
+record may not exist until processing; none of these fields proves Notify
+acceptance or recipient delivery. Uncertain publication/deletion or loss of the
+HTTP response can be retried only while a valid source copy is selectable; it
+always derives the same B. Terminal B suppresses repeated sending, while an
+unconfirmed Notify result retains the established automatic-retry duplicate risk.
+A's evidence remains unchanged, and ordinary replay/redrive cannot resend A.
+
+Deploy consumers that validate and preserve parent metadata on every active host
+before operators use resend. Older consumers ignore unknown fields and cannot
+establish lineage. Preserve all existing startup/cutover constraints. Check Notify
+and replacement progress before deciding; later provider failure alone does not
+create a DLQ item. Follow the README recovery steps and the separate native
+accepted-source verification runbook; local adapters do not prove native replay.

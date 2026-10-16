@@ -117,8 +117,6 @@ public sealed class CommandDlqDiscarder(
             return null;
         }
 
-        return digest.CreateImmutableFieldsDigest(command) == selection.ImmutableFieldsDigest
-            ? (message, command)
-            : null;
+        return selection.Matches(command, digest) ? (message, command) : null;
     }
 }

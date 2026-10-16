@@ -112,10 +112,9 @@ Add read-only authenticated delivery-record search independently of queue
 inspection. Use a separate Mongo reader, preserving the delivery write-store
 interface. Project only retained identity/state/timestamps and available Notify,
 template correlation; exclude payloads, recipient/immutable digests and attempt
-ownership. Explicit resend and parent readback are deferred until a
-replacement-command producer exists. No current production writer persists parent
-correlation, so its filter, navigation and index would add unused surface and
-storage/write-maintenance cost. Stored evidence remains unchanged.
+ownership. The explicit resend producer now supplies parent correlation. Search
+projects that retained opaque relationship, provides exact parent filtering and navigation,
+and binds it into cursors. No lineage backfill is introduced.
 
 Use recording time for inclusive/exclusive UTC ranges and exact combined
 identifier filters. Sort newest first with Mongo ObjectId as a stable tie-breaker,
@@ -128,12 +127,29 @@ and exact Notify ID or outcome followed by that same descending pair.
 They support bounded ordered listing and the selected exact filters without
 changing the critical unique notification-key index or using query hints.
 
-Migration 002 is noncritical. Its failure does not gate delivery readiness; check
+Delivery evidence is retained indefinitely (ADR 0001); no collection-size bound
+is established. Parent-only navigation must also work when a source has no
+replacements, without walking all retained original evidence. Optional migration
+003 therefore adds the nonunique visible index
+`{ resendOfNotificationKey: 1, recordedAtUtc: -1, _id: -1 }`, with partial predicate
+`{ resendOfNotificationKey: { $type: "string" } }`. Valid parentless originals add
+no entries. Parent queries expose this predicate to the planner while retaining
+the scalar-string guard, exact matching, ordering and cursor contracts.
+No index hint or date bounds are required for ordinary parent navigation.
+
+Migration 003 preserves incompatible owned definitions, confirms completed builds
+and rolls back only its own index. Initial construction scans retained evidence;
+subsequent storage and write-maintenance cost applies to indexed parent values.
+Monitor build completion before relying on replacement links. This remains an
+optional search migration, separate from critical delivery readiness; failures
+must be investigated rather than replacing existing index definitions.
+
+Migrations 002 and 003 are noncritical. Their failure does not gate delivery readiness; check
 optional migration completion before relying on efficient administration search.
 Reject incompatible owned indexes without replacing them, confirm index-build
 completion before recording migration history, and remove only owned names on
 rollback. Index builds consume resources and may continue after a client timeout;
-monitor completion and investigate conflicts before retrying. The three indexes
+monitor completion and investigate conflicts before retrying. The three full indexes
 increase storage and maintenance on delivery-state writes. No data backfill or
 new configuration is introduced.
 
@@ -152,13 +168,15 @@ implemented usable actions, represented by HTTP method, endpoint and description
 Keep action-time selection, immutable identity and state guards unchanged.
 Recorded acceptance is distinct from recipient delivery; accepted redrive cleans
 up a terminal queue copy, including after a later provider delivery failure.
-Explicit resend is unavailable. Pending guidance treats rejection and lost
+Explicit resend requests one stable replacement only for a matching accepted
+source on the DLQ, after operator Notify investigation. Pending guidance treats
+rejection and lost
 responses as conditional investigations and makes inconclusive-lookup duplicate
 risk explicit. Invalid, conflicting and unknown states direct engineering
 escalation without a new removal action.
 
-Extend only the existing read projection to return matching minimal retained
-evidence and available Notify correlation; no delivery write path changes.
+Return matching minimal retained evidence and available Notify correlation.
+Delivery writes also preserve and separately guard replacement parent metadata.
 Keep the evidence model in Delivery and map it to the Administration search-summary
 contract. Do not expose a mismatched record as matching evidence. Valid pending or
 unrecorded commands can derive the original Notify reference for investigation;
@@ -235,3 +253,24 @@ redrive and consumption delete the terminal duplicate without Notify or evidence
 changes. This supplies an operator probe for inspect/replay/redrive while native
 AWS proof is unavailable. It does not prove successful discard or authorise
 agent testing of shared queues or cloud provisioning.
+
+### Stable accepted-command replacement
+
+Ordinary terminal replay remains cleanup. Explicit resend derives B's raw key
+from A's validated opaque key in the reserved `resend:` namespace, rather than a
+request ID or transport message ID. This prevents fresh selections or other hosts
+from creating multiple intentions from A after uncertain queue/HTTP responses.
+B can be an immediate source later without rewriting A or bypassing terminal B.
+
+Carry A's opaque key as optional command metadata and retain it through all
+pending and terminal transitions. Compare it separately from the existing
+immutable digest so original-command identities stay compatible. Contradictory
+parent evidence refuses sending and history changes. Publish before deleting
+the selected copy; do not authorise resend from retained history alone.
+
+Selection format `v4` additionally signs the source key and parent, preventing a
+same-content identity substitution. Old selections retain ordinary cleanup
+compatibility but require fresh inspection for resend. All consumers must support
+and preserve lineage before operator use; schema compatibility alone cannot
+establish mixed-version readiness. Native accepted-source verification remains a
+separate controlled-resource operation described in the recovery runbook.

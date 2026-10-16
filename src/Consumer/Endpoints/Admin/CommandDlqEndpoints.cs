@@ -13,6 +13,7 @@ public static class CommandDlqEndpoints
         builder.MapPost("/notification-commands/dlq/inspect", Inspect).ExcludeFromDescription();
         builder.MapPost("/notification-commands/dlq/redrive", Redrive).ExcludeFromDescription();
         builder.MapPost("/notification-commands/dlq/discard", Discard).ExcludeFromDescription();
+        builder.MapPost("/notification-commands/dlq/resend", Resend).ExcludeFromDescription();
         builder.MapGet("/notification-commands/dlq/status", GetStatus).ExcludeFromDescription();
         builder.MapPost("/notification-commands/dlq/redrive-all", RedriveAll).ExcludeFromDescription();
     }
@@ -102,6 +103,44 @@ public static class CommandDlqEndpoints
             return Results.Problem(
                 statusCode: StatusCodes.Status503ServiceUnavailable,
                 detail: "Verification command creation failed."
+            );
+        }
+    }
+
+    private static async Task<IResult> Resend(
+        CommandDlqSelectionRequest request,
+        CommandDlqSelectionTokens selections,
+        CommandDlqResender resender,
+        CancellationToken cancellationToken
+    )
+    {
+        var selection = selections.Validate(request.SelectionToken);
+        if (request.SelectionTokens is not null || selection?.NotificationKey is null)
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                detail: "Resend requires one current identity-bound selection."
+            );
+
+        try
+        {
+            var result = await resender.Resend(selection, cancellationToken);
+
+            return result is null
+                ? Results.Problem(
+                    statusCode: StatusCodes.Status409Conflict,
+                    detail: "Selected command is unavailable or has no matching accepted evidence."
+                )
+                : Results.Ok(result);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                detail: "Command DLQ resend failed; publication or removal may be unconfirmed."
             );
         }
     }

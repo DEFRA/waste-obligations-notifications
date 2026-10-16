@@ -11,5 +11,12 @@ public sealed record DeliveryRecordSummary(
     string? NotifyNotificationId,
     string? NotifyReference,
     string? TemplateId,
-    int? TemplateVersion
-);
+    int? TemplateVersion,
+    string? ResendOfNotificationKey = null
+)
+{
+    public DeliveryRecordParentLinks? Links =>
+        ResendOfNotificationKey is { } parent
+            ? new("/admin/notification-commands/delivery-records?notificationKey=" + Uri.EscapeDataString(parent))
+            : null;
+}

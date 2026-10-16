@@ -12,6 +12,9 @@ public sealed record NotificationDeliveryRecord
 
     public required string ImmutableFields { get; init; }
 
+    [BsonIgnoreIfNull]
+    public string? ResendOfNotificationKey { get; init; }
+
     public required string Recipient { get; init; }
 
     public required string NotificationType { get; init; }

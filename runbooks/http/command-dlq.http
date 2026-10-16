@@ -10,7 +10,7 @@ Authorization: {{authorization}}
 
 ### Inspect and select up to ten commands
 # Read operatorGuidance and availableActions before recovery.
-# Follow links.deliveryRecord for evidence; explicit resend is unavailable.
+# Follow links.deliveryRecord and links.resends; check Notify and existing replacements before resend.
 # @no-log
 POST {{host}}/admin/notification-commands/dlq/inspect
 Authorization: {{authorization}}
@@ -30,6 +30,19 @@ Content-Type: application/json
 
 {
   "selectionTokens": {{selectionTokens}}
+}
+
+### Resend one accepted command selected by inspection
+# Select an accepted entry whose availableActions includes resend; use its current selectionToken.
+# This publishes one stable replacement, then removes the selected source copy.
+# Confirmation does not prove Notify acceptance or recipient delivery.
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/resend
+Authorization: {{authorization}}
+Content-Type: application/json
+
+{
+  "selectionToken": "{{selectionToken}}"
 }
 
 ### Redrive the entire DLQ using AWS
@@ -69,4 +82,10 @@ Authorization: {{authorization}}
 ### Exact opaque-key lookup (replace the encoded synthetic key)
 # @no-log
 GET {{host}}/admin/notification-commands/delivery-records?notificationKey=v1%3Asynthetic-key
+Authorization: {{authorization}}
+
+### Find replacements of a source command (replace the encoded synthetic parent key)
+# Follow links.resends from inspection when available. Confirm migration 003 has completed.
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?resendOfNotificationKey=v1%3Asynthetic-key&pageSize=25
 Authorization: {{authorization}}

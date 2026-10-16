@@ -451,19 +451,22 @@ commands disclose no partial command identity, summary, correlation or navigatio
 and receive no usable selection or action. Conflicts do not expose mismatched
 records as matching evidence. Guidance separates recorded acceptance from
 recipient delivery and conditional investigation from historical failure causes.
-Explicit resend remains unavailable: accepted redrive only cleans up terminal
-queue copies. See the [operator matrix](docs/service-behaviour.md#command-dlq-inspection)
+Accepted redrive cleans up terminal queue copies. Explicit resend requests one
+stable replacement after the operator checks Notify and any existing replacement.
+Deploy compatible command consumers on every active host before using resend.
+See the [operator matrix](docs/service-behaviour.md#command-dlq-inspection)
 for guarded recovery choices and uncertain-Notify duplicate risk.
 Logs use the diagnostic category allowlist and never expose raw identities.
 
 Selections contain only receive-attempt ID, SQS message ID, an HMAC queue binding,
-absolute expiry, immutable-field digest and the original receive visibility timeout. Hosts sharing the evidence secret
+absolute expiry, immutable-field digest, opaque command/parent keys and the original receive visibility timeout. Hosts sharing the evidence secret
 and DLQ configuration can validate them; no message body or receipt handle is
 included in the selection or stored. Expiry starts before the receive request, and late dependency
 confirmations fail safely. `/health/all` always checks the DLQ and Notify, including with null cutover. `/health` gates critical migrations; the remaining dependency checks are extended health.
 
-Selection format `v3` binds the original receive size and visibility timeout;
-single-message `v2` selections remain valid, so another host
+Inspection issues format `v4`, binding the opaque source key and optional parent
+as well as receive size and visibility timeout. `v2`/`v3` selections remain valid
+for redrive/discard but require fresh inspection for resend. Another host
 replays the same receive parameters even with different local selection settings.
 Old `v1` tokens require fresh inspection. Replay resets SQS visibility to the
 original timeout; this can keep the message hidden after the selection expires.
@@ -525,7 +528,7 @@ Authenticated `POST /admin/notification-commands/dlq/verification-command` accep
 Use authenticated `GET /admin/notification-commands/delivery-records` after a queue
 copy has disappeared or before a Notify ID exists. Combine explicit UTC
 `recordedFromUtc`/`recordedToUtc` bounds (inclusive/exclusive), exact
-`notifyNotificationId`, `notificationKey`, and optional
+`notifyNotificationId`, `notificationKey`, `resendOfNotificationKey`, and optional
 `outcome`. Bounds use recording time, not business-action time. All retained
 outcomes are included by default; pending records remain `delivery-pending`.
 
@@ -534,8 +537,42 @@ The response contains `records` and `nextCursor`. Pages default to 25, with
 Retain the filters when supplying the opaque cursor for the next page. Concurrent
 updates do not provide a snapshot. Summaries expose retained correlation without
 email payloads or queue/Notify/evidence-write effects. Acceptance does not establish
-recipient delivery. Explicit resend and parent readback are deferred until a
-replacement-command producer exists.
+recipient delivery. Replacements retain `resendOfNotificationKey` and an encoded
+`links.sourceRecord`; inspection links to the source and its replacements.
+An empty replacement lookup immediately after publication is not proof of failure.
+
+Confirm optional migration 003 and its parent-index build have completed before
+relying on replacement navigation. Evidence is retained indefinitely; the partial
+`resendOfNotificationKey`/recording-time/ObjectId index supports exact parent
+lookup without scanning parentless originals. Delivery readiness alone does not
+prove optional-index completion. Initial construction scans retained evidence and
+can continue after a client timeout, so monitor resources and investigate migration
+failures. No evidence backfill or configuration change is required.
+
+Use `POST /admin/notification-commands/dlq/resend` with
+`{ "selectionToken": "<current-selection>" }` for one accepted command still on
+the DLQ. Pending, suppressed, abandoned, conflicting, invalid and unknown states
+are refused. There is no batch, request-ID or record-history resend. A's opaque
+key always derives the same replacement B, including across fresh selections,
+transport copies and hosts. Selecting eligible accepted B later creates its own
+replacement. Recipient, template, personalisation, type and original action time
+are preserved; cutover and ordinary terminal duplicate protection still apply.
+
+Publication must be confirmed before selected-source deletion. Success returns
+`sourceNotificationKey`, `replacementNotificationKey`, `publicationStatus: confirmed`,
+`sourceMessageRemoved: true` and encoded `links.sourceRecord` / `links.replacementRecord`.
+This confirms queue operations, not Notify acceptance, recipient delivery or an
+immediately available B record. After uncertain publication/deletion or a lost
+HTTP response, use A's replacement-search link to check retained evidence and
+Notify where available. If a successful response was retained, B's record link
+also supports lookup. Retry the current selection or wait for visibility and
+reinspect A. Every copy of
+A still maps to B; an unconfirmed Notify result retains the normal duplicate risk.
+Once all A copies disappear, history alone cannot request another replacement.
+Never reset A's evidence, override suppression/abandonment or change cutover to
+force a resend. Native proof requires the separate
+[accepted-source runbook](docs/command-dlq-native-sqs-verification.md#accepted-command-resend).
+
 Search pages contain readable retained summaries: malformed mandatory BSON fields
 are excluded before pagination, while unknown string outcomes remain included.
 Invalid optional fields return null; dates are not invented and evidence is not

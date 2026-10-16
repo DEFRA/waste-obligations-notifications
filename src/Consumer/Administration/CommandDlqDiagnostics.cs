@@ -39,6 +39,18 @@ public sealed class CommandDlqDiagnostics(
             );
     }
 
+    public void Resent(string notificationType)
+    {
+        if (logger.IsEnabled(LogLevel.Information))
+            logger.LogInformation(
+                "Command DLQ replacement publication and selected-source removal confirmed for {NotificationType}",
+                delivery.Value.GetDiagnosticNotificationType(notificationType)
+            );
+    }
+
+    public void ResendFailed() =>
+        logger.LogError("Command DLQ resend failed; publication or removal may be unconfirmed.");
+
     public void SearchFailed() => logger.LogError("Delivery record search failed.");
 
     public void InspectionFailed() => logger.LogError("Command DLQ inspection failed.");
