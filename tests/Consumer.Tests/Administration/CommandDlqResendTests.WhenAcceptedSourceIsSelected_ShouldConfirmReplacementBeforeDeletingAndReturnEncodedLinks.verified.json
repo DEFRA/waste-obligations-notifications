@@ -1,1 +1,15 @@
-{}
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "sourceNotificationKey": "v1:e33ba528eafbf3e486775ef0ec83fa5ba46c3b33e497449a02350db65302b3d8",
+    "replacementNotificationKey": "v1:23e2e9431616823e2925d46c55ca429d28a659a579ac24eeba0728eb7896711c",
+    "publicationStatus": "confirmed",
+    "sourceMessageRemoved": true,
+    "links": {
+      "sourceRecord": "/admin/notification-commands/delivery-records?notificationKey=v1%3Ae33ba528eafbf3e486775ef0ec83fa5ba46c3b33e497449a02350db65302b3d8",
+      "replacementRecord": "/admin/notification-commands/delivery-records?notificationKey=v1%3A23e2e9431616823e2925d46c55ca429d28a659a579ac24eeba0728eb7896711c"
+    }
+  }
+}

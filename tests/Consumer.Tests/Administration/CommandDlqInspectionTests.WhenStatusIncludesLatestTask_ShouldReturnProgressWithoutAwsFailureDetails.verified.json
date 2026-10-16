@@ -1,1 +1,17 @@
-{}
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "approximateVisibleMessages": 10,
+    "approximateInFlightMessages": 4,
+    "approximateDelayedMessages": 2,
+    "approximateTotalMessages": 16,
+    "redriveTask": {
+      "status": "RUNNING",
+      "approximateMessagesMoved": 25,
+      "approximateMessagesToMove": 100,
+      "startedAtUtc": "2026-10-01T00:00:00+00:00"
+    }
+  }
+}

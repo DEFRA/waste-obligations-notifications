@@ -1,1 +1,44 @@
-{}
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "records": [
+      {
+        "notificationKey": "v1:replacement",
+        "notificationType": "submitted",
+        "outcome": "delivery-pending",
+        "recordedAtUtc": "2026-10-12T09:00:00Z",
+        "actionOccurredAtUtc": "2026-10-11T09:00:00Z",
+        "acceptedAtUtc": null,
+        "leaseExpiresAtUtc": "2026-10-12T09:05:00Z",
+        "notifyNotificationId": null,
+        "notifyReference": null,
+        "templateId": null,
+        "templateVersion": null,
+        "resendOfNotificationKey": "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "links": {
+          "sourceRecord": "/admin/notification-commands/delivery-records?notificationKey=v1%3A0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      },
+      {
+        "notificationKey": "v1:accepted-replacement",
+        "notificationType": "submitted",
+        "outcome": "delivery-accepted",
+        "recordedAtUtc": "2026-10-11T09:00:00Z",
+        "actionOccurredAtUtc": "2026-10-10T09:00:00Z",
+        "acceptedAtUtc": "2026-10-11T09:01:00Z",
+        "leaseExpiresAtUtc": null,
+        "notifyNotificationId": "11111111-1111-1111-1111-111111111111",
+        "notifyReference": "v1:retained-reference",
+        "templateId": "22222222-2222-2222-2222-222222222222",
+        "templateVersion": 3,
+        "resendOfNotificationKey": "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "links": {
+          "sourceRecord": "/admin/notification-commands/delivery-records?notificationKey=v1%3A0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      }
+    ],
+    "nextCursor": "WyIxIiwiNjM5MjczMDYwMDAwMDAwMDAwIiwiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAyIiwiOEIwRDBFOEY0NTk5RjUwRENEMjJCNTg3MjVFQTY3QzUyOTI0MjAzRjBERDZBN0RBMTM5NTQ2RDI2QTY4NkU4NiJd"
+  }
+}

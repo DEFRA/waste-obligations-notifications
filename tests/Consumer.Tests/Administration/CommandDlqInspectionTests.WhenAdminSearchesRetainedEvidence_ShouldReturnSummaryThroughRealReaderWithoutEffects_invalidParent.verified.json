@@ -1,1 +1,25 @@
-{}
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "records": [
+      {
+        "notificationKey": "v1:replacement",
+        "notificationType": "submitted",
+        "outcome": "delivery-pending",
+        "recordedAtUtc": "2026-10-12T09:00:00Z",
+        "actionOccurredAtUtc": "2026-10-11T09:00:00Z",
+        "acceptedAtUtc": null,
+        "leaseExpiresAtUtc": "2026-10-12T09:05:00Z",
+        "notifyNotificationId": null,
+        "notifyReference": null,
+        "templateId": null,
+        "templateVersion": null,
+        "resendOfNotificationKey": null,
+        "links": null
+      }
+    ],
+    "nextCursor": null
+  }
+}
