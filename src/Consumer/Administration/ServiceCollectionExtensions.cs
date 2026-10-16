@@ -53,6 +53,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<CommandDlqSelectionTokens>();
         services.AddSingleton<CommandDlqDiagnostics>();
         services.AddSingleton<CommandDlqInspector>();
+        services.AddSingleton<IDeliveryRecordSearchReader, MongoDeliveryRecordSearchReader>();
         services.AddSingleton<CommandDlqRedriver>();
         services.AddSingleton<CommandDlqDiscarder>();
         services.AddSingleton<CommandDlqVerificationCommandCreator>();

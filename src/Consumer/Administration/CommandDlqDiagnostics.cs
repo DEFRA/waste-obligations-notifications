@@ -39,6 +39,8 @@ public sealed class CommandDlqDiagnostics(
             );
     }
 
+    public void SearchFailed() => logger.LogError("Delivery record search failed.");
+
     public void InspectionFailed() => logger.LogError("Command DLQ inspection failed.");
 
     public void StatusFailed() => logger.LogError("Command DLQ status failed.");

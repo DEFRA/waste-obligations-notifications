@@ -78,7 +78,7 @@ public sealed class NotificationCommandMetrics : INotificationCommandMetrics
                 DeliveryClaimResult.Claimed => "claimed",
                 DeliveryClaimResult.TerminalDuplicate => "terminal-duplicate",
                 DeliveryClaimResult.Conflict => "conflict",
-                DeliveryClaimResult.ActiveClaim => "active-claim",
+                DeliveryClaimResult.ActiveClaim => NotificationDeliveryClassifications.ActiveClaim,
                 _ => "unavailable",
             },
             elapsedMilliseconds

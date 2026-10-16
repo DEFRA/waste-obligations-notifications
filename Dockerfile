@@ -6,7 +6,7 @@ RUN apt update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-FROM mcr.microsoft.com/dotnet/sdk@sha256:35d40304542c8689331f8cab17c65926cdf48fe711e289321d71924b230a7d29 AS build
+FROM mcr.microsoft.com/dotnet/sdk@sha256:0d99ebf1ccad15037b5c98c9fe8979d6b8dbac23812feae2277a0b277b5c5ffa AS build
 WORKDIR /src
 
 COPY .config/dotnet-tools.json .config/dotnet-tools.json

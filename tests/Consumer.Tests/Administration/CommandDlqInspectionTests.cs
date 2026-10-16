@@ -4,11 +4,14 @@ using System.Text;
 using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Defra.WasteObligations.Consumer.Administration;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
+using Elastic.CommonSchema.Serilog;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -16,10 +19,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
+using MongoDB.Driver;
 using NSubstitute;
+using Serilog.Events;
 
 namespace Defra.WasteObligations.Consumer.Tests.Administration;
 
+[Collection(nameof(ProductionLoggingCollection))]
 public sealed class CommandDlqInspectionTests
 {
     private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web);
@@ -169,12 +176,18 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(
             [
                 "actionOccurredAtUtc",
+                "availableActions",
+                "deliveryRecord",
                 "emailAddress",
                 "failureClassification",
                 "idempotencyKey",
                 "leaseExpiresAtUtc",
+                "links",
                 "messageId",
                 "notificationType",
+                "notifyNotificationId",
+                "notifyReference",
+                "operatorGuidance",
                 "personalisation",
                 "receiveCount",
                 "recipientDigest",
@@ -283,11 +296,185 @@ public sealed class CommandDlqInspectionTests
                 "templateId",
                 "personalisation",
                 "schemaVersion",
+                "deliveryRecord",
+                "notifyNotificationId",
+                "notifyReference",
+                "links",
             }
         )
             Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("messages")[0].GetProperty(name).ValueKind);
+        Assert.Empty(body.RootElement.GetProperty("messages")[0].GetProperty("availableActions").EnumerateArray());
+        Assert.Contains(
+            "Escalate to engineering",
+            body.RootElement.GetProperty("messages")[0].GetProperty("operatorGuidance").GetString()!,
+            StringComparison.Ordinal
+        );
         Assert.Empty(factory.Store.ReceivedCalls());
         AssertPrivacy(factory, text);
+    }
+
+    [Theory]
+    [InlineData("delivery-accepted", "inspect,redrive", "does not confirm recipient delivery")]
+    [InlineData("active-claim", "inspect", "not proof that its process is running")]
+    [InlineData("expired-claim", "inspect,redrive,discard", "inconclusive lookup leaves a duplicate-email risk")]
+    [InlineData("unrecorded", "redrive,discard", "fix the processing failure")]
+    [InlineData("delivery-suppressed", "inspect,redrive", "Ordinary replay cannot undo suppression")]
+    [InlineData("delivery-abandoned", "discard", "does not prove an earlier uncertain request failed")]
+    [InlineData("immutable-conflict", "", "producer/evidence mismatch")]
+    [InlineData("unknown-delivery-state", "", "Escalate to engineering")]
+    public async Task WhenInspectingKnownClassification_ShouldOfferOnlyImplementedGuardedActions(
+        string classification,
+        string actions,
+        string instruction
+    )
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Store.Inspect(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new NotificationDeliveryState(classification, null, null));
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var item = Assert.Single(body.RootElement.GetProperty("messages").EnumerateArray());
+        var guidance = item.GetProperty("operatorGuidance").GetString()!;
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(instruction, guidance, StringComparison.Ordinal);
+        Assert.Contains("current evidence, not a historical failure cause", guidance, StringComparison.Ordinal);
+        var available = item.GetProperty("availableActions").EnumerateArray().ToArray();
+        Assert.Equal(
+            actions
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(action => "/admin/notification-commands/dlq/" + action),
+            available.Select(action => action.GetProperty("endpoint").GetString())
+        );
+        Assert.All(available, action => Assert.Equal("POST", action.GetProperty("method").GetString()));
+        Assert.DoesNotContain(available, action => action.GetProperty("endpoint").GetString()!.EndsWith("/resend"));
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("deliveryRecord").ValueKind);
+        Assert.Single(factory.Store.ReceivedCalls());
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData("Notify rejection", "expired-claim", "If rejection is confirmed, fix the cause", "credentials")]
+    [InlineData(
+        "lost response",
+        "expired-claim",
+        "Check Notify using the original reference",
+        "If Notify confirms delivery, discard"
+    )]
+    [InlineData(
+        "accepted then delivery failed",
+        "delivery-accepted",
+        "the record remains accepted",
+        "Explicit resend is unavailable"
+    )]
+    public async Task WhenInvestigatingAgreedFailureScenario_ShouldGiveConditionalRecoveryWithoutInventingTheCause(
+        string scenario,
+        string classification,
+        string instruction,
+        string qualification
+    )
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .Store.Inspect(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new NotificationDeliveryState(classification, null, null));
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var item = body.RootElement.GetProperty("messages")[0];
+        var guidance = item.GetProperty("operatorGuidance").GetString()!;
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(instruction, guidance, StringComparison.Ordinal);
+        Assert.Contains(qualification, guidance, StringComparison.Ordinal);
+        Assert.False(item.TryGetProperty("failureDetails", out _), scenario);
+        if (classification == "expired-claim")
+        {
+            Assert.Contains(
+                "pending evidence cannot distinguish Notify rejection, a lost response",
+                guidance,
+                StringComparison.Ordinal
+            );
+            Assert.Contains("inconclusive lookup leaves a duplicate-email risk", guidance, StringComparison.Ordinal);
+            var reference = factory
+                .Services.GetRequiredService<INotificationCommandDigest>()
+                .CreateNotifyReference(Identity);
+            Assert.Equal(reference, item.GetProperty("notifyReference").GetString());
+        }
+        else
+            Assert.Contains("redrive still performs terminal-copy cleanup only", guidance, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task WhenInspectingMatchingAcceptedRecord_ShouldReturnRetainedSummaryAndEncodedNavigation()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        var digest = factory.Services.GetRequiredService<INotificationCommandDigest>();
+        var key = digest.CreateIdempotencyKeyDigest(Identity);
+        var evidence = new NotificationDeliveryEvidence(
+            key,
+            "submitted",
+            "delivery-accepted",
+            new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc),
+            null,
+            "11111111-1111-1111-1111-111111111111",
+            "v1:retained-reference",
+            "retained-template",
+            3
+        );
+        factory
+            .Store.Inspect(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(
+                new NotificationDeliveryState(
+                    "delivery-accepted",
+                    new DateTimeOffset(evidence.RecordedAtUtc),
+                    null,
+                    evidence
+                )
+            );
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var item = body.RootElement.GetProperty("messages")[0];
+        var summary = item.GetProperty("deliveryRecord");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(key, summary.GetProperty("notificationKey").GetString());
+        Assert.False(summary.TryGetProperty("resendOfNotificationKey", out _));
+        Assert.False(summary.TryGetProperty("links", out _));
+        Assert.False(item.GetProperty("links").TryGetProperty("resends", out _));
+        Assert.Equal("11111111-1111-1111-1111-111111111111", item.GetProperty("notifyNotificationId").GetString());
+        Assert.Equal("v1:retained-reference", item.GetProperty("notifyReference").GetString());
+        Assert.Equal("v1:retained-reference", summary.GetProperty("notifyReference").GetString());
+        Assert.Equal("2026-10-12T09:00:00Z", summary.GetProperty("acceptedAtUtc").GetString());
+        Assert.Equal("retained-template", summary.GetProperty("templateId").GetString());
+        Assert.Equal(3, summary.GetProperty("templateVersion").GetInt32());
+        var encodedKey = "v1%3A" + key[3..];
+        Assert.Equal(
+            "/admin/notification-commands/delivery-records?notificationKey=" + encodedKey,
+            item.GetProperty("links").GetProperty("deliveryRecord").GetString()
+        );
+        foreach (
+            var field in new[] { "recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation" }
+        )
+            Assert.False(summary.TryGetProperty(field, out _));
+        Assert.Single(factory.Store.ReceivedCalls());
+        Assert.Single(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
     }
 
     [Fact]
@@ -989,6 +1176,458 @@ public sealed class CommandDlqInspectionTests
         AssertPrivacy(factory, body);
     }
 
+    [Theory]
+    [InlineData("missing", HttpStatusCode.Unauthorized)]
+    [InlineData("read", HttpStatusCode.Forbidden)]
+    public async Task WhenSearchCallerIsNotAdmin_ShouldDenyBeforeReadingEvidence(
+        string condition,
+        HttpStatusCode status
+    )
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = SearchRequest(condition);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(status, response.StatusCode);
+        Assert.Empty(factory.SearchReader.ReceivedCalls());
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Fact]
+    public void WhenSearchQueryNamesUseDifferentCase_ShouldReadSupportedValues()
+    {
+        var values = new QueryCollection(
+            Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery("?PAGESIZE=7&NOTIFICATIONKEY=exact-key")
+        );
+
+        var query = DeliveryRecordSearchQuery.Parse(values);
+
+        Assert.Equal(7, query.PageSize);
+        Assert.Equal("exact-key", query.NotificationKey);
+    }
+
+    [Theory]
+    [InlineData("pageSize=0")]
+    [InlineData("pageSize=101")]
+    [InlineData("pageSize=999999999999999999999")]
+    [InlineData("pageSize=1&pageSize=2")]
+    [InlineData("notifyId=private-notify-id")]
+    [InlineData("resendOf=private-parent-key")]
+    [InlineData("resendOfNotificationKey=private-parent-key")]
+    [InlineData("notificationKey=known-key&unexpected=value")]
+    [InlineData("notificationKey=")]
+    [InlineData("outcome=%00")]
+    [InlineData("recordedFromUtc=2026-10-12T00:00:00")]
+    [InlineData("recordedFromUtc=2026-10-12T00:00:00%2B01:00")]
+    [InlineData("recordedFromUtc=2026-10-13T00:00:00Z&recordedToUtc=2026-10-12T00:00:00Z")]
+    [InlineData("cursor=private-invalid-cursor")]
+    public async Task WhenSearchQueryIsInvalid_ShouldRejectBeforeReadingEvidence(string query)
+    {
+        await using var factory = new InspectionApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = SearchRequest("admin", query);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("Delivery record search query is invalid.", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-invalid-cursor", body, StringComparison.Ordinal);
+        Assert.Empty(factory.SearchReader.ReceivedCalls());
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task WhenAdminSearchesRetainedEvidence_ShouldReturnSummaryThroughRealReaderWithoutEffects()
+    {
+        var mongo = Substitute.For<IMongoClient>();
+        var database = Substitute.For<IMongoDatabase>();
+        var collection = Substitute.For<IMongoCollection<BsonDocument>>();
+        var cursor = Substitute.For<IAsyncCursor<BsonDocument>>();
+        mongo.GetDatabase("inspection-test", Arg.Any<MongoDatabaseSettings>()).Returns(database);
+        database
+            .GetCollection<BsonDocument>("NotificationDeliveryRecord", Arg.Any<MongoCollectionSettings>())
+            .Returns(collection);
+        cursor.Current.Returns(
+            new[]
+            {
+                new BsonDocument
+                {
+                    { "_id", ObjectId.Parse("000000000000000000000001") },
+                    { "notificationKey", "v1:replacement" },
+                    { "resendOfNotificationKey", "v1:parent/+?" },
+                    { "notificationType", "submitted" },
+                    { "outcome", "delivery-pending" },
+                    { "recordedAtUtc", new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc) },
+                    { "actionOccurredAtUtc", new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc) },
+                },
+            }
+        );
+        cursor.MoveNextAsync(Arg.Any<CancellationToken>()).Returns(true, false);
+        collection
+            .FindAsync(
+                Arg.Any<FilterDefinition<BsonDocument>>(),
+                Arg.Any<FindOptions<BsonDocument, BsonDocument>>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(cursor);
+        await using var factory = new InspectionApplicationFactory(searchMongo: mongo);
+        using var client = factory.CreateClient();
+        using var request = SearchRequest("admin", "notificationKey=v1%3Areplacement");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var body = JsonDocument.Parse(text);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var record = Assert.Single(body.RootElement.GetProperty("records").EnumerateArray());
+        Assert.Equal("v1:replacement", record.GetProperty("notificationKey").GetString());
+        Assert.Equal("delivery-pending", record.GetProperty("outcome").GetString());
+        Assert.Equal("2026-10-12T09:00:00Z", record.GetProperty("recordedAtUtc").GetString());
+        Assert.Equal(JsonValueKind.Null, record.GetProperty("notifyNotificationId").ValueKind);
+        Assert.False(record.TryGetProperty("resendOfNotificationKey", out _));
+        Assert.False(record.TryGetProperty("links", out _));
+        Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
+        string[] privateFields = ["recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation"];
+        foreach (var field in privateFields)
+            Assert.False(record.TryGetProperty(field, out _));
+        Assert.Equal("FindAsync", Assert.Single(collection.ReceivedCalls()).GetMethodInfo().Name);
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+        AssertPrivacy(factory, text);
+    }
+
+    [Fact]
+    public async Task WhenSearchDependencyFails_ShouldReturnFixedFailureWithoutDependencyContent()
+    {
+        await using var factory = new InspectionApplicationFactory(productionLogging: true);
+        factory
+            .SearchReader.Search(Arg.Any<DeliveryRecordSearchQuery>(), Arg.Any<CancellationToken>())
+            .Returns<Task<DeliveryRecordSearchResult>>(_ => throw new InvalidOperationException(PrivateContent));
+        using var client = factory.CreateClient();
+        var query = "notificationKey=" + Uri.EscapeDataString(Identity);
+        using var request = SearchRequest("admin", query);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var capture = factory.ProductionLogs!;
+        await WaitForRequestLogs(capture, "/admin/notification-commands/delivery-records");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("Delivery record search failed.", body, StringComparison.Ordinal);
+        var failure = Assert.Single(
+            capture.Events,
+            logEvent => logEvent.MessageTemplate.Text == "Delivery record search failed."
+        );
+        Assert.Equal(LogEventLevel.Error, failure.Level);
+        Assert.Null(failure.Exception);
+        foreach (var sensitive in new[] { Identity, Uri.EscapeDataString(Identity), PrivateContent })
+        {
+            Assert.All(
+                capture.Events,
+                logEvent => Assert.DoesNotContain(sensitive, StructuredLogText(logEvent), StringComparison.Ordinal)
+            );
+            Assert.All(capture.EcsOutput, output => Assert.DoesNotContain(sensitive, output, StringComparison.Ordinal));
+        }
+        AssertPrivacy(factory, body);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenSearchIsCancelled_ShouldBoundMongoWorkAndDistinguishCallerCancellation(bool callerCancels)
+    {
+        var mongo = Substitute.For<IMongoClient>();
+        var database = Substitute.For<IMongoDatabase>();
+        var collection = Substitute.For<IMongoCollection<BsonDocument>>();
+        mongo.GetDatabase("inspection-test", Arg.Any<MongoDatabaseSettings>()).Returns(database);
+        database
+            .GetCollection<BsonDocument>("NotificationDeliveryRecord", Arg.Any<MongoCollectionSettings>())
+            .Returns(collection);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken dependencyToken = default;
+        collection
+            .FindAsync(
+                Arg.Any<FilterDefinition<BsonDocument>>(),
+                Arg.Any<FindOptions<BsonDocument, BsonDocument>>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(async call =>
+            {
+                dependencyToken = call.ArgAt<CancellationToken>(2);
+                entered.SetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, dependencyToken);
+
+                return Substitute.For<IAsyncCursor<BsonDocument>>();
+            });
+        await using var factory = new InspectionApplicationFactory(
+            new() { ["CommandDlqAdministration:DependencyTimeoutSeconds"] = "1" },
+            searchMongo: mongo
+        );
+        using var client = factory.CreateClient();
+        using var request = SearchRequest("admin");
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var pending = client.SendAsync(request, source.Token);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        if (callerCancels)
+        {
+            await source.CancelAsync();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
+        }
+        else
+        {
+            using var response = await pending;
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+            AssertPrivacy(factory, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        }
+        Assert.True(dependencyToken.IsCancellationRequested);
+        Assert.Equal(
+            callerCancels ? 0 : 1,
+            factory.Logs.Messages.Count(message =>
+                message.Contains("Delivery record search failed.", StringComparison.Ordinal)
+            )
+        );
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData("admin", false, 200)]
+    [InlineData("admin", true, 200)]
+    [InlineData("missing", true, 401)]
+    [InlineData("invalid", true, 400)]
+    public async Task WhenAdminSearchContainsEvidence_ShouldKeepItOutOfProductionRequestLogs(
+        string caller,
+        bool encoded,
+        int status
+    )
+    {
+        const string key = "v1:0000000000000000000000000000000000000000000000000000000000000001";
+        const string notifyId = "12345678-1234-1234-1234-123456789abc";
+        const string encodedKey = "v1%3A0000000000000000000000000000000000000000000000000000000000000001";
+        const string encodedNotifyId = "12345678%2D1234%2D1234%2D1234%2D123456789abc";
+        const string correlation = "request-log-privacy-correlation";
+        var path = encoded
+            ? "/ADMIN/notification-commands/delivery-records"
+            : "/admin/notification-commands/delivery-records";
+        var query =
+            "notificationKey="
+            + (encoded ? encodedKey : key)
+            + "&notifyNotificationId="
+            + (encoded ? encodedNotifyId : notifyId)
+            + (caller == "invalid" ? "&pageSize=0" : "");
+        await using var factory = new InspectionApplicationFactory(productionLogging: true);
+        factory
+            .SearchReader.Search(Arg.Any<DeliveryRecordSearchQuery>(), Arg.Any<CancellationToken>())
+            .Returns(new DeliveryRecordSearchResult([], null));
+        using var client = factory.CreateClient();
+        using var request = SearchRequest(caller == "invalid" ? "admin" : caller, query);
+        request.RequestUri = new Uri(path + "?" + query, UriKind.Relative);
+        request.Headers.Add("x-cdp-request-id", correlation);
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var capture = factory.ProductionLogs!;
+        await WaitForRequestLogs(capture, path);
+
+        Assert.Equal((HttpStatusCode)status, response.StatusCode);
+        AssertRequestLogMetadata(capture, path, status);
+        Assert.Contains(capture.EcsOutput, output => output.Contains(correlation, StringComparison.Ordinal));
+        Assert.Contains(
+            capture.Events,
+            logEvent => StructuredLogText(logEvent).Contains(correlation, StringComparison.Ordinal)
+        );
+        if (caller == "admin")
+            await factory
+                .SearchReader.Received(1)
+                .Search(
+                    Arg.Is<DeliveryRecordSearchQuery>(search =>
+                        search.NotificationKey == key && search.NotifyNotificationId == notifyId
+                    ),
+                    Arg.Any<CancellationToken>()
+                );
+        else
+            Assert.Empty(factory.SearchReader.ReceivedCalls());
+        var contexts = capture
+            .Events.Select(logEvent =>
+                logEvent.Properties.TryGetValue("HttpContext", out var value)
+                && value is ScalarValue { Value: SpecialProperties.HttpContextEnrichments context }
+                    ? context
+                    : null
+            )
+            .Where(context => context?.Url?.Path == path)
+            .ToArray();
+        Assert.NotEmpty(contexts);
+        foreach (var sensitive in new[] { key, notifyId, encodedKey, encodedNotifyId })
+        {
+            Assert.All(
+                capture.Events,
+                logEvent =>
+                {
+                    Assert.DoesNotContain(sensitive, StructuredLogText(logEvent), StringComparison.Ordinal);
+                    Assert.DoesNotContain(sensitive, logEvent.RenderMessage(), StringComparison.Ordinal);
+                }
+            );
+            Assert.All(capture.EcsOutput, output => Assert.DoesNotContain(sensitive, output, StringComparison.Ordinal));
+        }
+        Assert.All(
+            contexts,
+            context =>
+            {
+                var url = Assert.IsType<Elastic.CommonSchema.Url>(context!.Url);
+                Assert.Equal("", url.Query);
+                Assert.DoesNotContain("?", url.Full, StringComparison.Ordinal);
+                Assert.DoesNotContain("?", url.Original, StringComparison.Ordinal);
+            }
+        );
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    [Theory]
+    [InlineData("/admin", true)]
+    [InlineData("/administrator", false)]
+    public async Task WhenPathHasAdminPrefix_ShouldRedactOnlyTheAdminSegment(string path, bool redact)
+    {
+        const string marker = "ordinary-visible-query-marker";
+        await using var factory = new InspectionApplicationFactory(productionLogging: true);
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(path + "?control=" + marker, TestContext.Current.CancellationToken);
+        var capture = factory.ProductionLogs!;
+        await WaitForRequestLogs(capture, path);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        AssertRequestLogMetadata(capture, path, 404);
+        if (redact)
+        {
+            Assert.All(
+                capture.Events,
+                logEvent => Assert.DoesNotContain(marker, StructuredLogText(logEvent), StringComparison.Ordinal)
+            );
+            Assert.All(capture.EcsOutput, output => Assert.DoesNotContain(marker, output, StringComparison.Ordinal));
+        }
+        else
+        {
+            Assert.Contains(
+                capture.Events,
+                logEvent => StructuredLogText(logEvent).Contains(marker, StringComparison.Ordinal)
+            );
+            Assert.Contains(capture.EcsOutput, output => output.Contains(marker, StringComparison.Ordinal));
+        }
+        Assert.Empty(factory.SearchReader.ReceivedCalls());
+        Assert.Empty(factory.Sqs.ReceivedCalls());
+        Assert.Empty(factory.Store.ReceivedCalls());
+        Assert.Empty(factory.Notify.ReceivedCalls());
+    }
+
+    private static async Task WaitForRequestLogs(AdminRequestLogCapture capture, string path)
+    {
+        using var source = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        source.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (
+                !capture.Events.Any(logEvent =>
+                    logEvent.MessageTemplate.Text.StartsWith("Request finished", StringComparison.Ordinal)
+                    && RequestLogPath(logEvent) == path
+                )
+            )
+                await Task.Delay(TimeSpan.FromMilliseconds(10), source.Token);
+        }
+        catch (OperationCanceledException) when (!TestContext.Current.CancellationToken.IsCancellationRequested)
+        {
+            Assert.Fail("Request-finish capture was not observed. " + DescribeLogProperties(capture));
+        }
+    }
+
+    private static void AssertRequestLogMetadata(AdminRequestLogCapture capture, string path, int status)
+    {
+        Assert.False(capture.Overflowed);
+        var events = capture.Events.Where(logEvent => RequestLogPath(logEvent) == path).ToArray();
+        Assert.Contains(
+            events,
+            logEvent => logEvent.MessageTemplate.Text.StartsWith("Request starting", StringComparison.Ordinal)
+        );
+        var finished = Assert.Single(
+            events,
+            logEvent => logEvent.MessageTemplate.Text.StartsWith("Request finished", StringComparison.Ordinal)
+        );
+        Assert.Equal(status, Assert.IsType<int>(Assert.IsType<ScalarValue>(finished.Properties["StatusCode"]).Value));
+        Assert.Equal("GET", Assert.IsType<string>(Assert.IsType<ScalarValue>(finished.Properties["Method"]).Value));
+        Assert.Contains(capture.EcsOutput, output => output.Contains(path, StringComparison.Ordinal));
+    }
+
+    private static string? RequestLogPath(LogEvent logEvent) =>
+        ReadLogPath(logEvent, "RequestPath")
+        ?? ReadLogPath(logEvent, "Path")
+        ?? (
+            logEvent.Properties.TryGetValue("HttpContext", out var value)
+            && value is ScalarValue { Value: SpecialProperties.HttpContextEnrichments context }
+                ? context.Url?.Path
+                : null
+        );
+
+    private static string? ReadLogPath(LogEvent logEvent, string property)
+    {
+        if (!logEvent.Properties.TryGetValue(property, out var value) || value is not ScalarValue scalar)
+            return null;
+
+        return scalar.Value switch
+        {
+            string text => text,
+            PathString path => path.Value,
+            _ => null,
+        };
+    }
+
+    private static string DescribeLogProperties(AdminRequestLogCapture capture)
+    {
+        var requestProperties = capture
+            .Events.Where(logEvent => logEvent.MessageTemplate.Text.StartsWith("Request ", StringComparison.Ordinal))
+            .Take(4)
+            .Select(logEvent =>
+                string.Join(
+                    ", ",
+                    logEvent
+                        .Properties.OrderBy(property => property.Key)
+                        .Take(16)
+                        .Select(property => property.Key + ":" + LogPropertyType(property.Value))
+                )
+            );
+
+        return "Captured events: "
+            + capture.Events.Count
+            + "; request property names/types: "
+            + string.Join("; ", requestProperties);
+    }
+
+    private static string LogPropertyType(LogEventPropertyValue value) =>
+        value is ScalarValue scalar ? scalar.Value?.GetType().Name ?? "null" : value.GetType().Name;
+
+    private static string StructuredLogText(LogEvent logEvent) =>
+        JsonSerializer.Serialize(
+            logEvent.Properties.ToDictionary(
+                property => property.Key,
+                property => property.Value is ScalarValue scalar ? scalar.Value : property.Value.ToString()
+            )
+        );
+
+    private static HttpRequestMessage SearchRequest(string condition, string? query = null)
+    {
+        var request = Request(condition);
+        request.Method = HttpMethod.Get;
+        request.RequestUri = new Uri(
+            "/admin/notification-commands/delivery-records" + (query is null ? "" : "?" + query),
+            UriKind.Relative
+        );
+
+        return request;
+    }
+
     private static void ConfigureQueueIdentities(InspectionApplicationFactory factory, bool sameQueue = false)
     {
         factory
@@ -1108,13 +1747,29 @@ public sealed class CommandDlqInspectionTests
 
     private sealed class InspectionApplicationFactory(
         Dictionary<string, string?>? overrides = null,
-        bool emptyAcl = false
+        bool emptyAcl = false,
+        IMongoClient? searchMongo = null,
+        bool productionLogging = false
     ) : WebApplicationFactory<Program>
     {
         public IAmazonSQS Sqs { get; } = CreateSqs();
         public INotificationDeliveryRecordStore Store { get; } = CreateStore();
+        public IDeliveryRecordSearchReader SearchReader { get; } = Substitute.For<IDeliveryRecordSearchReader>();
         public INotifyEmailClient Notify { get; } = Substitute.For<INotifyEmailClient>();
         public RecordingLogs Logs { get; } = new();
+        public AdminRequestLogCapture? ProductionLogs { get; } = productionLogging ? new() : null;
+
+        public override async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await base.DisposeAsync();
+            }
+            finally
+            {
+                ProductionLogs?.Dispose();
+            }
+        }
 
         private static IAmazonSQS CreateSqs()
         {
@@ -1142,9 +1797,17 @@ public sealed class CommandDlqInspectionTests
             builder.UseEnvironment("Testing");
             builder.ConfigureTestServices(services =>
             {
-                services.AddSingleton<ILoggerFactory>(_ =>
-                    LoggerFactory.Create(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(Logs))
-                );
+                if (productionLogging)
+                    services.AddSingleton<ILoggerFactory>(
+                        serviceProvider => new Serilog.Extensions.Logging.SerilogLoggerFactory(
+                            serviceProvider.GetRequiredService<Serilog.ILogger>(),
+                            dispose: false
+                        )
+                    );
+                else
+                    services.AddSingleton<ILoggerFactory>(_ =>
+                        LoggerFactory.Create(logging => logging.SetMinimumLevel(LogLevel.Trace).AddProvider(Logs))
+                    );
                 foreach (
                     var descriptor in services
                         .Where(descriptor =>
@@ -1163,6 +1826,16 @@ public sealed class CommandDlqInspectionTests
                 services.AddSingleton(Store);
                 services.RemoveAll<INotifyEmailClient>();
                 services.AddSingleton(Notify);
+                if (searchMongo is null)
+                {
+                    services.RemoveAll<IDeliveryRecordSearchReader>();
+                    services.AddSingleton(SearchReader);
+                }
+                else
+                {
+                    services.RemoveAll<IMongoClient>();
+                    services.AddSingleton(searchMongo);
+                }
                 var completion = new MongoMigrationCompletion();
                 completion.MarkCompleted();
                 services.AddSingleton(completion);
@@ -1199,6 +1872,18 @@ public sealed class CommandDlqInspectionTests
                 ["Acl:Clients:write:Secret"] = Secret,
                 ["Acl:Clients:write:Scopes:0"] = "write",
             };
+            if (ProductionLogs is { } capture)
+            {
+                var captureValues = new Dictionary<string, string?>
+                {
+                    ["Serilog:Using:0"] = typeof(AdminRequestLogCaptureSinkExtensions).Assembly.GetName().Name,
+                    ["Serilog:WriteTo:1:Name"] = "CaptureAdminRequests",
+                    ["Serilog:WriteTo:1:Args:captureId"] = capture.Id,
+                };
+                builder.ConfigureAppConfiguration(
+                    (_, configuration) => configuration.AddInMemoryCollection(captureValues)
+                );
+            }
             if (emptyAcl)
                 foreach (
                     var key in values

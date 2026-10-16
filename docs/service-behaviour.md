@@ -319,6 +319,37 @@ The response contains a `messages` array. Each valid entry exposes the original 
 schema version, idempotency key, notification type, action timestamp, normalised
 recipient address, template ID and personalisation, plus SQS message ID, timestamps,
 receive count, current delivery classification, recipient digest and selection token.
+Each entry also includes `operatorGuidance` and `availableActions` (method,
+endpoint and description). Actions are classification-specific recommendations
+for implemented operations. Redrive validates the current selection and command
+content; discard also checks current delivery evidence. The inspection snapshot
+does not authorise a later action. Matching retained evidence appears in
+`deliveryRecord` using the search-summary shape, with available Notify ID/reference
+also exposed at the item level. Conflicting evidence is never returned as a
+matching summary. Pending or unrecorded commands expose their derived original
+Notify reference for investigating uncertain results, not proof of acceptance.
+Valid commands provide an encoded `links.deliveryRecord` search URL.
+Malformed/unsupported entries expose no command identity, correlation, record,
+navigation or usable selected action, and direct engineering escalation.
+
+Guidance describes current evidence, not the historical failure cause or live
+recipient delivery. The implemented recovery choices are:
+
+| Classification | Guidance and available actions |
+| --- | --- |
+| `delivery-accepted` | Check Notify. Recorded acceptance does not prove recipient delivery. Wait if processing; redrive cleans up a terminal queue copy without another send. Later delivery failure leaves acceptance intact. Explicit resend is unavailable. Inspect/redrive only. |
+| `active-claim` | Wait and inspect again. The lease does not prove the owning process is running. Selected redrive is not offered while active; discard refuses active claims. |
+| `expired-claim` | Check Notify using the original reference. If delivered, discard to stop further attempts; if processing, wait. If rejection is confirmed, fix its cause, including credentials where relevant, before redrive. An inconclusive lookup retains duplicate risk. Inspect/redrive/discard. |
+| `unrecorded` | Investigate and fix the processing failure before redrive, or discard if further attempts are no longer required. Redrive/discard. |
+| `delivery-suppressed` | Confirm the handover policy; the legacy sender may have sent. Redrive only cleans up the terminal copy and cannot undo suppression. Inspect/redrive. |
+| `delivery-abandoned` | Confirm the prior decision; discard performs idempotent cleanup. Abandonment does not prove an earlier uncertain request failed. Discard only. |
+| `immutable-conflict`, invalid/unsupported, unknown state | Escalate to engineering. No selected recovery or removal action is offered. |
+
+Pending evidence cannot distinguish rejection, a lost response, a crash before
+sending or failed acceptance persistence. Absence in Notify is not proof that no
+request was accepted. Neither suppression nor abandonment can be overridden.
+No resend endpoint or new removal action is provided.
+
 Command content is permitted only in authenticated inspection responses; it must
 not appear in logs, metrics, tokens or Mongo evidence. Rendered emails and Notify
 responses are not returned. Historical dependency errors are not persisted.
@@ -552,3 +583,78 @@ previews explicitly skip without credentials; the ignored root `.env` convention
 and runtime fallback wrapper are documented in the README. Preview credentials and
 rendered content are never reported. Preview success proves template access/rendering
 for those effective mappings, rather than deployed Read ACL or cutover readiness.
+
+## Retained delivery-record search
+
+Authenticated `GET /admin/notification-commands/delivery-records` searches current
+retained Mongo evidence independently of queue copies. The existing Admin policy
+and startup readiness boundary apply. It never receives, publishes or deletes
+queue messages, calls Notify, or changes delivery records.
+
+Opaque keys, Notify identifiers and other retained correlation are exposed through
+authenticated administration responses and remain excluded from logs. Administration
+request query strings are redacted from hosting diagnostics and ECS URL fields,
+including for rejected requests. Request-start/finish, path, method, status and
+correlation metadata remain available. Redaction affects event snapshots only;
+request filters, authorization and non-administration logging are unchanged.
+
+Filters are `recordedFromUtc` (inclusive), `recordedToUtc` (exclusive),
+`notifyNotificationId`, `notificationKey` and `outcome`.
+Query names are case-insensitive; names outside these filters, `pageSize` and `cursor` return 400.
+Date bounds require explicit UTC (`Z` or a zero offset) and use the latest
+`recordedAtUtc` processing-state time, rather than `actionOccurredAtUtc`.
+Supplied filters combine; Notify IDs and opaque keys match exactly, including
+case. All retained outcomes are returned by default. Outcome filtering matches
+an exact bounded value, including unrecognised retained outcomes. Typical values
+are `delivery-pending`, `delivery-accepted`, `delivery-suppressed` and
+`delivery-abandoned`. Pending evidence remains pending irrespective of lease
+expiry; search does not classify a historical failure or check live delivery.
+
+Responses contain `records` and nullable `nextCursor`. `pageSize` defaults to 25
+and accepts 1–100. Results sort by recording time descending, then stable Mongo
+identifier descending. Continue with the returned opaque cursor and the same
+filters; changing filters or malformed cursors returns 400. An unchanged dataset
+has no page omissions or repetitions. Concurrent state updates do not provide a
+historical snapshot. Empty searches return an empty records array and null cursor.
+Dependency work uses the existing administration timeout; failures return a fixed
+503 response without dependency details, and request cancellation propagates.
+
+Inspection treats matching evidence with malformed mandatory summary fields as
+`unknown-delivery-state`, with no matching summary or usable selected recovery
+action. Immutable conflicts retain precedence. Search excludes malformed mandatory
+evidence before sorting/page limits: identity/type/outcome must be scalar strings,
+recording/action times representable BSON dates, and the tie-breaker an ObjectId.
+Unknown string outcomes remain searchable. The readable-record set preserves
+stable cursors; missing or invalid timestamps are never reconstructed from commands
+or processing time. Empty exact lookup does not prove that no malformed record
+exists. Optional malformed fields return null; template versions accept Int32 or
+Int64 within Int32 range without coercing fractional/string values. Optional exact
+identifier filters require scalar strings and do not match array containment.
+Reads do not rewrite or backfill evidence.
+
+Search dependency failures emit one fixed error diagnostic without query values,
+identifiers or exception content; caller cancellation emits no failure diagnostic.
+
+Optional forward migration 002 adds three full, visible, nonunique search indexes:
+recording time/ObjectId descending, and exact Notify ID or outcome
+followed by the same descending pair. The critical unique notification-key index
+continues to guard delivery identity. Search uses no index hints. Integration
+tests check representative query plans for bounded ordered reads; combined filters can retain
+residual filtering, and skew may increase examined records. No universal
+performance guarantee is implied.
+
+The search-index migration does not gate critical delivery readiness. Investigate
+optional migration failures and confirm completion before relying on efficient
+search. Builds consume resources, can outlive a client timeout, and require
+monitoring. The three indexes add storage and delivery-state write maintenance.
+Incompatible owned definitions are preserved and rejected; rollback drops only
+these owned search indexes. No data backfill, payload or configuration change is
+required.
+
+Summaries include opaque identity, retained outcome/type, business-action and
+recording timestamps, and available acceptance, lease, template and Notify
+correlation. Recipient/immutable digests, attempt owners and email payloads are
+excluded. Recorded acceptance is not proof of recipient delivery. Explicit resend,
+parent correlation, parent search filters/navigation and their index are deferred
+until a replacement-command producer exists. Search does not create replacement
+commands or alter stored evidence.
