@@ -292,7 +292,7 @@ public sealed class SubmittedEmailConsumerTests
         var command = JsonSerializer.Deserialize<NotificationCommand>(publication.MessageBody, s_webOptions)!;
         Assert.Equal(PrivateEmail.Trim().ToLowerInvariant(), command.EmailAddress);
         Assert.Equal(PrivateName, command.Personalisation.GetProperty("user").GetString());
-        Assert.Equal(DateTimeOffset.Parse("2026-09-20T11:12:13Z"), command.ActionOccurredAtUtc);
+        Assert.Equal(new DateTimeOffset(2026, 9, 20, 11, 12, 13, TimeSpan.Zero), command.ActionOccurredAtUtc);
         Assert.Equal(1, fixture.Deletions);
         fixture.AssertSafeLogs();
     }
