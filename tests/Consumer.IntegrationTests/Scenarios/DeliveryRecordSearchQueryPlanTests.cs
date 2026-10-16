@@ -316,7 +316,10 @@ public sealed class DeliveryRecordSearchQueryPlanTests : IntegrationTestBase
                 reader,
                 database,
                 commands,
-                parentQuery with { ResendOfNotificationKey = "v1:absent-parent" },
+                parentQuery with
+                {
+                    ResendOfNotificationKey = "v1:absent-parent",
+                },
                 token
             );
             Assert.Empty(absentParent.Result.Records);

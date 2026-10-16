@@ -159,10 +159,7 @@ public sealed class DeliveryRecordParentSearchIndexMigrationTests : IntegrationT
                 .GetCollection<BsonDocument>("_migrations")
                 .Find(new BsonDocument())
                 .ToListAsync(token);
-            Assert.Equal(
-                ["1.0.0", "2.0.0"],
-                history.Select(item => item["v"].AsString).Order(StringComparer.Ordinal)
-            );
+            Assert.Equal(["1.0.0", "2.0.0"], history.Select(item => item["v"].AsString).Order(StringComparer.Ordinal));
             Assert.Equal(before, await ListIndexes(records, token));
         }
         finally

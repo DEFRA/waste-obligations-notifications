@@ -57,7 +57,12 @@ public sealed class NotificationDeliveryRecordParentSearchIndex : MongoMigration
 
         return index is not null
             && Matches(index)
-            && await HasCompletedIndex(database, MongoNotificationDeliveryRecordStore.CollectionName, IndexName, cancellationToken);
+            && await HasCompletedIndex(
+                database,
+                MongoNotificationDeliveryRecordStore.CollectionName,
+                IndexName,
+                cancellationToken
+            );
     }
 
     private static bool Matches(BsonDocument index) =>
@@ -66,11 +71,15 @@ public sealed class NotificationDeliveryRecordParentSearchIndex : MongoMigration
         && index.GetValue("unique", false) == BsonBoolean.False
         && index.GetValue("sparse", false) == BsonBoolean.False
         && index.GetValue("hidden", false) == BsonBoolean.False
-        && (!index.TryGetValue("collation", out var collation) || collation.Equals(new BsonDocument("locale", "simple")));
+        && (
+            !index.TryGetValue("collation", out var collation) || collation.Equals(new BsonDocument("locale", "simple"))
+        );
 
     private static async Task<BsonDocument?> ReadIndex(IMongoDatabase database, CancellationToken cancellationToken)
     {
-        using var cursor = await database.GetCollection<BsonDocument>(MongoNotificationDeliveryRecordStore.CollectionName).Indexes.ListAsync(cancellationToken);
+        using var cursor = await database
+            .GetCollection<BsonDocument>(MongoNotificationDeliveryRecordStore.CollectionName)
+            .Indexes.ListAsync(cancellationToken);
         var indexes = await cursor.ToListAsync(cancellationToken);
 
         return indexes.SingleOrDefault(index => index.GetValue("name", "") == IndexName);
