@@ -1306,30 +1306,34 @@ public sealed class CommandDlqInspectionTests
         };
         if (validParent)
         {
-            documents.Add(new BsonDocument
-            {
-                { "_id", ObjectId.Parse("000000000000000000000002") },
-                { "notificationKey", "v1:accepted-replacement" },
-                { "resendOfNotificationKey", parent },
-                { "notificationType", "submitted" },
-                { "outcome", "delivery-accepted" },
-                { "recordedAtUtc", new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc) },
-                { "actionOccurredAtUtc", new DateTime(2026, 10, 10, 9, 0, 0, DateTimeKind.Utc) },
-                { "acceptedAtUtc", new DateTime(2026, 10, 11, 9, 1, 0, DateTimeKind.Utc) },
-                { "notifyNotificationId", "11111111-1111-1111-1111-111111111111" },
-                { "notifyReference", "v1:retained-reference" },
-                { "templateId", "22222222-2222-2222-2222-222222222222" },
-                { "templateVersion", 3 },
-            });
-            documents.Add(new BsonDocument
-            {
-                { "_id", ObjectId.Parse("000000000000000000000003") },
-                { "notificationKey", "v1:next-page" },
-                { "notificationType", "submitted" },
-                { "outcome", "delivery-suppressed" },
-                { "recordedAtUtc", new DateTime(2026, 10, 10, 9, 0, 0, DateTimeKind.Utc) },
-                { "actionOccurredAtUtc", new DateTime(2026, 10, 9, 9, 0, 0, DateTimeKind.Utc) },
-            });
+            documents.Add(
+                new BsonDocument
+                {
+                    { "_id", ObjectId.Parse("000000000000000000000002") },
+                    { "notificationKey", "v1:accepted-replacement" },
+                    { "resendOfNotificationKey", parent },
+                    { "notificationType", "submitted" },
+                    { "outcome", "delivery-accepted" },
+                    { "recordedAtUtc", new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc) },
+                    { "actionOccurredAtUtc", new DateTime(2026, 10, 10, 9, 0, 0, DateTimeKind.Utc) },
+                    { "acceptedAtUtc", new DateTime(2026, 10, 11, 9, 1, 0, DateTimeKind.Utc) },
+                    { "notifyNotificationId", "11111111-1111-1111-1111-111111111111" },
+                    { "notifyReference", "v1:retained-reference" },
+                    { "templateId", "22222222-2222-2222-2222-222222222222" },
+                    { "templateVersion", 3 },
+                }
+            );
+            documents.Add(
+                new BsonDocument
+                {
+                    { "_id", ObjectId.Parse("000000000000000000000003") },
+                    { "notificationKey", "v1:next-page" },
+                    { "notificationType", "submitted" },
+                    { "outcome", "delivery-suppressed" },
+                    { "recordedAtUtc", new DateTime(2026, 10, 10, 9, 0, 0, DateTimeKind.Utc) },
+                    { "actionOccurredAtUtc", new DateTime(2026, 10, 9, 9, 0, 0, DateTimeKind.Utc) },
+                }
+            );
         }
         cursor.Current.Returns(documents);
         cursor.MoveNextAsync(Arg.Any<CancellationToken>()).Returns(true, false);
@@ -1361,7 +1365,10 @@ public sealed class CommandDlqInspectionTests
             var accepted = records[1];
             Assert.Equal("delivery-accepted", accepted.GetProperty("outcome").GetString());
             Assert.Equal("2026-10-11T09:01:00Z", accepted.GetProperty("acceptedAtUtc").GetString());
-            Assert.Equal("11111111-1111-1111-1111-111111111111", accepted.GetProperty("notifyNotificationId").GetString());
+            Assert.Equal(
+                "11111111-1111-1111-1111-111111111111",
+                accepted.GetProperty("notifyNotificationId").GetString()
+            );
             Assert.Equal("v1:retained-reference", accepted.GetProperty("notifyReference").GetString());
             Assert.Equal("22222222-2222-2222-2222-222222222222", accepted.GetProperty("templateId").GetString());
             Assert.Equal(3, accepted.GetProperty("templateVersion").GetInt32());
@@ -1389,8 +1396,8 @@ public sealed class CommandDlqInspectionTests
         }
         string[] privateFields = ["recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation"];
         foreach (var item in records.EnumerateArray())
-            foreach (var field in privateFields)
-                Assert.False(item.TryGetProperty(field, out _));
+        foreach (var field in privateFields)
+            Assert.False(item.TryGetProperty(field, out _));
         Assert.Equal("FindAsync", Assert.Single(collection.ReceivedCalls()).GetMethodInfo().Name);
         Assert.Empty(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
