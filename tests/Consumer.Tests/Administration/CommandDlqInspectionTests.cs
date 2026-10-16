@@ -454,7 +454,7 @@ public sealed class CommandDlqInspectionTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(key, summary.GetProperty("notificationKey").GetString());
-        Assert.False(summary.TryGetProperty("resendOfNotificationKey", out _));
+        Assert.Equal(JsonValueKind.Null, summary.GetProperty("resendOfNotificationKey").ValueKind);
         Assert.False(summary.TryGetProperty("links", out _));
         Assert.False(item.GetProperty("links").TryGetProperty("resends", out _));
         Assert.Equal("11111111-1111-1111-1111-111111111111", item.GetProperty("notifyNotificationId").GetString());
