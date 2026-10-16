@@ -1396,8 +1396,11 @@ public sealed class CommandDlqInspectionTests
         }
         string[] privateFields = ["recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation"];
         foreach (var item in records.EnumerateArray())
-        foreach (var field in privateFields)
-            Assert.False(item.TryGetProperty(field, out _));
+        {
+            foreach (var field in privateFields)
+                Assert.False(item.TryGetProperty(field, out _));
+        }
+
         Assert.Equal("FindAsync", Assert.Single(collection.ReceivedCalls()).GetMethodInfo().Name);
         Assert.Empty(factory.Sqs.ReceivedCalls());
         Assert.Empty(factory.Store.ReceivedCalls());
