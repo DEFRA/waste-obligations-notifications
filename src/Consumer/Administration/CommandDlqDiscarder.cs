@@ -30,7 +30,7 @@ public sealed class CommandDlqDiscarder(
         try
         {
             EnsureTimely(started, budget, selection, source.Token);
-            source.CancelAfter(TimeSpan.Max(budget - Stopwatch.GetElapsedTime(started), TimeSpan.Zero));
+            source.CancelAfter(CommandDlqDeadline.RemainingDelay(started, budget));
             EnsureTimely(started, budget, selection, source.Token);
             var response = await sqs.ReceiveMessageAsync(
                 new ReceiveMessageRequest

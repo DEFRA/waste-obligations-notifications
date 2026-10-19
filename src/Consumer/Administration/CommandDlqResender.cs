@@ -34,7 +34,7 @@ public sealed class CommandDlqResender(
         try
         {
             EnsureTimely();
-            source.CancelAfter(TimeSpan.Max(budget - Stopwatch.GetElapsedTime(started), TimeSpan.Zero));
+            source.CancelAfter(CommandDlqDeadline.RemainingDelay(started, budget));
 
             var response = await sqs.ReceiveMessageAsync(
                 new ReceiveMessageRequest

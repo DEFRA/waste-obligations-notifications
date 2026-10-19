@@ -33,7 +33,7 @@ public sealed class CommandDlqRedriver(
         try
         {
             EnsureTimely(started, budget, selection, source.Token);
-            source.CancelAfter(TimeSpan.Max(budget - Stopwatch.GetElapsedTime(started), TimeSpan.Zero));
+            source.CancelAfter(CommandDlqDeadline.RemainingDelay(started, budget));
             EnsureTimely(started, budget, selection, source.Token);
             var response = await sqs.ReceiveMessageAsync(
                 new ReceiveMessageRequest
@@ -96,7 +96,7 @@ public sealed class CommandDlqRedriver(
         try
         {
             EnsureTimely(started, budget, first, source.Token);
-            source.CancelAfter(TimeSpan.Max(budget - Stopwatch.GetElapsedTime(started), TimeSpan.Zero));
+            source.CancelAfter(CommandDlqDeadline.RemainingDelay(started, budget));
             var response = await sqs.ReceiveMessageAsync(
                 new ReceiveMessageRequest
                 {
