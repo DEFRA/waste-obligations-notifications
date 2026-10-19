@@ -22,7 +22,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         await using var context = new AbandonmentContext();
         await context.Initialise();
         var token = TestContext.Current.CancellationToken;
-        var command = Command() with { ResendOfNotificationKey = ParentKey };
+        var command = Command() with { IdempotencyKey = "resend:" + ParentKey, ResendOfNotificationKey = ParentKey };
 
         if (outcome == "suppressed")
         {
@@ -101,7 +101,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         await using var context = new AbandonmentContext();
         await context.Initialise();
         var token = TestContext.Current.CancellationToken;
-        var command = Command() with { ResendOfNotificationKey = ParentKey };
+        var command = Command() with { IdempotencyKey = "resend:" + ParentKey, ResendOfNotificationKey = ParentKey };
         Assert.Equal(DeliveryClaimResult.Claimed, await context.Store.Claim(command, "owner", 60, token));
         var record = await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token);
         record["leaseExpiresAtUtc"] = DateTime.UnixEpoch;

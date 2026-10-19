@@ -327,7 +327,7 @@ public sealed class CommandDlqResendTests
     {
         await using var factory = new ResendApplicationFactory();
         using var client = factory.CreateClient();
-        var command = Command() with { IdempotencyKey = "replacement-source", ResendOfNotificationKey = Parent };
+        var command = Command() with { IdempotencyKey = "resend:" + Parent, ResendOfNotificationKey = Parent };
         factory
             .Sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
             .Returns(new ReceiveMessageResponse { HttpStatusCode = HttpStatusCode.OK, Messages = [Message(command)] });

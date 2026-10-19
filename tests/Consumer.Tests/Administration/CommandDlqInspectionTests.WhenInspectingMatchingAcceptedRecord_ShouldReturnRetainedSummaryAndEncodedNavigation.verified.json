@@ -52,8 +52,7 @@
           "notifyReference": "v1:retained-reference",
           "templateId": "retained-template",
           "templateVersion": 3,
-          "resendOfNotificationKey": null,
-          "links": null
+          "resendOfNotificationKey": null
         },
         "notifyNotificationId": "11111111-1111-1111-1111-111111111111",
         "notifyReference": "v1:retained-reference",

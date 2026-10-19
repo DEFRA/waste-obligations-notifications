@@ -16,8 +16,7 @@
         "notifyReference": null,
         "templateId": null,
         "templateVersion": null,
-        "resendOfNotificationKey": null,
-        "links": null
+        "resendOfNotificationKey": null
       }
     ],
     "nextCursor": null

@@ -78,8 +78,9 @@ metadata is refused separately from the unchanged original immutable digest.
 
 The administration producer reserves `resend:<source opaque notification key>`
 as the raw replacement idempotency key. Other producers must not use this
-namespace. It creates one stable intention per immediate source, independent of
+namespace. Validation requires this exact key whenever a parent is supplied and
+rejects a reserved key without its matching parent. It creates one stable intention per immediate source, independent of
 transport copies or operator requests. It preserves recipient, template,
 personalisation, type and business-action time, and uses the normal recipient
-lane and command-key transport deduplication. Deploy compatible consumers on
-every active host before using this metadata; older consumers ignore it.
+lane and command-key transport deduplication. Consumer and administration support
+ship in the same development changeset; mixed-version operation is not supported.

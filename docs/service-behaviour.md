@@ -700,9 +700,9 @@ always derives the same B. Terminal B suppresses repeated sending, while an
 unconfirmed Notify result retains the established automatic-retry duplicate risk.
 A's evidence remains unchanged, and ordinary replay/redrive cannot resend A.
 
-Deploy consumers that validate and preserve parent metadata on every active host
-before operators use resend. Older consumers ignore unknown fields and cannot
-establish lineage. Preserve all existing startup/cutover constraints. Check Notify
+This development change deploys the consumer and administration endpoints in the
+same changeset; no staged rollout or resend feature flag is required. Mixed-version
+operation is not supported. Preserve all existing startup/cutover constraints. Check Notify
 and replacement progress before deciding; later provider failure alone does not
 create a DLQ item. Follow the README recovery steps and the separate native
 accepted-source verification runbook; local adapters do not prove native replay.

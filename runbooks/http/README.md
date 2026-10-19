@@ -83,7 +83,8 @@ ordinary redrive continues to suppress duplicate delivery. Check `availableActio
 before selecting resend. The response includes source and replacement opaque keys
 and record links; a replacement record may not exist until consumption. Confirmed
 publication and source removal do not prove Notify acceptance or recipient delivery.
-Deploy consumers that preserve parent metadata on every host before using resend.
+Deploy this development consumer and its administration endpoints in the same
+changeset; no staged activation or resend feature flag is required.
 History-only resend, batches and suppression overrides are unsupported. Follow the
 [accepted-command resend contract](../../docs/service-behaviour.md#accepted-command-resend)
 and [native AWS verification steps](../../docs/command-dlq-native-sqs-verification.md#accepted-command-resend) before

@@ -64,7 +64,11 @@ public sealed class NotificationCommandSendTests : IntegrationTestBase
         await using var fixture = await DeliveryFixture.Create(shortBudget: true);
         const string parent = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         const string conflictingParent = "v1:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-        var command = DeliveryFixture.Command("submitted", "template-1") with { ResendOfNotificationKey = parent };
+        var command = DeliveryFixture.Command("submitted", "template-1") with
+        {
+            IdempotencyKey = "resend:" + parent,
+            ResendOfNotificationKey = parent,
+        };
         var filter = new BsonDocument(
             "notificationKey",
             fixture.Digest.CreateIdempotencyKeyDigest(command.IdempotencyKey)

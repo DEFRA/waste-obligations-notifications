@@ -467,7 +467,7 @@ public sealed class CommandDlqInspectionTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(key, summary.GetProperty("notificationKey").GetString());
         Assert.Equal(JsonValueKind.Null, summary.GetProperty("resendOfNotificationKey").ValueKind);
-        Assert.Equal(JsonValueKind.Null, summary.GetProperty("links").ValueKind);
+        Assert.False(summary.TryGetProperty("links", out _));
         Assert.Equal("11111111-1111-1111-1111-111111111111", item.GetProperty("notifyNotificationId").GetString());
         Assert.Equal("v1:retained-reference", item.GetProperty("notifyReference").GetString());
         Assert.Equal("v1:retained-reference", summary.GetProperty("notifyReference").GetString());
@@ -1393,7 +1393,7 @@ public sealed class CommandDlqInspectionTests
         else
         {
             Assert.Equal(JsonValueKind.Null, record.GetProperty("resendOfNotificationKey").ValueKind);
-            Assert.Equal(JsonValueKind.Null, record.GetProperty("links").ValueKind);
+            Assert.False(record.TryGetProperty("links", out _));
             Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("nextCursor").ValueKind);
         }
         string[] privateFields = ["recipient", "immutableFields", "attemptOwner", "emailAddress", "personalisation"];

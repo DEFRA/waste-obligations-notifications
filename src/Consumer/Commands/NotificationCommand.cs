@@ -49,6 +49,15 @@ public sealed record NotificationCommand(
             throw new InvalidDataException("Notification command resendOfNotificationKey must be a valid opaque key.");
         }
 
+        var isResendKey = IdempotencyKey.StartsWith("resend:", StringComparison.Ordinal);
+        if (
+            isResendKey != (ResendOfNotificationKey is not null)
+            || (ResendOfNotificationKey is not null && IdempotencyKey != "resend:" + ResendOfNotificationKey)
+        )
+        {
+            throw new InvalidDataException("Notification command resend metadata is inconsistent.");
+        }
+
         if (
             MongoDateTime.TruncateToMilliseconds(ActionOccurredAtUtc) == default
             || ActionOccurredAtUtc.Offset != TimeSpan.Zero

@@ -36,7 +36,6 @@ public sealed class NotificationDeliveryRecordParentSearchIndex : MongoMigration
                 new CreateIndexOptions<BsonDocument>
                 {
                     Name = IndexName,
-                    Background = true,
                     PartialFilterExpression = s_partialFilter,
                     Collation = Collation.Simple,
                 }
