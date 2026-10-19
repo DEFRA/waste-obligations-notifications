@@ -453,7 +453,9 @@ records as matching evidence. Guidance separates recorded acceptance from
 recipient delivery and conditional investigation from historical failure causes.
 Accepted redrive cleans up terminal queue copies. Explicit resend requests one
 stable replacement after the operator checks Notify and any existing replacement.
-Deploy compatible command consumers on every active host before using resend.
+Deploy the consumer and administration endpoints in the same development changeset.
+No staged rollout or resend feature flag is required; mixed-version operation is
+not supported.
 See the [operator matrix](docs/service-behaviour.md#command-dlq-inspection)
 for guarded recovery choices and uncertain-Notify duplicate risk.
 Logs use the diagnostic category allowlist and never expose raw identities.
