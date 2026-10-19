@@ -146,10 +146,10 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
         Assert.Equal(SuppressionClaimResult.TerminalDuplicate, await context.Store.RecordSuppression(command, token));
         Assert.Equal(AbandonmentResult.AlreadyAbandoned, await context.Store.RecordAbandonment(command, token));
         Assert.Equal("delivery-abandoned", (await context.Store.Inspect(command, token)).Classification);
-        Assert.Equal(
-            DeliveryClaimResult.Conflict,
-            await context.Store.Claim(command with { ResendOfNotificationKey = ParentKey }, "owner", 60, token)
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            context.Store.Claim(command with { ResendOfNotificationKey = ParentKey }, "owner", 60, token)
         );
+        Assert.Equal("Notification command resend metadata is inconsistent.", exception.Message);
         Assert.Equal(before, await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
     }
 
