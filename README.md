@@ -64,8 +64,10 @@ analytics before deployment. Missing enabled-analytics access configuration
 rejects startup for the whole host, including delivery and administration.
 Addresses require HTTPS except loopback development endpoints and must not embed
 credentials. Remove URL-embedded credentials before deploying; use the separate
-Basic settings instead. Background
-analytics has no inbound headers to propagate. Account/OAuth follow the companion
+Basic settings instead. Waste Obligations retains its disabled-analytics contract:
+empty read credentials are allowed until processing is enabled, as enforced by
+its [registration](src/Consumer/Services/WasteObligations/ServiceCollectionExtensions.cs).
+Background analytics has no inbound headers to propagate. Account/OAuth follow the companion
 service's `HTTP_PROXY` convention with local bypass.
 
 Resilience settings are bound under `WasteObligations`, `WasteOrganisations`,

@@ -103,10 +103,9 @@ public sealed class CancellationDependencyRegistrationTests
     }
 
     [Theory]
-    [InlineData("https://user:secret@declarations.test/", "secret", true)]
-    [InlineData("http://declarations.test/", "secret", true)]
-    [InlineData("https://declarations.test/", "", false)]
-    public void WhenWasteObligationsAccessIsInvalid_ShouldRejectOptions(string address, string password, bool enabled)
+    [InlineData("https://user:secret@declarations.test/")]
+    [InlineData("http://declarations.test/")]
+    public void WhenWasteObligationsAddressIsInvalid_ShouldRejectEnabledAccess(string address)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(
@@ -114,18 +113,14 @@ public sealed class CancellationDependencyRegistrationTests
                 {
                     ["WasteObligations:BaseAddress"] = address,
                     ["WasteObligations:Username"] = "reader",
-                    ["WasteObligations:Password"] = password,
+                    ["WasteObligations:Password"] = "secret",
                 }
             )
             .Build();
         var services = new ServiceCollection();
         services.AddSingleton<IOptions<AnalyticsEventConsumerOptions>>(
             Options.Create(
-                new AnalyticsEventConsumerOptions
-                {
-                    QueueUrl = "http://localhost/analytics",
-                    ProcessingEnabled = enabled,
-                }
+                new AnalyticsEventConsumerOptions { QueueUrl = "http://localhost/analytics", ProcessingEnabled = true }
             )
         );
         services.AddWasteObligationsClient(configuration);
