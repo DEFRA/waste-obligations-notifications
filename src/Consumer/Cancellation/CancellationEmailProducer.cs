@@ -35,8 +35,7 @@ public sealed class CancellationEmailProducer(
                 await ReadDependency(
                     () => organisations.Read(organisationId, cancellationToken),
                     "organisation-read-unavailable"
-                )
-                ?? throw new SubmissionProcessingException("organisation-not-found");
+                ) ?? throw new SubmissionProcessingException("organisation-not-found");
             if (live.Id != organisationId)
                 throw new SubmissionProcessingException("identity-mismatch");
 

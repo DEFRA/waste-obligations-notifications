@@ -328,24 +328,33 @@ public sealed class CancellationEmailProducerTests
             {
                 Organisation = fixture.Declaration.Organisation! with { RegistrationType = "ComplianceScheme" },
             };
-            fixture.Accounts.SearchOrganisationsByCompaniesHouseNumbers(
-                Arg.Any<IReadOnlyCollection<string>>(), Arg.Any<CancellationToken>()
-            ).Returns(Task.FromException<IReadOnlyList<AccountOrganisation>>(
-                new InvalidOperationException("private null search response")
-            ));
+            fixture
+                .Accounts.SearchOrganisationsByCompaniesHouseNumbers(
+                    Arg.Any<IReadOnlyCollection<string>>(),
+                    Arg.Any<CancellationToken>()
+                )
+                .Returns(
+                    Task.FromException<IReadOnlyList<AccountOrganisation>>(
+                        new InvalidOperationException("private null search response")
+                    )
+                );
         }
         else if (boundary == "organisation")
         {
-            fixture.Live.Read(Fixture.OrganisationId, Arg.Any<CancellationToken>()).Returns(
-                Task.FromException<LiveOrganisation?>(new JsonException("private malformed organisation response"))
-            );
+            fixture
+                .Live.Read(Fixture.OrganisationId, Arg.Any<CancellationToken>())
+                .Returns(
+                    Task.FromException<LiveOrganisation?>(new JsonException("private malformed organisation response"))
+                );
         }
         else
         {
-            Exception failure = boundary == "oauth"
-                ? new InvalidOperationException("private invalid token response")
-                : new JsonException("private malformed persons response");
-            fixture.Accounts.ReadOrganisationWithPersons(Fixture.OrganisationId, Arg.Any<CancellationToken>())
+            Exception failure =
+                boundary == "oauth"
+                    ? new InvalidOperationException("private invalid token response")
+                    : new JsonException("private malformed persons response");
+            fixture
+                .Accounts.ReadOrganisationWithPersons(Fixture.OrganisationId, Arg.Any<CancellationToken>())
                 .Returns(Task.FromException<OrganisationWithPersons?>(failure));
         }
 
