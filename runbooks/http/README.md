@@ -16,8 +16,11 @@ For deployed environments:
 3. Open a `.http` file, select the environment and run an individual request.
    Requests acquire an OAuth token automatically.
 
-- [Health](health.http)
-- [Command DLQ](command-dlq.http): run readiness, then inspect before redrive or discard.
+- [Health](health.http): anonymous readiness and extended checks, plus authenticated readiness.
+- [Command DLQ](command-dlq.http): run readiness, then inspect before redrive, discard or accepted-command resend.
+
+Executable response examples are recorded in the Verify `*.verified.json` snapshots in
+[`tests/Consumer.Tests/Administration`](../../tests/Consumer.Tests/Administration).
 
 Retained evidence can be searched independently of DLQ inspection through
 `GET /admin/notification-commands/delivery-records`. Use explicit UTC recording-time
@@ -28,12 +31,15 @@ state, not a claim-expiry classification. `pageSize` defaults to 25 and is limit
 to 1–100. Copy `nextCursor` into the next request with the same filters. Results
 are newest first; concurrent updates do not provide a historical snapshot.
 
-Parent readback is deferred until a replacement-command producer exists.
+Use exact `resendOfNotificationKey` filtering to find replacements of an opaque source
+key, or follow inspection's `links.resends`. Confirm optional migration 003 has
+completed before relying on indexed replacement navigation.
 Search shows no payload, attempt history or live Notify status;
 check Notify separately using retained identifiers. Recorded acceptance does not
-confirm recipient delivery. Existing resolving endpoints remain selected redrive
-and discard, plus whole-queue redrive. Explicit resend is unavailable, and search
-records cannot authorise selected actions. See the
+confirm recipient delivery. Recovery endpoints include selected redrive, discard
+and accepted-command resend,
+plus whole-queue redrive. Search records cannot authorise selected actions; resend
+requires one current identity-bound selection from DLQ inspection. See the
 [existing recovery contract](../../docs/service-behaviour.md#command-dlq-inspection).
 
 Inspection now provides `operatorGuidance`, `availableActions` with HTTP method,
@@ -45,7 +51,9 @@ command content; discard additionally checks current delivery evidence.
 - Accepted: check Notify progress. Wait while processing. Recorded
   acceptance is not recipient delivery; even a later delivery failure leaves the
   record accepted. Selected redrive only cleans up the terminal queue copy.
-  Explicit resend is unavailable.
+  Inspect existing replacements and investigate before requesting resend. Use the
+  accepted message's current `selectionToken` with the resend request; the first
+  inspected message is not necessarily eligible.
 - Active claim: wait and inspect again. A lease does not prove its process is
   running. Selected redrive is not offered while active; discard refuses active
   claims.
@@ -67,4 +75,17 @@ command content; discard additionally checks current delivery evidence.
 These are current-state instructions. Pending evidence alone cannot establish
 whether Notify rejected a request, its response was lost, the process crashed
 before sending, or acceptance persistence failed. Check diagnostics and Notify
-before choosing recovery. No new resend or removal endpoint is implemented.
+before choosing recovery.
+
+Accepted-command resend publishes one stable replacement and confirms publication
+before deleting the selected source copy. Retries derive the same replacement;
+ordinary redrive continues to suppress duplicate delivery. Check `availableActions`
+before selecting resend. The response includes source and replacement opaque keys
+and record links; a replacement record may not exist until consumption. Confirmed
+publication and source removal do not prove Notify acceptance or recipient delivery.
+Deploy this development consumer and its administration endpoints in the same
+changeset; no staged activation or resend feature flag is required.
+History-only resend, batches and suppression overrides are unsupported. Follow the
+[accepted-command resend contract](../../docs/service-behaviour.md#accepted-command-resend)
+and [native AWS verification steps](../../docs/command-dlq-native-sqs-verification.md#accepted-command-resend) before
+using this in an environment.

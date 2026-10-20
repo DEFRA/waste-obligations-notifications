@@ -74,3 +74,50 @@ not been deleted or had visibility changed. It does not explicitly settle change
 to request timeout parameters; that is why the native experiment is required.
 See [ReceiveMessage API](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_ReceiveMessage.html)
 and [receive-attempt guidance](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/using-receiverequestattemptid-request-parameter.html).
+
+## Accepted-command resend
+
+The permanently suppressed verification command above proves ordinary recovery;
+it cannot exercise accepted-command resend. Use a separately authorised isolated
+FIFO source/DLQ pair, database, fault-injection boundary and controlled recipient.
+Do not alter shared queues, deployment configuration or production evidence.
+Every active test consumer and admin host must support parent metadata and v4
+selections before this exercise; retain the existing cutover/readiness rules.
+
+1. Through the normal producer and real consumer, process a controlled command A
+   whose original action is eligible under the unchanged test cutover. Use the
+   authorised Notify account/recipient. With resource-scoped deletion failure on
+   this isolated queue only, retain matching accepted evidence and let the normal
+   receive budget move its queue copy to the isolated DLQ. Record A's safe opaque
+   key and Notify ID/reference; verify the record remains unchanged. A provider
+   delivery failure alone does not place A on the DLQ.
+2. Check A in Notify and inspect the DLQ through host A. Identify the controlled
+   source and its current v4 selection without logging content, token or receipt.
+   Confirm accepted guidance, original-record and replacement-search navigation.
+3. Through host B, `POST /admin/notification-commands/dlq/resend` with the selected
+   token. Observe the native destination publication confirmation **before** any
+   source deletion starts, including original receive size/visibility on replay.
+   Verify a distinct B key, preserved email inputs/action time, canonical lane and
+   A's opaque parent in B. Check encoded response links without claiming delivery
+   or immediate existence of B's record. Keep unrelated source messages unchanged.
+4. Repeat with a controlled lost publication response, failed/lost deletion
+   response and lost HTTP response. While A is still selectable, retry from the
+   other host or wait for visibility and obtain a fresh selection of another A
+   copy. All requests must derive the same B and retain A unchanged. After every
+   A copy is gone, retry must not publish from Mongo history. Use fault injection
+   confined to these resources and restore it before continuing.
+5. Let B process and verify retained parent, available Notify correlation and
+   unchanged A. Publish a second transport copy of B outside/around SQS transport
+   deduplication using the controlled isolated publisher; matching terminal B
+   must not call Notify again. Verify read-only parent search after queue deletion.
+   Do not infer exactly-once email from an unconfirmed Notify attempt.
+6. On separate controlled cases, confirm nonaccepted source refusal and expired
+   replacement abandonment retaining its parent. Contradictory parent evidence
+   must refuse before Notify without rewriting the isolated record. Restore all
+   fault injection and remove only resources owned by this exercise.
+
+Retain safe evidence of revision, compatible-host readiness, region, resource
+ownership, request ordering, opaque correlations, outcomes and cleanup. Keep
+credentials, tokens, receipts, recipient/content and raw identities out of reports.
+Until this authorised native exercise runs, local SQS-adapter results establish
+only isolated wiring and durable guards, not native AWS resend proof.

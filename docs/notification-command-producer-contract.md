@@ -67,3 +67,20 @@ Use that vector when verifying an external implementation. It is not a deployed
 secret. SQS's short deduplication window does not replace durable delivery
 identity. See [digest-key lifetime](../README.md#digest-key-lifetime) and the
 [cutover decision](adr/0002-email-delivery-cutover-boundary.md).
+
+## Explicit replacement metadata
+
+Original commands omit `resendOfNotificationKey`. Explicit accepted-command
+resend adds this optional field using the immediate source's opaque evidence key:
+`v1:` followed by exactly 64 lowercase hexadecimal characters. Consumers validate
+and retain it across pending, retry and terminal writes; conflicting parent
+metadata is refused separately from the unchanged original immutable digest.
+
+The administration producer reserves `resend:<source opaque notification key>`
+as the raw replacement idempotency key. Other producers must not use this
+namespace. Validation requires this exact key whenever a parent is supplied and
+rejects a reserved key without its matching parent. It creates one stable intention per immediate source, independent of
+transport copies or operator requests. It preserves recipient, template,
+personalisation, type and business-action time, and uses the normal recipient
+lane and command-key transport deduplication. Consumer and administration support
+ship in the same development changeset; mixed-version operation is not supported.

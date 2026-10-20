@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Defra.WasteObligations.Consumer.Administration;
 
 public sealed record DeliveryRecordSummary(
@@ -11,5 +13,13 @@ public sealed record DeliveryRecordSummary(
     string? NotifyNotificationId,
     string? NotifyReference,
     string? TemplateId,
-    int? TemplateVersion
-);
+    int? TemplateVersion,
+    string? ResendOfNotificationKey = null
+)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DeliveryRecordParentLinks? Links =>
+        ResendOfNotificationKey is { } parent
+            ? new("/admin/notification-commands/delivery-records?notificationKey=" + Uri.EscapeDataString(parent))
+            : null;
+}

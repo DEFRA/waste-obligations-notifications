@@ -1,0 +1,8 @@
+﻿{
+  "statusCode": 202,
+  "contentType": "application/json; charset=utf-8",
+  "location": "/admin/notification-commands/dlq/status",
+  "body": {
+    "taskHandle": "opaque-task-handle"
+  }
+}

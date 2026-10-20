@@ -1,0 +1,12 @@
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "approximateVisibleMessages": 10,
+    "approximateInFlightMessages": 4,
+    "approximateDelayedMessages": 2,
+    "approximateTotalMessages": 16,
+    "redriveTask": null
+  }
+}

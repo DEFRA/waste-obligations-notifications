@@ -76,7 +76,7 @@ public sealed class MongoIndexCompletionTests : IntegrationTestBase
             await retry.WaitAsync(TimeSpan.FromSeconds(10), token);
             Assert.True(completion.IsCompleted);
             Assert.Equal(
-                2,
+                3,
                 await database
                     .GetCollection<BsonDocument>("_migrations")
                     .CountDocumentsAsync(new BsonDocument(), cancellationToken: token)
@@ -183,6 +183,77 @@ public sealed class MongoIndexCompletionTests : IntegrationTestBase
         }
     }
 
+    [Fact]
+    public async Task WhenParentSearchIndexIsBeingRebuilt_ShouldRejectIncompleteSchemaWithoutBlockingCriticalReadiness()
+    {
+        const string indexName = "resendOfNotificationKey_recordedAtUtc_id_desc";
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_parent_rebuild_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        var token = TestContext.Current.CancellationToken;
+        Task? build = null;
+        try
+        {
+            await new MongoMigrationRunner(
+                database,
+                NullLogger<MongoMigrationRunner>.Instance,
+                new MongoMigrationCompletion()
+            ).Run(token);
+            await records.InsertOneAsync(
+                new BsonDocument { { "notificationKey", "seed" }, { "resendOfNotificationKey", "parent" } },
+                cancellationToken: token
+            );
+            await records.Indexes.DropOneAsync(indexName, token);
+            await SetBuildFailpoint(client, "alwaysOn", token);
+            build = records.Indexes.CreateOneAsync(
+                new CreateIndexModel<BsonDocument>(
+                    new BsonDocument
+                    {
+                        { "resendOfNotificationKey", 1 },
+                        { "recordedAtUtc", -1 },
+                        { "_id", -1 },
+                    },
+                    new CreateIndexOptions<BsonDocument>
+                    {
+                        Name = indexName,
+                        PartialFilterExpression = new BsonDocument(
+                            "resendOfNotificationKey",
+                            new BsonDocument("$type", "string")
+                        ),
+                        Collation = Collation.Simple,
+                    }
+                ),
+                cancellationToken: token
+            );
+            await WaitForBuildingIndex(database, token, indexName);
+            var migration = new NotificationDeliveryRecordParentSearchIndex();
+
+            Assert.False(await migration.ValidateSchema(database, token));
+            var completion = new MongoMigrationCompletion();
+            var peer = new MongoMigrationRunner(database, NullLogger<MongoMigrationRunner>.Instance, completion);
+            Assert.True(await peer.CheckCompletion(token));
+            Assert.True(completion.IsCompleted);
+
+            await SetBuildFailpoint(client, "off", token);
+            await build.WaitAsync(TimeSpan.FromSeconds(10), token);
+
+            Assert.True(await migration.ValidateSchema(database, token));
+            Assert.True(await peer.CheckCompletion(token));
+            Assert.True(completion.IsCompleted);
+        }
+        finally
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await SetBuildFailpoint(client, "off", cleanup.Token);
+            if (build is not null)
+                await build
+                    .ContinueWith(_ => { }, TaskScheduler.Default)
+                    .WaitAsync(TimeSpan.FromSeconds(10), cleanup.Token);
+            await client.DropDatabaseAsync(databaseName, cleanup.Token);
+        }
+    }
+
     private static Task<BsonDocument> SetBuildFailpoint(IMongoClient client, string mode, CancellationToken token) =>
         client
             .GetDatabase("admin")
@@ -191,13 +262,17 @@ public sealed class MongoIndexCompletionTests : IntegrationTestBase
                 cancellationToken: token
             );
 
-    private static Task WaitForBuildingIndex(IMongoDatabase database, CancellationToken token) =>
+    private static Task WaitForBuildingIndex(
+        IMongoDatabase database,
+        CancellationToken token,
+        string indexName = "notificationKey_unique"
+    ) =>
         WaitForAsync(async () =>
         {
             var stats = await database.RunCommandAsync<BsonDocument>(
                 new BsonDocument("collStats", "NotificationDeliveryRecord"),
                 cancellationToken: token
             );
-            Assert.Contains("notificationKey_unique", stats["indexBuilds"].AsBsonArray);
+            Assert.Contains(indexName, stats["indexBuilds"].AsBsonArray);
         });
 }

@@ -1,0 +1,37 @@
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "messages": [
+      {
+        "idempotencyKey": "private-recipient@example.com",
+        "notificationType": "private-recipient@example.com",
+        "actionOccurredAtUtc": "2026-10-01T00:00:00+00:00",
+        "sentAtUtc": "2026-10-01T00:00:00+00:00",
+        "receiveCount": 3,
+        "failureClassification": "immutable-conflict",
+        "recipientDigest": "v1:04aba480afd3113d2e6a23584ee4b512a5ccbba4ec0dd32f1bb419f062d3aa51",
+        "recordedAtUtc": null,
+        "leaseExpiresAtUtc": null,
+        "selectionToken": "<opaque-selection-token>",
+        "messageId": "opaque-message-id",
+        "schemaVersion": 1,
+        "emailAddress": "private-recipient@example.com",
+        "templateId": "private-personalisation-template-notify",
+        "personalisation": {
+          "content": "private-personalisation-template-notify"
+        },
+        "operatorGuidance": "This is current evidence, not a historical failure cause or live Notify delivery status. The identity exists with different immutable email details. Escalate to engineering to investigate the producer/evidence mismatch; ordinary replay will not repair it. No selected recovery or removal action is offered for this classification.",
+        "availableActions": [],
+        "deliveryRecord": null,
+        "notifyNotificationId": null,
+        "notifyReference": null,
+        "links": {
+          "deliveryRecord": "/admin/notification-commands/delivery-records?notificationKey=v1%3Aab5657e52267c26769cb5b4d8d94686da2a60c210b03c0fd7174e496e4868692",
+          "resends": "/admin/notification-commands/delivery-records?resendOfNotificationKey=v1%3Aab5657e52267c26769cb5b4d8d94686da2a60c210b03c0fd7174e496e4868692"
+        }
+      }
+    ]
+  }
+}

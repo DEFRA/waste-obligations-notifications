@@ -11,6 +11,148 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
 public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
 {
+    private const string ParentKey = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    [Theory]
+    [InlineData("accepted")]
+    [InlineData("suppressed")]
+    [InlineData("abandoned")]
+    public async Task WhenReplacementReachesTerminalOutcome_ShouldRetainParentThroughRetryAndSearch(string outcome)
+    {
+        await using var context = new AbandonmentContext();
+        await context.Initialise();
+        var token = TestContext.Current.CancellationToken;
+        var command = Command() with { IdempotencyKey = "resend:" + ParentKey, ResendOfNotificationKey = ParentKey };
+
+        if (outcome == "suppressed")
+        {
+            Assert.Equal(SuppressionClaimResult.Recorded, await context.Store.RecordSuppression(command, token));
+        }
+        else
+        {
+            Assert.Equal(DeliveryClaimResult.Claimed, await context.Store.Claim(command, "first-owner", 60, token));
+            Assert.Equal(ParentKey, (await context.Store.Inspect(command, token)).Record?.ResendOfNotificationKey);
+
+            await context.Records.UpdateOneAsync(
+                FilterDefinition<BsonDocument>.Empty,
+                new BsonDocument("$set", new BsonDocument("leaseExpiresAtUtc", DateTime.UnixEpoch)),
+                cancellationToken: token
+            );
+
+            if (outcome == "abandoned")
+            {
+                Assert.Equal(AbandonmentResult.Recorded, await context.Store.RecordAbandonment(command, token));
+                Assert.Equal(AbandonmentResult.AlreadyAbandoned, await context.Store.RecordAbandonment(command, token));
+            }
+            else
+            {
+                Assert.Equal(DeliveryClaimResult.Claimed, await context.Store.Claim(command, "retry-owner", 60, token));
+                Assert.True(
+                    await context.Store.RecordAcceptance(command, "retry-owner", Acceptance(context, command), token)
+                );
+            }
+        }
+
+        var record = await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token);
+        Assert.Equal(ParentKey, record["resendOfNotificationKey"].AsString);
+        Assert.Equal(ParentKey, (await context.Store.Inspect(command, token)).Record?.ResendOfNotificationKey);
+        Assert.Equal(
+            DeliveryClaimResult.TerminalDuplicate,
+            await context.Store.Claim(command, "later-owner", 60, token)
+        );
+        Assert.Equal(SuppressionClaimResult.TerminalDuplicate, await context.Store.RecordSuppression(command, token));
+        Assert.Equal(record, await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
+
+        var reader = new Administration.MongoDeliveryRecordSearchReader(
+            context.Client,
+            Options.Create(
+                new MongoDbOptions
+                {
+                    DatabaseUri = "mongodb://localhost:27017",
+                    DatabaseName = context.Database.DatabaseNamespace.DatabaseName,
+                }
+            ),
+            Options.Create(new Administration.CommandDlqAdministrationOptions())
+        );
+        var result = await reader.Search(
+            new Administration.DeliveryRecordSearchQuery { ResendOfNotificationKey = ParentKey },
+            token
+        );
+
+        Assert.Equal(ParentKey, Assert.Single(result.Records).ResendOfNotificationKey);
+        Assert.Empty(
+            (
+                await reader.Search(
+                    new Administration.DeliveryRecordSearchQuery { ResendOfNotificationKey = "different-parent" },
+                    token
+                )
+            ).Records
+        );
+        AssertPrivacy(command, record);
+    }
+
+    [Theory]
+    [InlineData("different")]
+    [InlineData("missing")]
+    [InlineData("array")]
+    [InlineData("number")]
+    public async Task WhenStoredParentConflicts_ShouldRefuseEveryMutationAndKeepHistory(string parent)
+    {
+        await using var context = new AbandonmentContext();
+        await context.Initialise();
+        var token = TestContext.Current.CancellationToken;
+        var command = Command() with { IdempotencyKey = "resend:" + ParentKey, ResendOfNotificationKey = ParentKey };
+        Assert.Equal(DeliveryClaimResult.Claimed, await context.Store.Claim(command, "owner", 60, token));
+        var record = await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token);
+        record["leaseExpiresAtUtc"] = DateTime.UnixEpoch;
+        if (parent == "missing")
+            record.Remove("resendOfNotificationKey");
+        else
+            record["resendOfNotificationKey"] = parent switch
+            {
+                "array" => new BsonArray { ParentKey },
+                "number" => new BsonInt32(42),
+                _ => new BsonString("v1:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"),
+            };
+        await context.Records.ReplaceOneAsync(FilterDefinition<BsonDocument>.Empty, record, cancellationToken: token);
+
+        Assert.Equal("immutable-conflict", (await context.Store.Inspect(command, token)).Classification);
+        Assert.Equal(DeliveryClaimResult.Conflict, await context.Store.Claim(command, "new-owner", 60, token));
+        Assert.Equal(SuppressionClaimResult.Conflict, await context.Store.RecordSuppression(command, token));
+        Assert.Equal(AbandonmentResult.Conflict, await context.Store.RecordAbandonment(command, token));
+        Assert.False(await context.Store.RecordAcceptance(command, "owner", Acceptance(context, command), token));
+        Assert.Equal(record, await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenOriginalParentIsMissingOrNull_ShouldRetainTerminalDuplicateProtection(bool explicitNull)
+    {
+        await using var context = new AbandonmentContext();
+        await context.Initialise();
+        var token = TestContext.Current.CancellationToken;
+        var command = Command();
+        Assert.Equal(AbandonmentResult.Recorded, await context.Store.RecordAbandonment(command, token));
+        if (explicitNull)
+            await context.Records.UpdateOneAsync(
+                FilterDefinition<BsonDocument>.Empty,
+                new BsonDocument("$set", new BsonDocument("resendOfNotificationKey", BsonNull.Value)),
+                cancellationToken: token
+            );
+        var before = await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token);
+
+        Assert.Equal(DeliveryClaimResult.TerminalDuplicate, await context.Store.Claim(command, "owner", 60, token));
+        Assert.Equal(SuppressionClaimResult.TerminalDuplicate, await context.Store.RecordSuppression(command, token));
+        Assert.Equal(AbandonmentResult.AlreadyAbandoned, await context.Store.RecordAbandonment(command, token));
+        Assert.Equal("delivery-abandoned", (await context.Store.Inspect(command, token)).Classification);
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            context.Store.Claim(command with { ResendOfNotificationKey = ParentKey }, "owner", 60, token)
+        );
+        Assert.Equal("Notification command resend metadata is inconsistent.", exception.Message);
+        Assert.Equal(before, await context.Records.Find(FilterDefinition<BsonDocument>.Empty).SingleAsync(token));
+    }
+
     [Fact]
     public async Task WhenThreeHostsAbandonNewCommand_ShouldCreateOneMinimalServerTimedTerminalRecord()
     {
@@ -310,6 +452,7 @@ public sealed class NotificationDeliveryAbandonmentTests : IntegrationTestBase
                 )
             );
         public IMongoDatabase Database => _client.GetDatabase(_databaseName);
+        public IMongoClient Client => _client;
         public IMongoCollection<BsonDocument> Records =>
             Database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
         public MongoNotificationDeliveryRecordStore Store => CreateStore();

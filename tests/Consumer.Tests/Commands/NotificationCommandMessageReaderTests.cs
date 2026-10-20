@@ -9,6 +9,75 @@ namespace Defra.WasteObligations.Consumer.Tests.Commands;
 public sealed class NotificationCommandMessageReaderTests
 {
     [Theory]
+    [InlineData(null)]
+    [InlineData("v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
+    public void WhenResendParentIsOptionalOpaqueKey_ShouldPreserveMetadata(string? parent)
+    {
+        var message = CreateMessage("\"2026-10-01T00:00:00Z\"");
+        message.Body = message.Body.Replace(
+            "\"personalisation\": {}",
+            $"\"personalisation\": {{}}, \"resendOfNotificationKey\": {JsonSerializer.Serialize(parent)}",
+            StringComparison.Ordinal
+        );
+        if (parent is not null)
+        {
+            message.Body = message.Body.Replace("key-1", "resend:" + parent, StringComparison.Ordinal);
+        }
+
+        var command = NotificationCommandMessageReader.Read(message);
+
+        Assert.Equal(parent, command.ResendOfNotificationKey);
+    }
+
+    [Theory]
+    [InlineData("key-1", true)]
+    [InlineData("resend:v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", false)]
+    [InlineData("resend:v1:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", true)]
+    [InlineData("Resend:v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", true)]
+    [InlineData("resend:", false)]
+    public void WhenResendIdentityDoesNotMatchParent_ShouldRejectWithoutExposingValues(
+        string idempotencyKey,
+        bool hasParent
+    )
+    {
+        const string parent = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        var message = CreateMessage("\"2026-10-01T00:00:00Z\"");
+        message.Body = message.Body.Replace("key-1", idempotencyKey, StringComparison.Ordinal);
+        if (hasParent)
+        {
+            message.Body = message.Body.Replace(
+                "\"personalisation\": {}",
+                $"\"personalisation\": {{}}, \"resendOfNotificationKey\": {JsonSerializer.Serialize(parent)}",
+                StringComparison.Ordinal
+            );
+        }
+
+        var exception = Assert.Throws<InvalidDataException>(() => NotificationCommandMessageReader.Read(message));
+
+        Assert.Equal("Notification command resend metadata is inconsistent.", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("private-parent@example.com")]
+    [InlineData("v2:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
+    [InlineData("v1:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef")]
+    [InlineData("v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde")]
+    public void WhenResendParentIsMalformed_ShouldRejectWithoutExposingValue(string parent)
+    {
+        var message = CreateMessage("\"2026-10-01T00:00:00Z\"");
+        message.Body = message.Body.Replace(
+            "\"personalisation\": {}",
+            $"\"personalisation\": {{}}, \"resendOfNotificationKey\": {JsonSerializer.Serialize(parent)}",
+            StringComparison.Ordinal
+        );
+
+        var exception = Assert.Throws<InvalidDataException>(() => NotificationCommandMessageReader.Read(message));
+
+        Assert.Equal("Notification command resendOfNotificationKey must be a valid opaque key.", exception.Message);
+    }
+
+    [Theory]
     [InlineData("2026-10-01T00:00:00.1234567Z", false)]
     [InlineData("2026-10-01T00:00:00.1234567+00:00", false)]
     [InlineData("2026-10-01T00:00:00.1234567-00:00", false)]

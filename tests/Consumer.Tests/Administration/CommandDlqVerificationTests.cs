@@ -9,6 +9,7 @@ using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Endpoints.Admin;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Tests.Helpers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
@@ -120,6 +121,8 @@ public sealed class CommandDlqVerificationTests
             fixture.Digest.CreateImmutableFieldsDigest(recorded),
             fixture.Digest.CreateImmutableFieldsDigest(wire)
         );
+
+        await response.VerifyResponse(scrubVerificationIdentity: true);
     }
 
     [Fact]

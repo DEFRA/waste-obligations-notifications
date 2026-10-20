@@ -1,0 +1,9 @@
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "idempotencyKey": "verification-<generated>",
+    "messageId": "confirmed-message"
+  }
+}

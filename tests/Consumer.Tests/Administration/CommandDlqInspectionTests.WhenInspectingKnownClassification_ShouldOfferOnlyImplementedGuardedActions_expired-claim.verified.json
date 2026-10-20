@@ -1,0 +1,53 @@
+﻿{
+  "statusCode": 200,
+  "contentType": "application/json; charset=utf-8",
+  "location": null,
+  "body": {
+    "messages": [
+      {
+        "idempotencyKey": "private-recipient@example.com",
+        "notificationType": "private-recipient@example.com",
+        "actionOccurredAtUtc": "2026-10-01T00:00:00+00:00",
+        "sentAtUtc": "2026-10-01T00:00:00+00:00",
+        "receiveCount": 3,
+        "failureClassification": "expired-claim",
+        "recipientDigest": "v1:04aba480afd3113d2e6a23584ee4b512a5ccbba4ec0dd32f1bb419f062d3aa51",
+        "recordedAtUtc": null,
+        "leaseExpiresAtUtc": null,
+        "selectionToken": "<opaque-selection-token>",
+        "messageId": "opaque-message-id",
+        "schemaVersion": 1,
+        "emailAddress": "private-recipient@example.com",
+        "templateId": "private-personalisation-template-notify",
+        "personalisation": {
+          "content": "private-personalisation-template-notify"
+        },
+        "operatorGuidance": "This is current evidence, not a historical failure cause or live Notify delivery status. The result is unconfirmed: pending evidence cannot distinguish Notify rejection, a lost response, a crash before sending or failed acceptance persistence. Check Notify using the original reference. If Notify confirms delivery, discard after the lease expires to prevent further attempts; if still processing, wait and inspect again. If rejection is confirmed, fix the cause, including credentials where applicable, before redrive. An inconclusive lookup leaves a duplicate-email risk; absence in Notify is not proof that no request was accepted. The lease has expired. After investigation, redrive to retry or discard to abandon further attempts. Abandonment does not undo an earlier uncertain request.",
+        "availableActions": [
+          {
+            "method": "POST",
+            "endpoint": "/admin/notification-commands/dlq/inspect",
+            "description": "Inspect again after investigation"
+          },
+          {
+            "method": "POST",
+            "endpoint": "/admin/notification-commands/dlq/redrive",
+            "description": "Retry after investigating the unconfirmed result"
+          },
+          {
+            "method": "POST",
+            "endpoint": "/admin/notification-commands/dlq/discard",
+            "description": "Abandon further attempts and remove the selected copy"
+          }
+        ],
+        "deliveryRecord": null,
+        "notifyNotificationId": null,
+        "notifyReference": "v1:9359b25251fae584e127300b04c1258d0a34e2d3f8a70ebb8b379a3eef40549b",
+        "links": {
+          "deliveryRecord": "/admin/notification-commands/delivery-records?notificationKey=v1%3Aab5657e52267c26769cb5b4d8d94686da2a60c210b03c0fd7174e496e4868692",
+          "resends": "/admin/notification-commands/delivery-records?resendOfNotificationKey=v1%3Aab5657e52267c26769cb5b4d8d94686da2a60c210b03c0fd7174e496e4868692"
+        }
+      }
+    ]
+  }
+}

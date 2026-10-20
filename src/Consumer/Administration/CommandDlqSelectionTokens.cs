@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Delivery;
 using Microsoft.Extensions.Options;
 
@@ -30,7 +31,9 @@ public sealed class CommandDlqSelectionTokens(
         string messageId,
         DateTimeOffset expiresAtUtc,
         string immutableFieldsDigest,
-        int maxNumberOfMessages = 1
+        int maxNumberOfMessages = 1,
+        string? notificationKey = null,
+        string? resendOfNotificationKey = null
     )
     {
         var selection = new CommandDlqSelection(
@@ -40,7 +43,9 @@ public sealed class CommandDlqSelectionTokens(
             expiresAtUtc,
             immutableFieldsDigest,
             administration.Value.SelectionLifetimeSeconds,
-            maxNumberOfMessages == 1 ? null : maxNumberOfMessages
+            maxNumberOfMessages == 1 ? null : maxNumberOfMessages,
+            notificationKey,
+            resendOfNotificationKey
         );
         var now = timeProvider.GetUtcNow();
         if (
@@ -52,6 +57,8 @@ public sealed class CommandDlqSelectionTokens(
         var payload = Encode(JsonSerializer.SerializeToUtf8Bytes(selection, s_jsonOptions));
 
         var version = maxNumberOfMessages == 1 ? "v2" : "v3";
+        if (notificationKey is not null)
+            version = "v4";
 
         return $"{version}.{payload}.{Encode(Sign($"selection-{version}", payload))}";
     }
@@ -65,16 +72,27 @@ public sealed class CommandDlqSelectionTokens(
             var parts = token.Split('.');
             if (
                 parts.Length != 3
-                || parts[0] is not ("v2" or "v3")
+                || parts[0] is not ("v2" or "v3" or "v4")
                 || !CryptographicOperations.FixedTimeEquals(Sign($"selection-{parts[0]}", parts[1]), Decode(parts[2]))
             )
                 return null;
             var selection = JsonSerializer.Deserialize<CommandDlqSelection>(Decode(parts[1]), s_jsonOptions);
 
-            var hasExpectedReplaySize =
-                parts[0] == "v2" ? selection?.MaxNumberOfMessages is null : selection?.MaxNumberOfMessages is not null;
+            if (selection is null)
+                return null;
 
-            return selection is not null && IsValid(selection) && hasExpectedReplaySize ? selection : null;
+            var hasExpectedReplaySize = parts[0] switch
+            {
+                "v2" => selection.MaxNumberOfMessages is null
+                    && selection.NotificationKey is null
+                    && selection.ResendOfNotificationKey is null,
+                "v3" => selection.MaxNumberOfMessages is not null
+                    && selection.NotificationKey is null
+                    && selection.ResendOfNotificationKey is null,
+                _ => selection.NotificationKey is not null,
+            };
+
+            return IsValid(selection) && hasExpectedReplaySize ? selection : null;
         }
         catch (Exception)
         {
@@ -89,6 +107,17 @@ public sealed class CommandDlqSelectionTokens(
         return Guid.TryParse(selection.ReceiveRequestAttemptId, out _)
             && selection.VisibilityTimeoutSeconds is > 0 and < 300
             && (selection.MaxNumberOfMessages is null or >= 2 and <= 10)
+            && (
+                selection.NotificationKey is null
+                || NotificationCommand.IsOpaqueNotificationKey(selection.NotificationKey)
+            )
+            && (
+                selection.ResendOfNotificationKey is null
+                || (
+                    selection.NotificationKey is not null
+                    && NotificationCommand.IsOpaqueNotificationKey(selection.ResendOfNotificationKey)
+                )
+            )
             && selection.MessageId is { Length: > 0 and <= 100 }
             && selection.QueueBinding == QueueBinding()
             && selection.ExpiresAtUtc.Offset == TimeSpan.Zero

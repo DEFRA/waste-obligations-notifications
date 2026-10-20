@@ -34,7 +34,7 @@ public sealed class DeliveryRecordSearchIndexMigrationTests : IntegrationTestBas
             Assert.True(await runner.CheckCompletion(token));
             Assert.True(await migration.ValidateSchema(database, token));
             var indexes = await ListIndexes(records, token);
-            Assert.Equal(5, indexes.Count);
+            Assert.Equal(6, indexes.Count);
             AssertIndex(indexes, RecordedIndexName, new BsonDocument { { RecordedAtField, -1 }, { "_id", -1 } });
             AssertIndex(
                 indexes,
@@ -68,10 +68,17 @@ public sealed class DeliveryRecordSearchIndexMigrationTests : IntegrationTestBas
             );
             await migration.DownAsync(context);
             await migration.DownAsync(context);
-            string[] remainingNames = ["_id_", "notificationKey_unique", "unrelated_type"];
+            string[] remainingNames =
+            [
+                "_id_",
+                "notificationKey_unique",
+                "resendOfNotificationKey_recordedAtUtc_id_desc",
+                "unrelated_type",
+            ];
             Assert.Equal(remainingNames, (await ListIndexes(records, token)).Select(index => index["name"].AsString));
             Assert.False(await migration.ValidateSchema(database, token));
             Assert.True(await new NotificationDeliveryRecordIndexes().ValidateSchema(database, token));
+            Assert.True(await new NotificationDeliveryRecordParentSearchIndex().ValidateSchema(database, token));
             Assert.True(completion.IsCompleted);
         }
         finally

@@ -8,6 +8,27 @@ namespace Defra.WasteObligations.Consumer.Tests.Delivery;
 public sealed class NotificationCommandDigestTests
 {
     [Fact]
+    public void WhenResendParentIsAdded_ShouldPreserveOriginalImmutableDigestAndIdentity()
+    {
+        var digest = CreateDigest();
+        var original = Command("{}");
+        var replacement = original with
+        {
+            ResendOfNotificationKey = "v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        };
+
+        Assert.Equal(digest.CreateImmutableFieldsDigest(original), digest.CreateImmutableFieldsDigest(replacement));
+        Assert.Equal(
+            digest.CreateIdempotencyKeyDigest(original.IdempotencyKey),
+            digest.CreateIdempotencyKeyDigest(replacement.IdempotencyKey)
+        );
+        Assert.Equal(
+            digest.CreateNotifyReference(original.IdempotencyKey),
+            digest.CreateNotifyReference(replacement.IdempotencyKey)
+        );
+    }
+
+    [Fact]
     public void WhenActionTimestampsDifferOnlyBelowMongoPrecision_ShouldPreserveImmutableDigest()
     {
         var digest = CreateDigest();

@@ -33,7 +33,7 @@ public sealed class CommandDlqRedriver(
         try
         {
             EnsureTimely(started, budget, selection, source.Token);
-            source.CancelAfter(budget - Stopwatch.GetElapsedTime(started));
+            source.CancelAfter(CommandDlqDeadline.RemainingDelay(started, budget));
             EnsureTimely(started, budget, selection, source.Token);
             var response = await sqs.ReceiveMessageAsync(
                 new ReceiveMessageRequest
@@ -96,7 +96,7 @@ public sealed class CommandDlqRedriver(
         try
         {
             EnsureTimely(started, budget, first, source.Token);
-            source.CancelAfter(budget - Stopwatch.GetElapsedTime(started));
+            source.CancelAfter(CommandDlqDeadline.RemainingDelay(started, budget));
             var response = await sqs.ReceiveMessageAsync(
                 new ReceiveMessageRequest
                 {
@@ -253,8 +253,6 @@ public sealed class CommandDlqRedriver(
             return null;
         }
 
-        return digest.CreateImmutableFieldsDigest(command) == selection.ImmutableFieldsDigest
-            ? (message, command)
-            : null;
+        return selection.Matches(command, digest) ? (message, command) : null;
     }
 }
