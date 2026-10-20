@@ -3,9 +3,9 @@ using System.IO.Compression;
 using System.Text;
 using Amazon.SQS;
 using Amazon.SQS.Model;
-using Defra.WasteObligations.Consumer.Cancellation;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Options;
@@ -18,10 +18,9 @@ public sealed class AnalyticsEventConsumer(
     IOptions<AnalyticsEventConsumerOptions> options,
     ILogger<AnalyticsEventConsumer> logger,
     ApplicationStartup startup,
-    SubmittedEmailProducer producer,
+    IEnumerable<IAnalyticsNotificationProducer> producers,
     INotificationCommandPublisher publisher,
-    INotificationCommandDigest digest,
-    CancellationEmailProducer cancellationProducer
+    INotificationCommandDigest digest
 ) : StartupBackgroundService(startup)
 {
     private const string ContentEncodingHeader = "Content-Encoding";
@@ -105,7 +104,8 @@ public sealed class AnalyticsEventConsumer(
             var declarationEntityId = SafeEntityId(analyticsEvent.EntityId);
             entityId = declarationEntityId ?? OpaqueCorrelation(analyticsEvent.EntityId);
 
-            if (analyticsEvent.IsSubmission || analyticsEvent.IsCancellation)
+            var producer = producers.SingleOrDefault(candidate => candidate.CanHandle(analyticsEvent));
+            if (producer is not null)
             {
                 // The enclosing catch reads this stage when event validation throws.
 #pragma warning disable S1854 // Sonar does not account for the helper's exceptional path.
@@ -126,15 +126,7 @@ public sealed class AnalyticsEventConsumer(
                 stage = "read-declaration";
 #pragma warning restore S1854
                 var commands = await RunBounded<IReadOnlyList<NotificationCommand>>(
-                    async token =>
-                        analyticsEvent.IsCancellation
-                            ? await cancellationProducer.Create(
-                                organisationId,
-                                id[5..].ToLowerInvariant(),
-                                version,
-                                token
-                            )
-                            : [await producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token)],
+                    token => producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token),
                     options.Value.ReadTimeoutSeconds,
                     stoppingToken
                 );
@@ -172,7 +164,7 @@ public sealed class AnalyticsEventConsumer(
     {
         if (
             declarationEntityId is null
-            || !analyticsEvent.SupportsSubmissionSchema
+            || !analyticsEvent.SupportsDeclarationSchema
             || analyticsEvent.Version is not > 0
             || analyticsEvent.OrganisationId is null
             || analyticsEvent.OrganisationId == Guid.Empty

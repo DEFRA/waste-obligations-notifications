@@ -1,5 +1,5 @@
 using Defra.WasteObligations.Consumer.IntegrationTests.Helpers;
-using Defra.WasteObligations.Consumer.Submission;
+using Defra.WasteObligations.Consumer.Notifications;
 using Microsoft.Extensions.Configuration;
 using Notify.Client;
 
@@ -23,15 +23,9 @@ public sealed class NotifySubmissionPreviewTests
     {
         var (configuration, key) = NotifyPreviewSettings.Load();
         var options =
-            configuration.GetSection(SubmissionOptions.SectionName).Get<SubmissionOptions>() ?? new SubmissionOptions();
-        var template = mapping switch
-        {
-            "DirectEnglishTemplateId" => options.DirectEnglishTemplateId,
-            "DirectWelshTemplateId" => options.DirectWelshTemplateId,
-            "SchemeEnglishTemplateId" => options.SchemeEnglishTemplateId,
-            "SchemeWelshTemplateId" => options.SchemeWelshTemplateId,
-            _ => throw new InvalidOperationException("Unknown submission template mapping."),
-        };
+            configuration.GetSection(NotificationDefinitionsOptions.SectionName).Get<NotificationDefinitionsOptions>()
+            ?? new NotificationDefinitionsOptions();
+        var template = options.GetTemplate(NotificationDefinitionsOptions.DeclarationSubmitted, mapping);
         string subject;
         string body;
         try

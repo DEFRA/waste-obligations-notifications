@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Cancellation;
 using Defra.WasteObligations.Consumer.IntegrationTests.Helpers;
+using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Microsoft.Extensions.Configuration;
 using Notify.Client;
@@ -42,20 +43,9 @@ public sealed class NotifyCancellationPreviewTests
     {
         var (configuration, key) = NotifyPreviewSettings.Load();
         var options =
-            configuration.GetSection(CancellationOptions.SectionName).Get<CancellationOptions>()
-            ?? new CancellationOptions();
-        var template = mapping switch
-        {
-            "NotSignedByCorrectPersonEn" => options.NotSignedByCorrectPersonEn,
-            "NotSignedByCorrectPersonCy" => options.NotSignedByCorrectPersonCy,
-            "RecyclingObligationsChangedEn" => options.RecyclingObligationsChangedEn,
-            "RecyclingObligationsChangedCy" => options.RecyclingObligationsChangedCy,
-            "CanMeetRecyclingObligationsEn" => options.CanMeetRecyclingObligationsEn,
-            "CanMeetRecyclingObligationsCy" => options.CanMeetRecyclingObligationsCy,
-            "ProducerRequestedEn" => options.ProducerRequestedEn,
-            "ProducerRequestedCy" => options.ProducerRequestedCy,
-            _ => throw new InvalidOperationException("Unknown cancellation template mapping."),
-        };
+            configuration.GetSection(NotificationDefinitionsOptions.SectionName).Get<NotificationDefinitionsOptions>()
+            ?? new NotificationDefinitionsOptions();
+        var template = options.GetTemplate(NotificationDefinitionsOptions.DeclarationCancelled, mapping);
         var declaration = new Declaration(
             "synthetic",
             1,

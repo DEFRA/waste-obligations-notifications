@@ -1,12 +1,26 @@
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Consumers;
+using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Submission;
 
-public sealed class SubmittedEmailProducer(IWasteObligationsClient reader, IOptions<SubmissionOptions> options)
+public sealed class SubmittedEmailProducer(
+    IWasteObligationsClient reader,
+    IOptions<NotificationDefinitionsOptions> options
+) : IAnalyticsNotificationProducer
 {
+    public bool CanHandle(AnalyticsEvent analyticsEvent) => analyticsEvent.IsSubmission;
+
+    async Task<IReadOnlyList<NotificationCommand>> IAnalyticsNotificationProducer.Create(
+        Guid organisationId,
+        string declarationId,
+        int eventVersion,
+        CancellationToken cancellationToken
+    ) => [await Create(organisationId, declarationId, eventVersion, cancellationToken)];
+
     private const string InvalidDeclarationData = "invalid-declaration-data";
 
     public async Task<Declaration> Read(
@@ -88,10 +102,22 @@ public sealed class SubmittedEmailProducer(IWasteObligationsClient reader, IOpti
             var regulator = Required(organisation.Regulator);
             var template = (scheme, welsh) switch
             {
-                (false, false) => options.Value.DirectEnglishTemplateId,
-                (false, true) => options.Value.DirectWelshTemplateId,
-                (true, false) => options.Value.SchemeEnglishTemplateId,
-                (true, true) => options.Value.SchemeWelshTemplateId,
+                (false, false) => options.Value.GetTemplate(
+                    NotificationDefinitionsOptions.DeclarationSubmitted,
+                    "DirectEnglishTemplateId"
+                ),
+                (false, true) => options.Value.GetTemplate(
+                    NotificationDefinitionsOptions.DeclarationSubmitted,
+                    "DirectWelshTemplateId"
+                ),
+                (true, false) => options.Value.GetTemplate(
+                    NotificationDefinitionsOptions.DeclarationSubmitted,
+                    "SchemeEnglishTemplateId"
+                ),
+                (true, true) => options.Value.GetTemplate(
+                    NotificationDefinitionsOptions.DeclarationSubmitted,
+                    "SchemeWelshTemplateId"
+                ),
             };
 
             var command = new NotificationCommand(

@@ -4,6 +4,7 @@ using Defra.WasteObligations.Consumer.Cancellation;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Services.AccountBackend;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
@@ -59,12 +60,12 @@ public sealed class CancellationPublicationDeadlineTests
                     new OrganisationPerson(null, "First", "Last", "submitter@example.test", "Approved Person"),
                 ])
             );
-        var submitted = new SubmittedEmailProducer(reader, Options.Create(new SubmissionOptions()));
+        var submitted = new SubmittedEmailProducer(reader, Options.Create(new NotificationDefinitionsOptions()));
         var cancellation = new CancellationEmailProducer(
             submitted,
             live,
             accounts,
-            Options.Create(new CancellationOptions())
+            Options.Create(new NotificationDefinitionsOptions())
         );
         var publisher = Substitute.For<INotificationCommandPublisher>();
         var latePredecessor = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -143,10 +144,9 @@ public sealed class CancellationPublicationDeadlineTests
             ),
             NullLogger<AnalyticsEventConsumer>.Instance,
             startup,
-            submitted,
+            [submitted, cancellation],
             publisher,
-            digest,
-            cancellation
+            digest
         );
         await consumer.StartAsync(TestContext.Current.CancellationToken);
         try

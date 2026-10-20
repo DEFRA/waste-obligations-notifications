@@ -167,10 +167,14 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                     ["WasteObligations:BaseAddress"] = "https://declaration.test/",
                     ["WasteObligations:Username"] = "isolated-reader",
                     ["WasteObligations:Password"] = "synthetic-read-secret",
-                    ["Submission:DirectEnglishTemplateId"] = "11111111-1111-4111-8111-111111111111",
-                    ["Submission:DirectWelshTemplateId"] = "22222222-2222-4222-8222-222222222222",
-                    ["Submission:SchemeEnglishTemplateId"] = "33333333-3333-4333-8333-333333333333",
-                    ["Submission:SchemeWelshTemplateId"] = "44444444-4444-4444-8444-444444444444",
+                    ["Notifications:Definitions:DeclarationSubmitted:Templates:DirectEnglishTemplateId"] =
+                        "11111111-1111-4111-8111-111111111111",
+                    ["Notifications:Definitions:DeclarationSubmitted:Templates:DirectWelshTemplateId"] =
+                        "22222222-2222-4222-8222-222222222222",
+                    ["Notifications:Definitions:DeclarationSubmitted:Templates:SchemeEnglishTemplateId"] =
+                        "33333333-3333-4333-8333-333333333333",
+                    ["Notifications:Definitions:DeclarationSubmitted:Templates:SchemeWelshTemplateId"] =
+                        "44444444-4444-4444-8444-444444444444",
                     ["NotificationCommandDelivery:QueueUrl"] = fixture.Sqs.CommandUrl,
                     ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2026-09-01T00:00:00Z",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "isolated-submission-evidence-secret",

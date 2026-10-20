@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Cancellation;
+using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Services.AccountBackend;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
@@ -405,12 +406,12 @@ public sealed class CancellationEmailProducerTests
             Live.Read(OrganisationId, Arg.Any<CancellationToken>())
                 .Returns(new LiveOrganisation(OrganisationId, country, "AB123456"));
             Accounts.ReadOrganisationWithPersons(OrganisationId, Arg.Any<CancellationToken>()).Returns(_ => Persons);
-            Submitted = new SubmittedEmailProducer(Reader, Options.Create(new SubmissionOptions()));
+            Submitted = new SubmittedEmailProducer(Reader, Options.Create(new NotificationDefinitionsOptions()));
             _producer = new CancellationEmailProducer(
                 Submitted,
                 Live,
                 Accounts,
-                Options.Create(new CancellationOptions())
+                Options.Create(new NotificationDefinitionsOptions())
             );
         }
 

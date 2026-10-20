@@ -2,6 +2,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Consumers;
+using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Services.AccountBackend;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
@@ -14,9 +16,11 @@ public sealed class CancellationEmailProducer(
     SubmittedEmailProducer submitted,
     IWasteOrganisationsClient organisations,
     IAccountBackendClient accounts,
-    IOptions<CancellationOptions> options
-)
+    IOptions<NotificationDefinitionsOptions> options
+) : IAnalyticsNotificationProducer
 {
+    public bool CanHandle(AnalyticsEvent analyticsEvent) => analyticsEvent.IsCancellation;
+
     public async Task<IReadOnlyList<NotificationCommand>> Create(
         Guid organisationId,
         string declarationId,
@@ -198,14 +202,38 @@ public sealed class CancellationEmailProducer(
 
         return (family, welsh) switch
         {
-            ("not-signed-by-correct-person", false) => mappings.NotSignedByCorrectPersonEn,
-            ("not-signed-by-correct-person", true) => mappings.NotSignedByCorrectPersonCy,
-            ("recycling-obligations-changed", false) => mappings.RecyclingObligationsChangedEn,
-            ("recycling-obligations-changed", true) => mappings.RecyclingObligationsChangedCy,
-            ("can-meet-recycling-obligations", false) => mappings.CanMeetRecyclingObligationsEn,
-            ("can-meet-recycling-obligations", true) => mappings.CanMeetRecyclingObligationsCy,
-            ("producer-requested", false) => mappings.ProducerRequestedEn,
-            ("producer-requested", true) => mappings.ProducerRequestedCy,
+            ("not-signed-by-correct-person", false) => mappings.GetTemplate(
+                NotificationDefinitionsOptions.DeclarationCancelled,
+                "NotSignedByCorrectPersonEn"
+            ),
+            ("not-signed-by-correct-person", true) => mappings.GetTemplate(
+                NotificationDefinitionsOptions.DeclarationCancelled,
+                "NotSignedByCorrectPersonCy"
+            ),
+            ("recycling-obligations-changed", false) => mappings.GetTemplate(
+                NotificationDefinitionsOptions.DeclarationCancelled,
+                "RecyclingObligationsChangedEn"
+            ),
+            ("recycling-obligations-changed", true) => mappings.GetTemplate(
+                NotificationDefinitionsOptions.DeclarationCancelled,
+                "RecyclingObligationsChangedCy"
+            ),
+            ("can-meet-recycling-obligations", false) => mappings.GetTemplate(
+                NotificationDefinitionsOptions.DeclarationCancelled,
+                "CanMeetRecyclingObligationsEn"
+            ),
+            ("can-meet-recycling-obligations", true) => mappings.GetTemplate(
+                NotificationDefinitionsOptions.DeclarationCancelled,
+                "CanMeetRecyclingObligationsCy"
+            ),
+            ("producer-requested", false) => mappings.GetTemplate(
+                NotificationDefinitionsOptions.DeclarationCancelled,
+                "ProducerRequestedEn"
+            ),
+            ("producer-requested", true) => mappings.GetTemplate(
+                NotificationDefinitionsOptions.DeclarationCancelled,
+                "ProducerRequestedCy"
+            ),
             _ => throw new InvalidOperationException("Cancellation family invalid"),
         };
     }

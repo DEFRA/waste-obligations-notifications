@@ -25,7 +25,7 @@ public sealed record AnalyticsEvent(
         && BeforeStatus is "Submitted" or "Accepted"
         && AfterStatus == "Cancelled";
 
-    public bool SupportsSubmissionSchema =>
+    public bool SupportsDeclarationSchema =>
         SchemaVersion is { } schema
         && schema.StartsWith(SchemaPrefix, StringComparison.Ordinal)
         && System.Version.TryParse(schema[SchemaPrefix.Length..], out var version)

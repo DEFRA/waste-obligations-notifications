@@ -7,6 +7,7 @@ using Defra.WasteObligations.Consumer.Cancellation;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Services.AccountBackend;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
@@ -582,15 +583,13 @@ public sealed class SubmittedEmailConsumerTests
         )
         {
             _failDelete = failDelete;
-            var submission = Options.Create(
-                new SubmissionOptions
-                {
-                    DirectEnglishTemplateId = DirectEnglish,
-                    DirectWelshTemplateId = DirectWelsh,
-                    SchemeEnglishTemplateId = SchemeEnglish,
-                    SchemeWelshTemplateId = SchemeWelsh,
-                }
-            );
+            var definitions = new NotificationDefinitionsOptions();
+            var templates = definitions.Definitions[NotificationDefinitionsOptions.DeclarationSubmitted].Templates;
+            templates["DirectEnglishTemplateId"] = DirectEnglish;
+            templates["DirectWelshTemplateId"] = DirectWelsh;
+            templates["SchemeEnglishTemplateId"] = SchemeEnglish;
+            templates["SchemeWelshTemplateId"] = SchemeWelsh;
+            var submission = Options.Create(definitions);
             _http = new HttpClient(
                 new Handler(
                     (request, token) =>
@@ -688,18 +687,20 @@ public sealed class SubmittedEmailConsumerTests
                 ),
                 Logs,
                 startup,
-                _producer,
-                _publisher,
-                Digest,
-                new CancellationEmailProducer(
-                    new SubmittedEmailProducer(
-                        Substitute.For<IWasteObligationsClient>(),
-                        Options.Create(new SubmissionOptions())
+                [
+                    _producer,
+                    new CancellationEmailProducer(
+                        new SubmittedEmailProducer(
+                            Substitute.For<IWasteObligationsClient>(),
+                            Options.Create(new NotificationDefinitionsOptions())
+                        ),
+                        Substitute.For<IWasteOrganisationsClient>(),
+                        Substitute.For<IAccountBackendClient>(),
+                        Options.Create(new NotificationDefinitionsOptions())
                     ),
-                    Substitute.For<IWasteOrganisationsClient>(),
-                    Substitute.For<IAccountBackendClient>(),
-                    Options.Create(new CancellationOptions())
-                )
+                ],
+                _publisher,
+                Digest
             );
             await consumer.StartAsync(TestContext.Current.CancellationToken);
             await complete.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
