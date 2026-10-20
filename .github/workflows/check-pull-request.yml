@@ -92,7 +92,7 @@ jobs:
         run: |
           docker compose up -d --wait
           dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj --no-restore
-          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/Consumer.IntegrationTests -- --filter-not-class '*Notify*PreviewTests' --report-trx --report-trx-filename Consumer.IntegrationTests.trx
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/Consumer.IntegrationTests -- --filter-not-class '*PreviewTests' --report-trx --report-trx-filename Consumer.IntegrationTests.trx
       - name: Docker Compose logs
         if: ${{ always() && steps.prerequisites.outcome == 'success' }}
         run: docker compose logs
@@ -124,7 +124,7 @@ jobs:
           NOTIFY_PREVIEWS_REQUIRED: "1"
         run: |
           rm -rf TestResults/NotifyPreviews
-          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifyPreviews -- --filter-class '*Notify*PreviewTests' --report-trx --report-trx-filename NotifyPreviews.trx
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifyPreviews -- --filter-class '*PreviewTests' --report-trx --report-trx-filename NotifyPreviews.trx
           python3 scripts/require-notify-previews.py TestResults/NotifyPreviews/NotifyPreviews.trx
       - name: Upload CI reports
         if: always()

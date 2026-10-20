@@ -220,7 +220,7 @@ GovukNotify_ApiKey=replace-with-your-private-notify-key
 ```
 
 ```bash
-dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build -- --filter-class '*Notify*PreviewTests'
+dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build -- --filter-class '*PreviewTests'
 ```
 
 Direct preview execution falls back to `.env` when `GOVUKNOTIFY_APIKEY` is absent.
