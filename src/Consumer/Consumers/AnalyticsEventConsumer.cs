@@ -107,7 +107,10 @@ public sealed class AnalyticsEventConsumer(
 
             if (analyticsEvent.IsSubmission || analyticsEvent.IsCancellation)
             {
+                // The enclosing catch reads this stage when event validation throws.
+#pragma warning disable S1854 // Sonar does not account for the helper's exceptional path.
                 stage = "validate-event";
+#pragma warning restore S1854
                 var (version, organisationId) = ValidateEvent(analyticsEvent, declarationEntityId);
 
                 var id = analyticsEvent.EntityId;
