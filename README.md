@@ -93,7 +93,8 @@ template change for a replayable intention can cause an immutable-command confli
 
 Extended health authenticates downstream endpoints but does not prove deployed
 Read privileges or the declaration version/identity contract. Validate those
-separately before activation; see [health registrations](src/Consumer/Utils/Health/ServiceCollectionExtensions.cs).
+separately before activation; see the [Account registration](src/Consumer/Services/AccountBackend/ServiceCollectionExtensions.cs)
+and [Waste Organisations registration](src/Consumer/Services/WasteOrganisations/ServiceCollectionExtensions.cs).
 
 ### Command delivery and administration
 
@@ -218,7 +219,7 @@ Image/security checks run before previews. The
 [preview guard](scripts/require-notify-previews.py) defines required cases and the
 [workflow](.github/workflows/check-pull-request.yml) defines report handling.
 Keep isolated integration and provider-preview results separate; counts come
-from TRX evidence and repeated preview identities are counted once.
+from TRX evidence. The report and guard reject duplicate preview identities.
 
 For local previews, privately replace the placeholder in the ignored root `.env`
 (also excluded from Docker inputs):

@@ -495,13 +495,26 @@ public sealed class SubmittedEmailConsumerTests
     }
 
     [Theory]
-    [InlineData("schema")]
-    [InlineData("malformed-schema")]
-    [InlineData("version")]
-    [InlineData("organisation")]
-    public async Task WhenMatchingSubmissionEventIsInvalid_ShouldRetainWithoutReadingOrPublishing(string fault)
+    [InlineData("schema", false)]
+    [InlineData("malformed-schema", false)]
+    [InlineData("version", false)]
+    [InlineData("organisation", false)]
+    [InlineData("schema", true)]
+    [InlineData("version", true)]
+    [InlineData("organisation", true)]
+    public async Task WhenMatchingAnalyticsEventIsInvalid_ShouldRetainWithoutReadingOrPublishing(
+        string fault,
+        bool cancellation
+    )
     {
         var body = Event("01JZ8RXBMTY2K15SJB3PCFN3D5");
+        if (cancellation)
+            body = body.Replace("submission.created", "submission.amended", StringComparison.Ordinal)
+                .Replace(
+                    "\"after\":{\"organisation\":",
+                    "\"before\":{\"status\":\"Submitted\"},\"after\":{\"status\":\"Cancelled\",\"organisation\":",
+                    StringComparison.Ordinal
+                );
         body = fault switch
         {
             "schema" => body.Replace(
@@ -690,10 +703,7 @@ public sealed class SubmittedEmailConsumerTests
                 [
                     _producer,
                     new CancellationEmailProducer(
-                        new SubmittedEmailProducer(
-                            Substitute.For<IWasteObligationsClient>(),
-                            Options.Create(new NotificationDefinitionsOptions())
-                        ),
+                        _producer,
                         Substitute.For<IWasteOrganisationsClient>(),
                         Substitute.For<IAccountBackendClient>(),
                         Options.Create(new NotificationDefinitionsOptions())

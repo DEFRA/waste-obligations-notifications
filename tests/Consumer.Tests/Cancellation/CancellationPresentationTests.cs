@@ -41,6 +41,27 @@ public sealed class CancellationPresentationTests
         Assert.False(result.TryGetProperty("regulator_cy", out _));
     }
 
+    [Fact]
+    public void WhenWelshRegulatorIsNotNaturalResourcesWales_ShouldOmitWelshRegulatorName()
+    {
+        var declaration = new Declaration(
+            "id",
+            1,
+            2026,
+            new DeclarationOrganisation("org", "GB-WLS", "DirectProducer", "EA", "regulator@example.test"),
+            []
+        );
+
+        var result = CancellationPresentation.Create(
+            declaration,
+            true,
+            new CancellationRecipient("recipient@example.test", "First", "Last")
+        );
+
+        Assert.Equal("The Environment Agency", result.GetProperty("regulator").GetString());
+        Assert.False(result.TryGetProperty("regulator_cy", out _));
+    }
+
     [Theory]
     [InlineData(
         "DirectProducer",

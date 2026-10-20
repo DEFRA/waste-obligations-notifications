@@ -59,15 +59,21 @@ public sealed class CancellationDependencyRegistrationTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void WhenWasteOrganisationsCredentialsAreBound_ShouldRequireUsernameAndPassword(bool legacyNames)
+    [InlineData(false, "https://organisations.test/", true)]
+    [InlineData(true, "https://organisations.test/", false)]
+    [InlineData(false, "http://organisations.test/", false)]
+    [InlineData(false, "http://localhost:8082/", true)]
+    public void WhenWasteOrganisationsAccessIsBound_ShouldRequireNamedCredentialsAndSecureAddress(
+        bool legacyNames,
+        string address,
+        bool valid
+    )
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(
                 new Dictionary<string, string?>
                 {
-                    ["WasteOrganisations:BaseAddress"] = "https://organisations.test/",
+                    ["WasteOrganisations:BaseAddress"] = address,
                     [$"WasteOrganisations:{(legacyNames ? "ClientId" : "Username")}"] = "user",
                     [$"WasteOrganisations:{(legacyNames ? "ClientSecret" : "Password")}"] = "secret",
                 }
@@ -82,7 +88,7 @@ public sealed class CancellationDependencyRegistrationTests
         services.AddWasteOrganisationsClient(configuration);
         using var provider = services.BuildServiceProvider();
 
-        if (legacyNames)
+        if (!valid)
             Assert.Throws<OptionsValidationException>(() =>
                 provider.GetRequiredService<IOptions<WasteOrganisationsOptions>>().Value
             );

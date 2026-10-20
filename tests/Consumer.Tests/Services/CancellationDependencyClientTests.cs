@@ -121,6 +121,20 @@ public sealed class CancellationDependencyClientTests
     }
 
     [Fact]
+    public async Task WhenLiveOrganisationReturnsNotFound_ShouldReturnNoOrganisation()
+    {
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send = (_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var http = send.CreateHttpStub();
+        var client = new WasteOrganisationsClient(
+            http,
+            Options.Create(new WasteOrganisationsOptions { Username = "user", Password = "secret" })
+        );
+
+        Assert.Null(await client.Read(Guid.NewGuid(), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task WhenCheckingDependencies_ShouldAuthenticateExpectedHealthPaths()
     {
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send = (request, token) =>

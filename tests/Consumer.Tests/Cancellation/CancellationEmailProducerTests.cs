@@ -116,6 +116,45 @@ public sealed class CancellationEmailProducerTests
     }
 
     [Fact]
+    public async Task WhenPersistedCountryIsWelshButLiveCountryIsEnglish_ShouldUseEnglishCancellationAndWelshPredecessor()
+    {
+        var fixture = new Fixture(country: "GB-ENG");
+        fixture.Declaration = fixture.Declaration with
+        {
+            Organisation = fixture.Declaration.Organisation! with { BusinessCountry = "GB-WLS" },
+        };
+
+        var commands = await fixture.Create();
+
+        Assert.Equal(2, commands.Count);
+        Assert.Equal("b3223b0b-a467-40c1-9150-f78b76d11fd8", commands[0].TemplateId);
+        Assert.Equal("3e03c93f-955c-4db3-936c-bfa3f7725a5f", commands[1].TemplateId);
+        Assert.False(commands[1].Personalisation.TryGetProperty("regulator_cy", out _));
+    }
+
+    [Fact]
+    public async Task WhenLiveOrganisationIsNotFound_ShouldFailBeforeAccountLookup()
+    {
+        var fixture = new Fixture();
+        fixture
+            .Live.Read(Fixture.OrganisationId, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<LiveOrganisation?>(null));
+
+        var error = await Assert.ThrowsAsync<SubmissionProcessingException>(fixture.Create);
+
+        Assert.Equal("organisation-not-found", error.Reason);
+        await fixture
+            .Accounts.DidNotReceive()
+            .ReadOrganisationWithPersons(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
+        await fixture
+            .Accounts.DidNotReceive()
+            .SearchOrganisationsByCompaniesHouseNumbers(
+                Arg.Any<IReadOnlyCollection<string>>(),
+                Arg.Any<CancellationToken>()
+            );
+    }
+
+    [Fact]
     public async Task WhenLiveIdentityDiffers_ShouldFailBeforeAccountLookup()
     {
         var fixture = new Fixture();
@@ -209,6 +248,41 @@ public sealed class CancellationEmailProducerTests
         Assert.Equal("submitter@example.test", command.EmailAddress);
         Assert.Equal(" Saved ", command.Personalisation.GetProperty("firstName").GetString());
         Assert.Equal(" Name ", command.Personalisation.GetProperty("lastName").GetString());
+    }
+
+    [Fact]
+    public async Task WhenSubmitterMatchesOnlyByEmailWithDifferentCase_ShouldKeepSavedRecipientAndAccountNames()
+    {
+        var fixture = new Fixture();
+        fixture.Persons = new OrganisationWithPersons([
+            new OrganisationPerson(null, " Email ", " Match ", "sUbMiTtEr@EXAMPLE.TEST", "Other"),
+        ]);
+
+        var commands = await fixture.Create();
+
+        Assert.Equal(2, commands.Count);
+        Assert.Equal("submitter@example.test", commands[1].EmailAddress);
+        Assert.Equal(" Email ", commands[1].Personalisation.GetProperty("firstName").GetString());
+        Assert.Equal(" Match ", commands[1].Personalisation.GetProperty("lastName").GetString());
+    }
+
+    [Fact]
+    public async Task WhenAddressCaseWouldChangeOrdinalOrder_ShouldSortIgnoringCaseBeforeNormalising()
+    {
+        var fixture = new Fixture();
+        var audit = fixture.Declaration.Audit!.ToArray();
+        audit[0] = audit[0] with { User = audit[0].User! with { Email = " a@example.test " } };
+        fixture.Declaration = fixture.Declaration with { Audit = audit };
+        fixture.Persons = new OrganisationWithPersons([
+            Fixture.Submitter(),
+            new OrganisationPerson(null, "Primary", "Person", " Z@example.test ", "Approved Person"),
+        ]);
+
+        var commands = await fixture.Create();
+
+        Assert.Equal(3, commands.Count);
+        Assert.Equal("a@example.test", commands[1].EmailAddress);
+        Assert.Equal("z@example.test", commands[2].EmailAddress);
     }
 
     [Fact]
