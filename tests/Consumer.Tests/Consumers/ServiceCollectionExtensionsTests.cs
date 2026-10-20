@@ -28,6 +28,24 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void WhenDefinitionAndTemplateOverrideUseUppercaseKeys_ShouldReplaceTheDefaultMapping()
+    {
+        var configuration = CreateConfiguration();
+        const string template = "11111111-1111-4111-8111-111111111111";
+        configuration["Notifications:Definitions:DECLARATIONSUBMITTED:Templates:DIRECTENGLISHTEMPLATEID"] = template;
+        using var provider = new ServiceCollection().AddAnalyticsEventConsumer(configuration).BuildServiceProvider();
+
+        var options = provider.GetRequiredService<IOptions<NotificationDefinitionsOptions>>().Value;
+
+        Assert.Equal(
+            template,
+            options.GetTemplate(NotificationDefinitionsOptions.DeclarationSubmitted, "DirectEnglishTemplateId")
+        );
+        Assert.Equal(2, options.Definitions.Count);
+        Assert.Equal(4, options.Definitions[NotificationDefinitionsOptions.DeclarationSubmitted].Templates.Count);
+    }
+
+    [Fact]
     public void WhenRequiredTemplateIsRemoved_ShouldRejectTheDefinition()
     {
         var options = new NotificationDefinitionsOptions();

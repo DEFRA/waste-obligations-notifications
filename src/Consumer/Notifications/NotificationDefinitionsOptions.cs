@@ -2,7 +2,7 @@ namespace Defra.WasteObligations.Consumer.Notifications;
 
 public sealed class NotificationDefinition
 {
-    public Dictionary<string, string> Templates { get; init; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string> Templates { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class NotificationDefinitionsOptions
@@ -27,11 +27,11 @@ public sealed class NotificationDefinitionsOptions
             );
 
     private static Dictionary<string, NotificationDefinition> CreateDefaults() =>
-        new(StringComparer.Ordinal)
+        new(StringComparer.OrdinalIgnoreCase)
         {
             [DeclarationSubmitted] = new()
             {
-                Templates = new(StringComparer.Ordinal)
+                Templates = new(StringComparer.OrdinalIgnoreCase)
                 {
                     ["DirectEnglishTemplateId"] = "5f64e3bd-d454-4a45-a9c6-9409bf940d7a",
                     ["DirectWelshTemplateId"] = "b3223b0b-a467-40c1-9150-f78b76d11fd8",
@@ -41,7 +41,7 @@ public sealed class NotificationDefinitionsOptions
             },
             [DeclarationCancelled] = new()
             {
-                Templates = new(StringComparer.Ordinal)
+                Templates = new(StringComparer.OrdinalIgnoreCase)
                 {
                     ["NotSignedByCorrectPersonEn"] = "1502cfa2-9758-4410-b189-d1f95a7c774f",
                     ["NotSignedByCorrectPersonCy"] = "7cab1c5e-9edf-4139-b3fd-3db4bcf3041d",
