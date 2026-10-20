@@ -19,7 +19,6 @@ class CiReportTests(unittest.TestCase):
         self.script = "\n".join(
             line[10:] for line in section.split("        run: |\n", 1)[1].splitlines()
         )
-        self.write_report("NotifyCancellationPreviews", [("CancellationPreview", "Passed")])
 
     def write_report(self, name, cases, assembly=""):
         report = self.root / "TestResults" / name / f"{name}.trx"
@@ -50,77 +49,58 @@ class CiReportTests(unittest.TestCase):
                        check=True, capture_output=True, text=True)
         return (self.root / "ci-report.md").read_text()
 
-    def test_combines_previews_once_using_stable_identities(self):
-        self.write_report("Consumer.IntegrationTests", [("Journey", "Passed"), ("Preview", "NotExecuted")], ", Assembly, Version=1.0")
-        self.write_report("NotifySubmissionPreviews", [("Preview", "Passed")], ", Assembly, Version=2.0")
+    def test_integration_and_preview_results_are_separate(self):
+        self.write_report("Consumer.IntegrationTests", [("Journey", "Passed")])
+        self.write_report("NotifyPreviews", [("SubmissionPreview", "Passed"), ("CancellationPreview", "Passed")])
         report = self.render()
-        self.assertIn("| Integration tests (including Notify previews) | ✅ 3/3 passed |", report)
-        self.assertIn("| Isolated integration tests | ⚠️ 1/2 passed, 1 skipped |", report)
-        self.assertIn("| Notify submission previews | ✅ 1/1 passed |", report)
-        self.assertIn("| Notify cancellation previews | ✅ 1/1 passed |", report)
-
-    def test_cancellation_preview_repeats_count_once_and_preview_only_cases_are_included(self):
-        self.write_report("Consumer.IntegrationTests", [("Journey", "Passed"), ("SubmissionPreview", "NotExecuted"), ("CancellationPreview", "NotExecuted")])
-        self.write_report("NotifySubmissionPreviews", [("SubmissionPreview", "Passed")])
-        self.write_report("NotifyCancellationPreviews", [("CancellationPreview", "Passed"), ("CancellationOnly", "Passed")])
-        self.assertIn("| Integration tests (including Notify previews) | ✅ 4/4 passed |", self.render())
+        self.assertIn("| Integration tests | ✅ 1/1 passed |", report)
+        self.assertIn("| Preview tests | ✅ 2/2 passed |", report)
+        self.assertNotIn("including Notify previews", report)
+        self.assertNotIn("Notify submission previews", report)
+        self.assertNotIn("Notify cancellation previews", report)
 
     def test_inconsistent_individual_counters_never_report_success(self):
-        self.write_report("Consumer.IntegrationTests", [("Journey", "Passed")])
-        report = self.write_report("NotifySubmissionPreviews", [("Preview", "Passed")])
+        report = self.write_report("NotifyPreviews", [("Preview", "Passed")])
         root = ET.parse(report).getroot()
         root.find("{*}ResultSummary/{*}Counters").set("failed", "1")
         ET.ElementTree(root).write(report)
+        self.assertIn("| Preview tests | ⚪ Results unavailable (invalid TRX evidence) |", self.render())
 
-        self.assertIn("| Notify submission previews | ⚪ Results unavailable (invalid TRX evidence) |", self.render())
+    def test_count_grows_from_report_evidence(self):
+        self.write_report("Consumer.IntegrationTests", [(f"Journey{i}", "Passed") for i in range(3)])
+        self.write_report("NotifyPreviews", [(f"Preview{i}", "Passed") for i in range(7)])
+        report = self.render()
+        self.assertIn("| Integration tests | ✅ 3/3 passed |", report)
+        self.assertIn("| Preview tests | ✅ 7/7 passed |", report)
 
-    def test_missing_or_invalid_cancellation_evidence_is_unavailable(self):
-        self.write_report("Consumer.IntegrationTests", [("Journey", "Passed")])
-        self.write_report("NotifySubmissionPreviews", [("Preview", "Passed")])
-        report = self.root / "TestResults/NotifyCancellationPreviews/NotifyCancellationPreviews.trx"
-        report.unlink()
-        self.assertIn("Combined integration results unavailable", self.render())
-        report.write_text("<broken")
-        self.assertIn("Combined integration results unavailable", self.render())
-
-    def test_count_grows_with_new_and_preview_only_cases(self):
-        self.write_report("Consumer.IntegrationTests", [("Journey", "Passed")] + [(f"Preview{i}", "NotExecuted") for i in range(6)])
-        self.write_report("NotifySubmissionPreviews", [(f"Preview{i}", "Passed") for i in range(7)])
-        self.assertIn("| Integration tests (including Notify previews) | ✅ 9/9 passed |", self.render())
-
-    def test_preserves_adverse_isolated_outcomes_after_successful_preview(self):
+    def test_adverse_outcomes_and_skips_remain_visible_in_their_own_rows(self):
         for outcome in ("Failed", "Error", "Timeout", "Aborted", "Unknown"):
             with self.subTest(outcome=outcome):
-                self.write_report("Consumer.IntegrationTests", [("Preview", outcome)])
-                self.write_report("NotifySubmissionPreviews", [("Preview", "Passed")])
-                self.assertIn("❌ 1/2 passed, 1 failed", self.render())
-
-    def test_preview_failure_overrides_an_isolated_pass(self):
-        self.write_report("Consumer.IntegrationTests", [("Preview", "Passed")])
-        self.write_report("NotifySubmissionPreviews", [("Preview", "Failed")])
-        self.assertIn("❌ 1/2 passed, 1 failed", self.render())
-
-    def test_unrelated_skips_remain_visible(self):
-        self.write_report("Consumer.IntegrationTests", [("Other", "NotExecuted"), ("Preview", "NotExecuted")])
-        self.write_report("NotifySubmissionPreviews", [("Preview", "Passed")])
-        self.assertIn("⚠️ 2/3 passed, 1 skipped", self.render())
+                self.write_report("Consumer.IntegrationTests", [("Journey", outcome)])
+                self.write_report("NotifyPreviews", [("Preview", "Passed")])
+                report = self.render()
+                self.assertIn("| Integration tests | ❌ 0/1 passed, 1 failed |", report)
+                self.assertIn("| Preview tests | ✅ 1/1 passed |", report)
+        self.write_report("Consumer.IntegrationTests", [("Journey", "NotExecuted")])
+        self.write_report("NotifyPreviews", [("Preview", "Failed")])
+        report = self.render()
+        self.assertIn("| Integration tests | ⚠️ 0/1 passed, 1 skipped |", report)
+        self.assertIn("| Preview tests | ❌ 0/1 passed, 1 failed |", report)
 
     def test_missing_or_invalid_evidence_never_reports_all_passed(self):
-        self.write_report("Consumer.IntegrationTests", [("Journey", "Passed")])
-        self.assertIn("Combined integration results unavailable", self.render())
-        preview = self.write_report("NotifySubmissionPreviews", [])
-        self.assertIn("Combined integration results unavailable", self.render())
+        self.assertIn("| Preview tests | ⚪ Not run |", self.render())
+        preview = self.write_report("NotifyPreviews", [])
+        self.assertIn("| Preview tests | ⚪ Results unavailable", self.render())
         preview.write_text("<broken")
-        self.assertIn("Combined integration results unavailable", self.render())
+        self.assertIn("| Preview tests | ⚪ Results unavailable", self.render())
         preview.write_text("<TestRun><ResultSummary><Counters total='1'/></ResultSummary></TestRun>")
-        self.assertIn("Combined integration results unavailable", self.render())
+        self.assertIn("| Preview tests | ⚪ Results unavailable", self.render())
 
     def test_duplicate_identities_and_missing_methods_are_rejected(self):
-        self.write_report("Consumer.IntegrationTests", [("Journey", "Passed")])
-        preview = self.write_report("NotifySubmissionPreviews", [("Preview", "Failed"), ("Preview", "Passed")])
-        self.assertIn("Combined integration results unavailable", self.render())
+        preview = self.write_report("NotifyPreviews", [("Preview", "Failed"), ("Preview", "Passed")])
+        self.assertIn("| Preview tests | ⚪ Results unavailable", self.render())
         preview.write_text(preview.read_text().replace("TestMethod", "MissingMethod"))
-        self.assertIn("Combined integration results unavailable", self.render())
+        self.assertIn("| Preview tests | ⚪ Results unavailable", self.render())
 
 
 if __name__ == "__main__":

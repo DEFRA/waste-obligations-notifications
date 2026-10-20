@@ -92,7 +92,7 @@ jobs:
         run: |
           docker compose up -d --wait
           dotnet build tests/Consumer.IntegrationTests/Consumer.IntegrationTests.csproj --no-restore
-          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/Consumer.IntegrationTests -- --report-trx --report-trx-filename Consumer.IntegrationTests.trx
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/Consumer.IntegrationTests -- --filter-not-class '*Notify*PreviewTests' --report-trx --report-trx-filename Consumer.IntegrationTests.trx
       - name: Docker Compose logs
         if: ${{ always() && steps.prerequisites.outcome == 'success' }}
         run: docker compose logs
@@ -118,22 +118,14 @@ jobs:
             aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c \
             image --input /scan/image.tar --exit-code 1 --severity HIGH,CRITICAL \
             --scanners vuln,secret --format json --output /reports/trivy.json
-      - name: Require Notify submission previews
+      - name: Require Notify previews
         env:
           GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
           NOTIFY_PREVIEWS_REQUIRED: "1"
         run: |
-          rm -rf TestResults/NotifySubmissionPreviews
-          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifySubmissionPreviews -- --filter-class '*NotifySubmissionPreviewTests' --report-trx --report-trx-filename NotifySubmissionPreviews.trx
-          python3 scripts/require-notify-previews.py TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx
-      - name: Require Notify cancellation previews
-        env:
-          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
-          NOTIFY_PREVIEWS_REQUIRED: "1"
-        run: |
-          rm -rf TestResults/NotifyCancellationPreviews
-          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifyCancellationPreviews -- --filter-class '*NotifyCancellationPreviewTests' --report-trx --report-trx-filename NotifyCancellationPreviews.trx
-          python3 scripts/require-notify-previews.py TestResults/NotifyCancellationPreviews/NotifyCancellationPreviews.trx cancellation
+          rm -rf TestResults/NotifyPreviews
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifyPreviews -- --filter-class '*Notify*PreviewTests' --report-trx --report-trx-filename NotifyPreviews.trx
+          python3 scripts/require-notify-previews.py TestResults/NotifyPreviews/NotifyPreviews.trx
       - name: Upload CI reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -182,15 +174,36 @@ jobs:
               print("⚪ Not run")
               sys.exit(0)
           try:
-              counters = ET.parse(path).getroot().find("{*}ResultSummary/{*}Counters")
+              root = ET.parse(path).getroot()
+              counters = root.find("{*}ResultSummary/{*}Counters")
               if counters is None:
                   raise ValueError("Missing counters")
+              methods = {}
+              for definition in root.findall("{*}TestDefinitions/{*}UnitTest"):
+                  identifier = definition.attrib["id"]
+                  if not identifier or identifier in methods:
+                      raise ValueError("Duplicate definition")
+                  methods[identifier] = definition.find("{*}TestMethod")
+              identities = set()
+              outcomes = []
+              for result in root.findall("{*}Results/{*}UnitTestResult"):
+                  method = methods[result.attrib["testId"]]
+                  if method is None:
+                      raise ValueError("Missing method")
+                  identity = (method.attrib["className"].split(",")[0], method.attrib["name"], result.attrib["testName"])
+                  if not all(identity) or identity in identities:
+                      raise ValueError("Invalid or duplicate test identity")
+                  identities.add(identity)
+                  outcomes.append(result.attrib["outcome"])
               total = int(counters.attrib["total"])
-              passed = int(counters.attrib["passed"])
-              skipped = int(counters.get("notExecuted", "0"))
+              passed = outcomes.count("Passed")
+              skipped = outcomes.count("NotExecuted")
               failed = total - passed - skipped
               reported_failed = int(counters.attrib["failed"])
-              if total <= 0 or min(passed, skipped, failed, reported_failed) < 0 or reported_failed > failed:
+              if (total <= 0 or total != len(outcomes)
+                  or int(counters.attrib["passed"]) != passed
+                  or int(counters.get("notExecuted", "0")) != skipped
+                  or reported_failed < 0 or reported_failed > failed):
                   raise ValueError("Invalid counters")
               if failed:
                   print(f"❌ {passed}/{total} passed, {failed} failed")
@@ -200,58 +213,6 @@ jobs:
                   print(f"✅ {passed}/{total} passed")
           except (OSError, ET.ParseError, KeyError, ValueError):
               print("⚪ Results unavailable (invalid TRX evidence)")
-          PY
-          }
-
-          integration_summary() {
-            python3 - "$@" <<'PY'
-          import sys
-          import xml.etree.ElementTree as ET
-
-          def read_results(path):
-              root = ET.parse(path).getroot()
-              methods = {}
-              for definition in root.findall("{*}TestDefinitions/{*}UnitTest"):
-                  identifier = definition.attrib["id"]
-                  if identifier in methods:
-                      raise ValueError("Duplicate definition")
-                  methods[identifier] = definition.find("{*}TestMethod")
-              results = {}
-              for result in root.findall("{*}Results/{*}UnitTestResult"):
-                  method = methods[result.attrib["testId"]]
-                  if method is None:
-                      raise ValueError("Missing method")
-                  identity = (
-                      method.attrib["className"].split(",")[0],
-                      method.attrib["name"],
-                      result.attrib["testName"],
-                  )
-                  if not all(identity) or identity in results:
-                      raise ValueError("Invalid or duplicate test identity")
-                  results[identity] = result.attrib["outcome"]
-              counters = root.find("{*}ResultSummary/{*}Counters")
-              if not results or counters is None or int(counters.attrib["total"]) != len(results):
-                  raise ValueError("Incomplete results")
-              return results
-
-          try:
-              combined = read_results(sys.argv[1])
-              for path in sys.argv[2:]:
-                  previews = read_results(path)
-                  for identity, outcome in previews.items():
-                      if identity not in combined or combined[identity] in {"Passed", "NotExecuted"}:
-                          combined[identity] = outcome
-              passed = sum(outcome == "Passed" for outcome in combined.values())
-              skipped = sum(outcome == "NotExecuted" for outcome in combined.values())
-              failed = len(combined) - passed - skipped
-              if failed:
-                  print(f"❌ {passed}/{len(combined)} passed, {failed} failed, {skipped} skipped")
-              elif skipped:
-                  print(f"⚠️ {passed}/{len(combined)} passed, {skipped} skipped")
-              else:
-                  print(f"✅ {passed}/{len(combined)} passed")
-          except (OSError, ET.ParseError, KeyError, ValueError):
-              print("⚪ Combined integration results unavailable (missing or invalid TRX evidence)")
           PY
           }
 
@@ -300,10 +261,8 @@ jobs:
             printf '| Dependency security review | %s |\n' "$(step_summary "$DEPENDENCY_REVIEW")"
             printf '| CI report download | %s |\n' "$(step_summary "$REPORT_DOWNLOAD")"
             printf '| Unit tests | %s |\n' "$(test_summary TestResults/Consumer.Tests/Consumer.Tests.trx)"
-            printf '| Isolated integration tests | %s |\n' "$(test_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx)"
-            printf '| Integration tests (including Notify previews) | %s |\n' "$(integration_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx TestResults/NotifyCancellationPreviews/NotifyCancellationPreviews.trx)"
-            printf '| Notify submission previews | %s |\n' "$(test_summary TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx)"
-            printf '| Notify cancellation previews | %s |\n' "$(test_summary TestResults/NotifyCancellationPreviews/NotifyCancellationPreviews.trx)"
+            printf '| Integration tests | %s |\n' "$(test_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx)"
+            printf '| Preview tests | %s |\n' "$(test_summary TestResults/NotifyPreviews/NotifyPreviews.trx)"
             printf '| Docker image | %s |\n' "$(step_summary "$DOCKER_BUILD")"
             printf '| Trivy (Critical/High) | %s |\n' "$(trivy_summary)"
             echo
