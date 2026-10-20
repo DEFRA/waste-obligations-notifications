@@ -4,7 +4,8 @@ Use Rider's HTTP Client or the
 [httpYac extension for VS Code](https://marketplace.visualstudio.com/items?itemName=anweber.vscode-httpyac)
 on Windows, macOS or Linux. These files stay outside the .NET solution.
 
-For local Compose, run `docker compose up --build -d --wait` and select `docker`.
+For local Compose, run `docker compose up --build -d --wait` and select `docker`
+with [local health](health.docker.http) or [local command DLQ](command-dlq.docker.http).
 It uses `http://localhost:8085` and the local Basic-auth client; no private settings
 or OAuth token endpoint are needed.
 
@@ -13,8 +14,11 @@ For deployed environments:
 1. Copy `http-client.private.env.json.example` to `http-client.private.env.json`
    beside the requests. Git ignores the copy.
 2. Fill in the host, token URL, client ID and client secret for your environment.
-3. Open a `.http` file, select the environment and run an individual request.
-   Requests acquire an OAuth token automatically.
+3. Open `health.http` or `command-dlq.http`, select the environment and run an individual request.
+   Requests acquire an OAuth token automatically. The token expression belongs directly
+   in each Authorization header; Rider does not evaluate it inside an environment value.
+   All deployed health requests carry the token to pass the private gateway’s Cognito
+   authentication, including endpoints that are anonymous within the service.
 
 - [Health](health.http): anonymous readiness and extended checks, plus authenticated readiness.
 - [Command DLQ](command-dlq.http): run readiness, then inspect before redrive, discard or accepted-command resend.

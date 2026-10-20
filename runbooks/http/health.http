@@ -1,12 +1,14 @@
-### Anonymous readiness
+### Readiness (anonymous in the service; gateway authentication required)
 # @no-log
 GET {{host}}/health
+Authorization: Bearer {{$auth.token("service")}}
 
 ### Authenticated readiness
 # @no-log
 GET {{host}}/health/authorized
-Authorization: {{authorization}}
+Authorization: Bearer {{$auth.token("service")}}
 
-### All health checks (anonymous)
+### All health checks (anonymous in the service; gateway authentication required)
 # @no-log
 GET {{host}}/health/all
+Authorization: Bearer {{$auth.token("service")}}

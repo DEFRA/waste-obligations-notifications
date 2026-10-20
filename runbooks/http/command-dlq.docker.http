@@ -1,0 +1,91 @@
+### Check approximate DLQ counts and latest redrive task
+# @no-log
+GET {{host}}/admin/notification-commands/dlq/status
+Authorization: {{authorization}}
+
+### Create a verification command
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/verification-command
+Authorization: {{authorization}}
+
+### Inspect and select up to ten commands
+# Read operatorGuidance and availableActions before recovery.
+# Follow links.deliveryRecord and links.resends; check Notify and existing replacements before resend.
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/inspect
+Authorization: {{authorization}}
+
+> {%
+var messages = (response.body && response.body.messages) || [];
+var tokens = messages.map(function (message) { return message.selectionToken; }).filter(Boolean);
+client.global.set("selectionTokens", JSON.stringify(tokens));
+client.global.set("selectionToken", tokens[0] || "");
+%}
+
+### Redrive the inspected commands
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/redrive
+Authorization: {{authorization}}
+Content-Type: application/json
+
+{
+  "selectionTokens": {{selectionTokens}}
+}
+
+### Resend one accepted command selected by inspection
+# Select an accepted entry whose availableActions includes resend; use its current selectionToken.
+# This publishes one stable replacement, then removes the selected source copy.
+# Confirmation does not prove Notify acceptance or recipient delivery.
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/resend
+Authorization: {{authorization}}
+Content-Type: application/json
+
+{
+  "selectionToken": "{{selectionToken}}"
+}
+
+### Redrive the entire DLQ using AWS
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/redrive-all
+Authorization: {{authorization}}
+
+### Discard the first selected command
+# @no-log
+POST {{host}}/admin/notification-commands/dlq/discard
+Authorization: {{authorization}}
+Content-Type: application/json
+
+{
+  "selectionToken": "{{selectionToken}}"
+}
+
+### Search retained evidence by recording time (UTC, inclusive/exclusive)
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?recordedFromUtc=2026-10-12T00:00:00Z&recordedToUtc=2026-10-13T00:00:00Z&pageSize=25
+Authorization: {{authorization}}
+
+> {%
+client.global.set("deliveryRecordsCursor", (response.body && response.body.nextCursor) || "");
+%}
+
+### Continue the same recording-time search (only when nextCursor was returned)
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?recordedFromUtc=2026-10-12T00:00:00Z&recordedToUtc=2026-10-13T00:00:00Z&pageSize=25&cursor={{deliveryRecordsCursor}}
+Authorization: {{authorization}}
+
+### Exact retained Notify notification ID lookup (replace the synthetic ID)
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?notifyNotificationId=11111111-1111-1111-1111-111111111111
+Authorization: {{authorization}}
+
+### Exact opaque-key lookup (replace the encoded synthetic key)
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?notificationKey=v1%3Asynthetic-key
+Authorization: {{authorization}}
+
+### Find replacements of a source command (replace the encoded synthetic parent key)
+# Follow links.resends from inspection when available. Confirm migration 003 has completed.
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?resendOfNotificationKey=v1%3Asynthetic-key&pageSize=25
+Authorization: {{authorization}}
