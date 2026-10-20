@@ -32,7 +32,10 @@ public sealed class CancellationEmailProducer(
                 return [];
 
             var live =
-                await organisations.Read(organisationId, cancellationToken)
+                await ReadDependency(
+                    () => organisations.Read(organisationId, cancellationToken),
+                    "organisation-read-unavailable"
+                )
                 ?? throw new SubmissionProcessingException("organisation-not-found");
             if (live.Id != organisationId)
                 throw new SubmissionProcessingException("identity-mismatch");
@@ -44,7 +47,10 @@ public sealed class CancellationEmailProducer(
             if (accountId is null)
                 return [];
 
-            var organisation = await accounts.ReadOrganisationWithPersons(accountId.Value, cancellationToken);
+            var organisation = await ReadDependency(
+                () => accounts.ReadOrganisationWithPersons(accountId.Value, cancellationToken),
+                "account-read-unavailable"
+            );
             var recipients = ResolveRecipients(
                 declaration.Audit?.FirstOrDefault(entry => entry.Action == "Submitted")?.User,
                 organisation?.Persons ?? []
@@ -123,11 +129,11 @@ public sealed class CancellationEmailProducer(
         if (string.IsNullOrWhiteSpace(companiesHouseNumber))
             return null;
 
-        var results = await accounts.SearchOrganisationsByCompaniesHouseNumbers(
-            [companiesHouseNumber],
-            cancellationToken
+        var results = await ReadDependency(
+            () => accounts.SearchOrganisationsByCompaniesHouseNumbers([companiesHouseNumber], cancellationToken),
+            "account-search-unavailable"
         );
-        var candidates = (results ?? throw new SubmissionProcessingException("account-search-unavailable"))
+        var candidates = results
             .Where(candidate =>
                 candidate.IsComplianceScheme
                 && candidate.CompaniesHouseNumber == companiesHouseNumber
@@ -136,6 +142,25 @@ public sealed class CancellationEmailProducer(
             .ToArray();
 
         return candidates.Length == 1 && Guid.TryParse(candidates[0].ExternalId, out var id) ? id : null;
+    }
+
+    private static async Task<T> ReadDependency<T>(Func<Task<T>> read, string failureReason)
+    {
+        try
+        {
+            return await read();
+        }
+        catch (Exception exception)
+            when (exception
+                    is JsonException
+                        or InvalidOperationException
+                        or FormatException
+                        or InvalidDataException
+                        or OverflowException
+            )
+        {
+            throw new SubmissionProcessingException(failureReason);
+        }
     }
 
     private static IReadOnlyList<CancellationRecipient> ResolveRecipients(
