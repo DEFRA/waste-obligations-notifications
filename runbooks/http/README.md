@@ -22,70 +22,51 @@ For deployed environments:
 Executable response examples are recorded in the Verify `*.verified.json` snapshots in
 [`tests/Consumer.Tests/Administration`](../../tests/Consumer.Tests/Administration).
 
-Retained evidence can be searched independently of DLQ inspection through
-`GET /admin/notification-commands/delivery-records`. Use explicit UTC recording-time
-bounds: `recordedFromUtc` includes its boundary and `recordedToUtc` excludes it.
-Combine exact Notify ID, opaque notification key and outcome filters.
-All recorded outcomes are included by default; `delivery-pending` is retained
-state, not a claim-expiry classification. `pageSize` defaults to 25 and is limited
-to 1–100. Copy `nextCursor` into the next request with the same filters. Results
-are newest first; concurrent updates do not provide a historical snapshot.
+## Investigation and recovery
 
-Use exact `resendOfNotificationKey` filtering to find replacements of an opaque source
-key, or follow inspection's `links.resends`. Confirm optional migration 003 has
-completed before relying on indexed replacement navigation.
-Search shows no payload, attempt history or live Notify status;
-check Notify separately using retained identifiers. Recorded acceptance does not
-confirm recipient delivery. Recovery endpoints include selected redrive, discard
-and accepted-command resend,
-plus whole-queue redrive. Search records cannot authorise selected actions; resend
-requires one current identity-bound selection from DLQ inspection. See the
-[existing recovery contract](../../docs/service-behaviour.md#command-dlq-inspection).
+Use the requests in [command-dlq.http](command-dlq.http) for current endpoint
+parameters and authentication. The
+[query model](../../src/Consumer/Administration/DeliveryRecordSearchQuery.cs) and
+[response snapshots](../../tests/Consumer.Tests/Administration) define filters,
+cursors and response shapes. Use explicit UTC recording-time bounds, retain
+filters when following `nextCursor`, and check Notify separately: retained
+acceptance is not recipient delivery and concurrent searches are not snapshots.
+Confirm optional migration 003 before relying on efficient replacement navigation.
 
-Inspection now provides `operatorGuidance`, `availableActions` with HTTP method,
-endpoint and purpose, matching `deliveryRecord` evidence and available Notify
-correlation. Follow encoded `links.deliveryRecord` to retained lookup. Actions are
-classification-specific recommendations. Redrive validates the selection and
-command content; discard additionally checks current delivery evidence.
+1. Run readiness, then inspect the DLQ. Inspection changes visibility/receive
+   count, and the first returned message may not be the one you intend to recover.
+2. Check the chosen message's `operatorGuidance`, `availableActions`, matching
+   evidence and Notify reference/ID. Follow its record/replacement links to
+   investigate prior outcomes. The
+   [guidance implementation](../../src/Consumer/Administration/CommandDlqRecoveryGuidance.cs)
+   owns classification-specific choices; the inspection snapshot is not authority
+   for later effects, which revalidate current state.
+3. Investigate failures before selecting recovery. Pending evidence cannot tell
+   whether Notify rejected a request, its response was lost, the process crashed
+   or acceptance persistence failed. Notify absence is not proof of nonacceptance.
+4. Use the chosen message's current selection token. If it expires, wait for
+   visibility and reinspect; receive replay can keep messages hidden beyond token
+   expiry. Let inspection visibility expire before whole-queue recovery.
+5. After uncertain responses, inspect current evidence and Notify before retrying.
+   Selected redrive confirms publication before removal and ordinary terminal
+   replay cleans up without a new send. Discard prevents future attempts but
+   cannot prove an earlier uncertain request failed. Never override suppression,
+   abandonment or cutover to force delivery.
 
-- Accepted: check Notify progress. Wait while processing. Recorded
-  acceptance is not recipient delivery; even a later delivery failure leaves the
-  record accepted. Selected redrive only cleans up the terminal queue copy.
-  Inspect existing replacements and investigate before requesting resend. Use the
-  accepted message's current `selectionToken` with the resend request; the first
-  inspected message is not necessarily eligible.
-- Active claim: wait and inspect again. A lease does not prove its process is
-  running. Selected redrive is not offered while active; discard refuses active
-  claims.
-- Expired claim: investigate with the original Notify reference. For confirmed
-  rejection, fix the cause (including credentials if applicable) before redrive.
-  For a lost response, check Notify; discard if delivered to prevent further
-  attempts, or wait if processing. Inconclusive lookup retains duplicate risk;
-  Notify absence is not proof that no request was accepted.
-- Unrecorded: fix the processing failure before redrive, or discard if further
-  attempts are no longer required.
-- Suppressed: confirm handover policy; the legacy sender may have sent. Redrive
-  only cleans up the terminal copy and cannot undo suppression.
-- Abandoned: confirm the previous decision; discard performs idempotent cleanup.
-  Abandonment does not prove an earlier uncertain request failed.
-- Invalid/unsupported, conflicting or unknown state: escalate to engineering.
-  No selected recovery or removal operation is offered. Invalid entries expose
-  no partially trusted identity, navigation or selected action.
+Explicit accepted-command resend requires a current identity-bound selection on
+the DLQ; retained history alone cannot authorize it. Check Notify and existing
+replacements first. Retries derive the same replacement, but its record may not
+exist immediately after publication. Source removal and publication do not prove
+Notify acceptance or recipient delivery. See the [resend implementation](../../src/Consumer/Administration/CommandDlqResender.cs)
+and [native accepted-source verification](../../docs/command-dlq-native-sqs-verification.md#accepted-command-resend).
 
-These are current-state instructions. Pending evidence alone cannot establish
-whether Notify rejected a request, its response was lost, the process crashed
-before sending, or acceptance persistence failed. Check diagnostics and Notify
-before choosing recovery.
+Deploy the consumer and administration endpoints in the same development
+changeset. No staged activation or resend feature flag is required; mixed-version
+operation is not supported. History-only resend and batches are unsupported.
 
-Accepted-command resend publishes one stable replacement and confirms publication
-before deleting the selected source copy. Retries derive the same replacement;
-ordinary redrive continues to suppress duplicate delivery. Check `availableActions`
-before selecting resend. The response includes source and replacement opaque keys
-and record links; a replacement record may not exist until consumption. Confirmed
-publication and source removal do not prove Notify acceptance or recipient delivery.
-Deploy this development consumer and its administration endpoints in the same
-changeset; no staged activation or resend feature flag is required.
-History-only resend, batches and suppression overrides are unsupported. Follow the
-[accepted-command resend contract](../../docs/service-behaviour.md#accepted-command-resend)
-and [native AWS verification steps](../../docs/command-dlq-native-sqs-verification.md#accepted-command-resend) before
-using this in an environment.
+Invalid/unsupported, conflicting or unknown states require engineering escalation;
+no selected removal operation is offered. Do not act on partially trusted fields.
+Use configured retention or separately controlled removal for unmanageable items.
+Native AWS proof remains separate from isolated emulator/adaptor checks; follow
+[the native runbook](../../docs/command-dlq-native-sqs-verification.md) without
+changing shared queues, deployed settings or real evidence from tests.

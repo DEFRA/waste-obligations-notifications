@@ -40,31 +40,15 @@ replaces the former independent-analytics/liveness startup contract.
 ## Consequences
 
 Migration versions and the lease are stored in the configured notifications
-database. Hosts coordinate through the lease and retain it until a cancelled
-migration attempt stops. Failures receive bounded retries using one host-wide
-attempt budget across lease acquisitions. Renewal failures cancel the engine;
-after it stops the host may reacquire the lease and use its remaining attempts.
-While critical readiness is incomplete, failed attempts relinquish ownership
-after engine and renewal work stop, then wait five seconds before reacquiring.
-Once readiness is established, standard failures keep the lease and retry after
-30 seconds. One host-wide three-attempt budget spans acquisitions and phases.
-The lease lasts 30 seconds and is renewed every ten seconds.
-Exhausted hosts
-release the lease and continue checking for completion by another host; they
-need a restart to execute further migration attempts themselves. Failed attempts,
-exhaustion and prolonged readiness waits produce error logs for support alerts.
-An attempt timeout or host shutdown cancels the engine while lease renewal
-continues while renewal succeeds until execution stops. A migration that does not
-stop retains its lease while renewal succeeds and requires support intervention.
-Commands remain on SQS until the required
-migration is in place.
-
-Confirmation deadlines use a monotonic clock from the start of each acquisition
-or renewal request, with half a renewal interval reserved before lease expiry.
-The engine's cancellation deadline runs independently of renewal I/O. A late
-confirmation cannot revive a cancelled attempt, and renewal checks the existing
-lease has not expired using MongoDB's current time. Release and reacquisition wait
-for the engine and any outstanding renewal work to stop.
+database. Hosts coordinate through a renewable exclusive lease. The
+[migration service](../../src/Consumer/Data/MongoMigrationService.cs),
+[lease service](../../src/Consumer/Data/MongoMigrationLeaseService.cs),
+[runner](../../src/Consumer/Data/MongoMigrationRunner.cs) and
+[options](../../src/Consumer/Data/MongoMigrationOptions.cs) define attempt,
+renewal and operation budgets. Preserve ownership until cancelled engine and
+renewal work stop; late confirmations must not revive cancelled work. Exhausted
+hosts can observe another host's completion but need restart to attempt work
+again. Failed attempts and prolonged readiness waits require support diagnosis.
 
 This bounds cancellation requests, not the duration of cancellation-resistant
 engine operations. The engine performs some synchronous metadata operations, and
@@ -93,24 +77,13 @@ before entity mapping. Lease documents therefore use `owner` and `expiresAt`;
 existing documents using `Owner` and `ExpiresAt` must be reconciled with all
 command-processing hosts stopped before rollout.
 
-Critical migration completion is reported by the `MongoMigrationCompletion`
-entry in `/health/all` and gates `/health` on every host.
-Migration 001 is flagged `Critical = true`; migrations default to non-critical.
-An absent or invalid critical prerequisite returns 503, including when another
-host owns the lease or every host exhausts its attempts. Already-applied critical
-migrations satisfy readiness without being rerun. Non-critical failures do not
-block readiness. The latest critical migration owns the current schema validation;
-older critical history remains required without retaining obsolete schema checks.
-
-HTTP and migration work start first. Both consumers wait through a shared hosting
-boundary until this host completes its first successful anonymous `/health`
-response. `/health/all` and `/health/authorized` do not release that boundary.
-Stores and business operations have no migration checks. Health reads a latched
-startup result and performs no Mongo queries; later dependency outages are
-reported by extended health. CDP controls replacement of hosts that remain
-unhealthy. Long critical migrations must fit the actual platform startup budget
-or be applied before rollout; the documented 95 seconds is not an overall
-deployment deadline. Metrics and startup logging remain available for diagnosis.
+CDP owns replacement of hosts that remain unhealthy. Long critical migrations
+must fit the actual platform startup budget or be applied before rollout; a
+configured operation timeout is not a deployment deadline. Extended health
+reports later dependency outages without changing the latched startup result.
+The [migration timing scenarios](../../tests/Consumer.IntegrationTests/Scenarios/MongoMigrationTimingTests.cs)
+and [index completion scenarios](../../tests/Consumer.IntegrationTests/Scenarios/MongoIndexCompletionTests.cs)
+provide executable readiness and cancellation examples.
 
 ## Operation deadline amendment
 

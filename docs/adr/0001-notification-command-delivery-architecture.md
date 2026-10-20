@@ -36,17 +36,12 @@ redelivery and the queue redrive policy.
 This decision covers source-independent command delivery. Producer-specific
 recipient/template policy and administrator DLQ operations are separate scopes.
 
-Each claim has a fresh attempt owner. MongoDB's current time determines expiry,
-and recording acceptance requires that exact owner and a pending claim. Expiry
-alone does not reject confirmed acceptance; replacing the owner or recording a
-terminal outcome does. A
-bounded attempt uses conservative monotonic deadlines from receive and claim
-request starts; startup validates that dependency timeouts and headroom fit the
-command lease and SQS visibility. Late confirmations do not authorise a send.
-The default command lease is 90 seconds against 120-second SQS visibility,
-leaving headroom for prompt retry after expiry. Failed or indeterminate requests
-retain the claim until expiry rather than
-releasing it early. Delivery claims are separate from migration leases.
+Claim ownership, monotonic deadlines and startup budget validation are implemented
+in the [delivery consumer](../../src/Consumer/Delivery/NotificationCommandConsumer.cs),
+[store](../../src/Consumer/Delivery/MongoNotificationDeliveryRecordStore.cs) and
+[options](../../src/Consumer/Delivery/NotificationCommandDeliveryOptions.cs).
+Mongo coordinates attempts but cannot fence an HTTP request already in flight.
+Delivery claims are separate from migration leases.
 
 A `201 Created` response means accepted by Notify. Once a complete valid response
 arrives, attempt persistence with a fresh bounded token, including after send
@@ -57,43 +52,24 @@ can leave an indeterminate send. Retry after expiry may send the email again;
 Notify-reference reconciliation is excluded. Mongo fences acceptance writes,
 but cannot fence an HTTP request already in flight during a process stall.
 
-Minimal acceptance evidence consists of command/recipient/immutable-field HMAC
-digests, a versioned HMAC Notify reference, template ID/version, Notify
-notification ID, timestamps and outcome. Command immutable identity is preserved
-exactly, including template spelling; a canonical UUID in Notify's response can
-identify the same requested template. Diagnostics use a bounded configured
-category allowlist with a fixed fallback, preserving arbitrary producer-defined
-command types without exposing their raw values in logs or metric dimensions.
-
-Delivery metrics use Waste Obligations' DI-managed instruments and CloudWatch
-EMF mechanism. Each host owns its observer; AWS owns process-wide environment
-discovery/cache, following the reference implementation. SDK internal diagnostics
-are disabled to protect private error data;
-only bounded command dimensions are exported, with no SDK platform decoration.
-Metric failures do not alter delivery. Observation stops before a bounded sink
-shutdown wait; the SDK worker can outlive that wait because it has no cancellation
-API.
+Retain only minimal correlation and outcome evidence, with a bounded diagnostic
+category allowlist so producer-defined types do not leak into logs or metrics.
+The [evidence model](../../src/Consumer/Delivery/NotificationDeliveryEvidence.cs),
+[digest](../../src/Consumer/Delivery/NotificationCommandDigest.cs) and
+[metrics](../../src/Consumer/Delivery/NotificationCommandMetrics.cs) define the
+current fields and instruments. Metrics use the companion service's DI/CloudWatch
+EMF conventions and remain best effort; export failures cannot alter delivery.
 
 ## Consequences
 
-The submitted-email analytics producer enriches a `submission.created` event by
-reading its declaration before using the shared publisher. One declaration
-creation represents one submitted-email intention: use the declaration identity
-for the intended-email key, independent of event ID and later entity versions.
-A transport replay or later Accepted/Cancelled state must preserve the original
-first Submitted audit and stored submission fields. The delivery evidence remains
-the replay boundary; this adds no producer ledger or alternate send mechanism.
-The current read/version and mapping contracts are in
-[service behaviour](../service-behaviour.md).
-
-Cancellation production resolves live recipients from the triggering amendment and
-an equal-or-newer authorised declaration. When recipients exist, each attempt
-confirms publication of the identical original Submitted intention before any
-cancellation intention. Ordinary submission and predecessor reconstruction share
-the same immutable builder and declaration read; no original analytics event ID,
-producer ledger or terminal-evidence shortcut is needed. Empty/unknown-reason
-outcomes publish neither predecessor nor cancellation. A partial publication
-retains the source for stable-key retries, re-evaluating live recipients.
+The [submitted producer](../../src/Consumer/Submission/SubmittedEmailProducer.cs)
+uses declaration identity rather than analytics-event identity for replay. The
+[cancellation producer](../../src/Consumer/Cancellation/CancellationEmailProducer.cs)
+shares original-submission construction and confirms that predecessor before
+cancellation publications when recipients exist. This adds no producer ledger or
+alternate send mechanism; live contacts are re-evaluated on retry. See
+[service entry points](../service-behaviour.md#cancellation-production) and tests
+for exact selection, mapping and empty-result behaviour.
 
 This shared prefix establishes first-publication precedence on every host, without
 a global sequencer or ordering across declarations. Publication confirmation does

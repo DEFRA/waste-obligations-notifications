@@ -16,6 +16,11 @@
 - Never alter shared queues, topics, or deployed CDP configuration from a test.
   Local Compose may create and own its isolated resources.
 - Keep credentials out of source control and logs.
+- Treat executable code and tests as the source of truth for implemented logic.
+  Documentation should signpost the relevant implementation and tests rather than
+  duplicate branches, algorithms, field lists or default-value tables. Preserve
+  architecture rationale, external contracts and operational instructions that
+  cannot be inferred safely from code; update those when their contract changes.
 - Use small typed boundary models for consumed event fields and downstream DTOs.
   Keep transport parsing separate from domain decisions and preserve optional
   fields and out-of-scope acknowledgement contracts.
@@ -26,10 +31,10 @@
   from the companion Waste Obligations service; avoid global logging overrides.
 - Put reusable HTTP stubbing and request inspection in test helper extensions.
 - Distinguish isolated integration results from separately required provider
-  previews when reporting test totals and skips. Derive combined integration
-  totals from TRX evidence and count repeated preview cases once. Never hard-code
+  previews when reporting test totals and skips. Derive each suite’s totals from
+  TRX evidence and execute previews once in their own suite. Never hard-code
   preview counts or case lists in CI summaries or step titles. This reporting
-  rule does not replace the explicit four-case contract enforced by
+  rule does not replace the required preview cases enforced by
   `scripts/require-notify-previews.py`.
 
 ## Build guidance for agents
