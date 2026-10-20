@@ -7,9 +7,10 @@ implementation scope is described below.
 
 ## Current scope
 
-The analytics consumer enriches submitted compliance-declaration events through the
-Waste Obligations read API and publishes submitted-email commands before deleting
-the analytics message. Other valid analytics events retain their log-and-delete
+The analytics consumer enriches submitted and cancellation compliance-declaration
+events through the Waste Obligations read API, with live Waste Organisations and
+Account enrichment for cancellation. It confirms every required command publication
+before deleting the analytics message. Other valid analytics events retain their log-and-delete
 behaviour. Analytics does not persist event data or send email directly.
 With the default null cutover, the command consumer durably suppresses every
 valid command and deletes it without Notify. With a supplied boundary, it
@@ -40,7 +41,7 @@ original recipient-lane position.
   constraint. Recognised event/entity identifiers are logged directly; other
   identifiers use opaque hashes. Declaration entity IDs must still match the read
   contract when producing a submitted email.
-- Always use the first exact `Submitted` audit's email, name and explicit UTC
+- For submission intentions, use the first exact `Submitted` audit's email, name and explicit UTC
   timestamp, including when the latest declaration is Accepted or Cancelled.
   Persisted organisation country, registration type, regulator and regulator email
   determine the command. Only the string `GB-WLS` selects Welsh; absent, null,
@@ -49,12 +50,13 @@ original recipient-lane position.
   English regulator articles are `The ` and `the `; Welsh has no articles.
   Personalisation has exactly integer `obligationYear` and strings `regulatorLeading`,
   `regulatorInline`, `regulatorEmail`, `user`.
-- The stable intended-email key is `compliance-declaration:{bare ObjectId}:submitted:v1`;
+- The stable submitted-email key is `compliance-declaration:{bare ObjectId}:submitted:v1`;
   event IDs and later entity versions do not create a new intended email. No producer
   ledger is introduced. The shared publisher normalises recipients and uses the
   shared digest for recipient lanes; delivery's terminal evidence suppresses replay.
-- Matching events are deleted only after confirmed command publication. A missing
-  declaration, older version, missing required data, read or unconfirmed publication
+- Email-producing events are deleted only after every required command publication
+  is confirmed. Valid cancellation no-email outcomes acknowledge without publication.
+  A missing declaration, older version, missing required data, read or unconfirmed publication
   failure leaves the event for retry. After confirmed publication, uncertain deletion
   can cause replay and is diagnosed as acknowledgement uncertainty. Other valid
   events continue to log their safe event/entity correlation and acknowledge.
@@ -70,11 +72,71 @@ original recipient-lane position.
   failures; host cancellation stops consumption. The command receive timeout must exceed its long-poll wait and
   bounds that receive without changing the shared SQS client's configuration.
   Analytics independently validates its single-message budget: 30 seconds receive,
-  20 read, 10 publish, 5 delete and 10 headroom fit its explicit 90-second visibility.
+  60 aggregate enrichment, 30 aggregate publication, 5 delete and 10 headroom
+  fit its explicit 150-second visibility. Enrichment includes live reads, OAuth,
+  scheme search and persons; publication includes the predecessor and recipients.
   Each dependency is bounded; remaining visibility is checked before processing
   stages. The command lease/visibility budget does not cover analytics work.
   A disabled analytics consumer logs once and awaits cancellation.
 - Apply the logging restrictions in [coding standards](../CODING_STANDARDS.md).
+
+## Cancellation production
+
+- Only `compliance_declaration` / `submission.amended` snapshots showing exact
+  `Submitted` or `Accepted` to `Cancelled` trigger cancellation. The same schema,
+  positive version and identity requirements apply as for submission. An authorised
+  read must match declaration/organisation identity and have an equal or newer
+  version. Missing, older, failed or malformed reads retain the source; no snapshot
+  fallback or latest-status trigger is used.
+- The first exact `Cancelled` audit supplies reason and explicit UTC action time,
+  truncated to milliseconds. Exact reasons map as follows; case changes, trimming
+  and aliases are not applied. Unknown reasons are valid empty results.
+
+  | Exact reason | Cancellation family |
+  | --- | --- |
+  | `Not signed by correct person` | `NotSignedByCorrectPerson` |
+  | `Recycling obligations changed` | `RecyclingObligationsChanged` |
+  | `Producer can meet recycling obligations` | `CanMeetRecyclingObligations` |
+  | `Compliance scheme can meet recycling obligations` | `CanMeetRecyclingObligations` |
+  | `Producer requested to cancel` | `ProducerRequested` |
+  | `Compliance scheme requested to cancel` | `ProducerRequested` |
+
+- Require live Waste Organisations ID to match the event/declaration before Account
+  lookup or publication. Its exact `GB-WLS` country alone selects Welsh. Persisted
+  exact `ComplianceScheme` selects statement wording; other registration types use
+  certificate wording. Persisted year becomes numeric `year = obligationYear + 1`.
+  Persisted regulator/email supply presentation; trimmed EA/SEPA/NIEA/NRW codes or
+  their exact display names normalise to the established display names. Unknown
+  regulator strings remain trimmed and null/empty values are preserved.
+  Welsh NRW additionally receives `regulator_cy = Cyfoeth Naturiol Cymru`.
+  All six English/Welsh document/bullet fields are included regardless of language;
+  obligation amounts, obligation status and triggering prior status do not alter them.
+- Producers use the live organisation ID for Account. Schemes require a Companies
+  House number and filter search candidates by ordinal-exact number,
+  `IsComplianceScheme` and nonblank external ID before requiring a unique candidate
+  with a valid GUID. No qualifying candidate, multiple candidates, missing number
+  or invalid sole GUID is a valid empty result. Null/failed search is a failure.
+- Resolve submitter from the first Submitted audit's trimmed saved email, matching
+  Account person ID or email case-insensitively. Preserve eligible first/last names
+  unchanged. Select only the first ordinal-exact `Approved Person`; an incomplete
+  first contact does not fall through. Require nonblank names and email, trimming
+  emails only. Deduplicate addresses case-insensitively, retaining submitter first,
+  then sort addresses ordinal-ignore-case. One recipient suffices; persons 404/null
+  and zero eligible recipients acknowledge without any publication. Other Account
+  failures retain retry behaviour.
+- Only when cancellation commands exist, reconstruct the immutable original
+  Submitted intention from the same declaration and confirm its publication on
+  every attempt, including after terminal submission evidence. Missing valid
+  Submitted audit blocks the predecessor and cancellations. Confirm all sorted
+  cancellation publications before acknowledging. An unconfirmed predecessor
+  prevents cancellation publication; partial publication retains the source.
+- The cancellation intention key combines declaration, original action and normalised
+  address using an opaque hash. Retries re-evaluate live contacts: new addresses
+  may create new intentions; unchanged keys/content retain terminal suppression;
+  changed immutable content retains conflict behaviour. No snapshots, new ledger
+  or resend semantics are introduced. Publication precedence does not validate
+  Mongo conflicts or prove Notify acceptance/inbox order. Recipient lanes, DLQ
+  recovery and resend can invert later delivery.
 
 ## Notification commands and data protection
 
@@ -447,7 +509,7 @@ Command queue/DLQ/Mongo and Notify extended health run on every host, including
 with null cutover. Critical migrations gate `/health`; both consumers and
 administration start after its first successful anonymous response completes.
 
-## Submitted-email diagnostics
+## Email diagnostics
 
 Confirmed publication logs safe event/entity correlation, an opaque Notify reference,
 configured UUID template, bounded variant and original action time. Delivery outcome
@@ -458,10 +520,13 @@ logs. Retry warnings use fixed stage/reason values and available safe SQS/event/
 correlation, without exception text, PII, payloads or raw intended-email keys.
 The four `declaration-submitted-direct-en`, `declaration-submitted-direct-cy`,
 `declaration-submitted-scheme-en`, `declaration-submitted-scheme-cy` categories use
-existing bounded delivery metrics, with no second metric mechanism.
+existing bounded delivery metrics, with no second metric mechanism. The eight
+`declaration-cancelled-{family}-{en|cy}` labels are also configured in the same
+allowlist.
 
 Before this image reaches an environment with analytics processing already enabled,
-provision the Waste Obligations read address, credentials and Read ACL. Alternatively,
+provision Waste Obligations Read access plus Waste Organisations and Account
+addresses, credentials and read/health privileges. Alternatively,
 confirm `AnalyticsEventConsumer__ProcessingEnabled=false` before deployment.
 Missing read configuration with processing enabled rejects startup for the whole
 host, including command delivery and DLQ administration.
@@ -488,6 +553,26 @@ host, including command delivery and DLQ administration.
   caps the operation regardless of these settings.
   Unsafe methods are not retried. A 404 returns no declaration; the submission
   producer decides to retain the event for recovery.
+- `WasteOrganisations__BaseAddress`, `WasteOrganisations__ClientId` and
+  `WasteOrganisations__ClientSecret` provide Basic-authenticated organisation reads;
+  `AccountBackend__BaseAddress`, `AccountBackend__TokenEndpoint`,
+  `AccountBackend__ClientId`, `AccountBackend__ClientSecret` and optional
+  `AccountBackend__Scope` provide OAuth client-credentials Account access.
+  These addresses and credentials are required before deploying with the shared
+  analytics flag enabled, including hosts receiving only submissions. Scope remains
+  optional. Disabled analytics needs none.
+  Secure addresses allow HTTPS or local loopback HTTP; redirects are disabled.
+  Account/OAuth clients follow the companion `HTTP_PROXY` convention with local
+  bypass. Cached OAuth tokens refresh serially with a sixty-second expiry margin.
+  `AccountBackend`, `WasteOrganisations` and `AccountOAuth` sections configure
+  timeout/retry/attempt limits; only the token client retries POSTs.
+  Extended-only `WasteOrganisations` and `AccountBackend` checks authenticate
+  `health/authorized` and `admin/health` respectively, with ten-second deadlines,
+  fixed private-data-free failures and disabled-analytics skips. These checks add
+  no startup readiness gate and do not prove deployed read privileges.
+- The eight `Cancellation__{family}{En|Cy}` mappings use the defaults listed in the
+  [README](../README.md#configuration), validated as nonempty hyphenated UUIDs.
+  Effective overrides and provider access must be established before activation.
 - The four `Submission__DirectEnglishTemplateId`, `Submission__DirectWelshTemplateId`,
   `Submission__SchemeEnglishTemplateId`, `Submission__SchemeWelshTemplateId` values
   are validated as nonempty canonical hyphenated UUIDs at startup. Checked-in defaults are not proof of
@@ -531,13 +616,14 @@ remain in force.
 
 Finalize all template overrides before the null-cutover producer dry run starts.
 Template ID is part of immutable command evidence: changing it for a replayed
-submission creates a conflict that is retried into the command DLQ, even when the
+intention creates a conflict that is retried into the command DLQ, even when the
 original command was suppressed. Preserve those mappings while replays remain possible.
 
-Before activation verify the deployed MO-562 response/version contract, Read credential/ACL,
-effective template configuration/access and queue redrive policies. Null-cutover
-submission production supports terminal dry-run suppression; live shared handover
-remains gated on both submission and cancellation producers.
+Before activation verify the deployed response/version contract, declaration/organisation/
+Account credentials and privileges, effective template configuration/rendering,
+analytics visibility/headroom, queue redrive policies and stable identity secrets.
+Null-cutover submission and cancellation production support terminal dry-run suppression; live shared handover
+remains gated on both producers being deployed and verified.
 
 After the producer dry run, configure Notifications with a future X first.
 Verify every active Notifications host has X and the post-cutover delivery
@@ -576,15 +662,24 @@ publication, Mongo-backed delivery and the outgoing Compose Notify HTTP request.
 Successful acceptance/deletion and handled replay are verified against independently
 chosen expected recipient, template and five personalisation values.
 
+Hosted cancellation scenarios extend the path through live organisation/OAuth/Account
+HTTP enrichment, representative recipient/language policies, predecessor publication,
+partial replay and changed live contacts. Valid empty outcomes and failed/older reads
+preserve their acknowledgement/retry contracts.
+
 PR, main and hotfix validation additionally requires four genuine Notify submission
-previews, using configured mappings and synthetic personalisation. Previewing sends
+previews and eight cancellation previews, using configured mappings and synthetic
+personalisation. Cancellation uses direct-producer inputs and validates body year,
+regulator/email, English/Welsh certificate wording and names; policy tests protect
+scheme wording. Previewing sends
 no email. Missing credentials, provider failure, incorrect rendering, missing report,
-skipped cases or fewer than four passed cases fail required validation and block
+skipped cases or any absent required case fail the separate TRX guards and block
 publishing. Isolated service tests keep the fixture endpoint and dummy key. Local
 previews explicitly skip without credentials; the ignored root `.env` convention
 and runtime fallback wrapper are documented in the README. Preview credentials and
 rendered content are never reported. Preview success proves template access/rendering
-for those effective mappings, rather than deployed Read ACL or cutover readiness.
+for those effective mappings; it does not establish deployed Read ACL, measured
+analytics latency or cutover readiness.
 
 ## Retained delivery-record search
 

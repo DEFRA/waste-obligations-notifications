@@ -84,8 +84,23 @@ A transport replay or later Accepted/Cancelled state must preserve the original
 first Submitted audit and stored submission fields. The delivery evidence remains
 the replay boundary; this adds no producer ledger or alternate send mechanism.
 The current read/version and mapping contracts are in
-[service behaviour](../service-behaviour.md). Cancellation production and shared
-cutover activation retain their separate scope.
+[service behaviour](../service-behaviour.md).
+
+Cancellation production resolves live recipients from the triggering amendment and
+an equal-or-newer authorised declaration. When recipients exist, each attempt
+confirms publication of the identical original Submitted intention before any
+cancellation intention. Ordinary submission and predecessor reconstruction share
+the same immutable builder and declaration read; no original analytics event ID,
+producer ledger or terminal-evidence shortcut is needed. Empty/unknown-reason
+outcomes publish neither predecessor nor cancellation. A partial publication
+retains the source for stable-key retries, re-evaluating live recipients.
+
+This shared prefix establishes first-publication precedence on every host, without
+a global sequencer or ordering across declarations. Publication confirmation does
+not inspect Mongo immutable conflicts or prove Notify acceptance. Different
+recipient lanes, DLQ recovery and resend can invert later delivery and inbox order;
+the existing indeterminate Notify duplicate risk remains. Shared cutover activation
+still requires both producers and verified deployed access/configuration.
 
 The delivery service is source-independent: it does not consume a raw analytics
 event as its email-delivery contract and does not choose recipients, templates,

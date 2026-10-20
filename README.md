@@ -6,8 +6,10 @@ A CDP service that consumes Waste Obligations analytics events and delivers emai
 
 The service receives every message from its service-owned SQS subscription to the
 `waste_obligations_analytics_events` SNS topic. It enriches compliance-declaration
-submission events through the Waste Obligations read API and publishes submitted-email
-commands before acknowledging them. Other valid analytics messages retain their
+submission and cancellation events through authorised declaration reads, with live
+Waste Organisations/Account enrichment for cancellation. It confirms the Submitted
+predecessor before actual cancellation publications and acknowledges only after
+all required publications succeed. Other valid analytics messages retain their
 log-and-delete behaviour. Analytics does not send email directly or persist events.
 
 With the default null cutover, the command consumer durably suppresses every
@@ -130,14 +132,20 @@ cause a matching replay. Publication and Notify acceptance do not prove delivery
 
 Analytics has a separate processing budget. `AnalyticsEventConsumer__ReceiveTimeoutSeconds`
 (default 30) must exceed its long poll. `WaitTimeSeconds` must be 1–20 seconds;
-zero is rejected to prevent continuous empty receives. `ReadTimeoutSeconds` (20),
-`PublishTimeoutSeconds` (10), `DeleteTimeoutSeconds` (5) and `SafetyHeadroomSeconds`
-(10), plus receive time, must fit `VisibilityTimeoutSeconds` (90). These settings
+zero is rejected to prevent continuous empty receives. `ReadTimeoutSeconds` (60),
+`PublishTimeoutSeconds` (30), `DeleteTimeoutSeconds` (5) and `SafetyHeadroomSeconds`
+(10), plus receive time, must fit `VisibilityTimeoutSeconds` (150). These settings
 share the `AnalyticsEventConsumer__` environment prefix. Each receive requests
-explicit visibility; increasing batching requires a reviewed budget change.
+explicit visibility. The aggregate read budget includes declaration/live-organisation
+reads, OAuth, scheme search and Account persons. One aggregate publication budget
+covers the Submitted predecessor and all cancellation recipients, in that order.
+The defaults reserve 135 seconds within 150-second visibility; verify deployed
+queue settings and peak/retry latency before activation. Increasing batching
+requires a reviewed budget change.
 
 Before this image reaches an environment with analytics processing already enabled,
-provision the Waste Obligations read address, credentials and Read ACL. Alternatively,
+provision the Waste Obligations read address, credentials and Read ACL, plus
+the Waste Organisations and Account access described below. Alternatively,
 confirm `AnalyticsEventConsumer__ProcessingEnabled=false` before deployment.
 Missing read configuration with processing enabled rejects startup for the whole
 host, including command delivery and DLQ administration.
@@ -151,10 +159,29 @@ jitter, within a ten-second total and three-second attempt timeout; the analytic
 read budget and cancellation still bound the complete operation. `DeclarationRead` extended health calls `health/authorized` with Basic credentials;
 successful authentication does not prove the deployed Read ACL or MO-562
 version/identity response; validate both before activation.
+Cancellation enrichment additionally requires `WasteOrganisations__BaseAddress`,
+`WasteOrganisations__ClientId` and `WasteOrganisations__ClientSecret` (Basic), plus
+`AccountBackend__BaseAddress`, `AccountBackend__TokenEndpoint`,
+`AccountBackend__ClientId`, `AccountBackend__ClientSecret` and optional
+`AccountBackend__Scope` (OAuth client credentials). Provision these addresses,
+credentials and read/health privileges before deploying any image with analytics
+already enabled, or disable analytics before deploying: enabled analytics rejects
+missing access configuration at host startup. Local examples are synthetic.
+Both boundaries require HTTPS except loopback HTTP and disable redirects.
+`WasteOrganisations` extended health authenticates `health/authorized`;
+`AccountBackend` extended health authenticates `admin/health`. Each diagnostic has
+a ten-second deadline and is skipped when analytics is disabled. These diagnostics
+do not gate readiness or prove deployed read privileges. Account and Waste
+Organisations resilience use their respective options sections; token request
+resilience uses `AccountOAuth`. Only token client-credentials POSTs are retried.
+Account and token clients reuse
+the companion service's `HTTP_PROXY` convention with local bypass; background
+analytics has no inbound request headers to propagate.
+
 Compose disables analytics processing because it has no declaration API. The
 submitted-email integration scenarios enable their own hosts with a controlled
-declaration endpoint. To process submissions locally, configure a reachable Read
-service and explicitly enable analytics processing.
+declaration endpoint. To process analytics locally, configure reachable declaration,
+Waste Organisations and Account services with the required access, then explicitly enable processing.
 
 The four overridable UUID mappings are:
 
@@ -171,6 +198,45 @@ The five fields are integer `obligationYear` and strings `regulatorLeading`,
 and `the `; Welsh preserves the stored regulator without articles. Original audit
 recipient/name/time take precedence over current actor, locale or submitter name.
 
+Cancellation production handles only `submission.amended` compliance declarations
+with `Submitted`/`Accepted` to `Cancelled` snapshots. It uses one authorised
+equal-or-newer declaration read and the original `Cancelled` audit reason/time.
+Unknown reasons or no eligible live recipients acknowledge without publication.
+Read failures, identity mismatches and malformed required data leave the source
+for retry. Latest Cancelled status alone does not trigger an email.
+
+Live Waste Organisations country selects Welsh only for exact `GB-WLS`;
+persisted registration type, regulator/email and obligation year determine
+presentation. Account resolves submitter and the first exact `Approved Person`,
+preserving eligible names and trimming emails. Scheme Account resolution filters
+exact Companies House matches, scheme status and nonblank external ID before
+uniqueness/GUID validation. Valid empty Account results acknowledge without a
+Submitted predecessor. See [recipient and presentation contracts](docs/service-behaviour.md#cancellation-production).
+
+When cancellation recipients exist, every attempt confirms the same original
+Submitted intention first, then publishes sorted, deduplicated per-address
+cancellation intentions. An unconfirmed predecessor blocks all cancellations;
+partial publication retains the source for retry. Live recipients are re-evaluated
+on retries. Stable address/action keys preserve terminal duplicate suppression;
+changed immutable content under a retained key preserves the existing conflict.
+No recipient snapshot or producer ledger is introduced. Publication confirmation
+proves neither Mongo conflict validation, Notify acceptance nor inbox ordering;
+recipient lanes and later recovery can change delivery order.
+
+The eight cancellation mappings are overridable and validated as nonempty
+hyphenated UUIDs at startup:
+
+| `Cancellation__` setting suffix | Default template |
+| --- | --- |
+| `NotSignedByCorrectPersonEn` | `1502cfa2-9758-4410-b189-d1f95a7c774f` |
+| `NotSignedByCorrectPersonCy` | `7cab1c5e-9edf-4139-b3fd-3db4bcf3041d` |
+| `RecyclingObligationsChangedEn` | `857808d4-d159-421e-92b6-bf9d59711a9e` |
+| `RecyclingObligationsChangedCy` | `0a966633-b7ad-42dd-b286-af0cb2405ed2` |
+| `CanMeetRecyclingObligationsEn` | `86345150-cb25-4b59-94c3-578bed7e82d4` |
+| `CanMeetRecyclingObligationsCy` | `308e7224-0ab1-4f54-8e8d-1558c9c57a77` |
+| `ProducerRequestedEn` | `3e03c93f-955c-4db3-936c-bfa3f7725a5f` |
+| `ProducerRequestedCy` | `e419a544-e1b3-4ea5-b8eb-a074e63aea1a` |
+
 Publication logs connect safe analytics IDs to the opaque Notify reference, template,
 variant and original action time. Delivery logs distinguish null/before-cutover
 suppression, recorded Notify acceptance and terminal duplicate without claiming a
@@ -180,16 +246,19 @@ four bounded categories: `declaration-submitted-direct-en`,
 `declaration-submitted-direct-cy`, `declaration-submitted-scheme-en`,
 `declaration-submitted-scheme-cy`. Keep these in the deployed
 `NotificationCommandDelivery__DiagnosticNotificationTypes__0` (and subsequent indices)
-allowlist to distinguish variants.
+allowlist to distinguish variants. Checked-in settings also include the eight
+`declaration-cancelled-{family}-{en|cy}` categories; preserve those entries in
+deployed overrides to distinguish cancellation outcomes.
 
 Finalize all template overrides before the producer dry run begins. Changing a
-template ID for an existing submission creates an immutable-command conflict on
+template ID for an existing intention creates an immutable-command conflict on
 replay, which follows the command retry/DLQ policy.
 
 Use null cutover for the producer dry run: commands are published and terminally
 suppressed. Read ACL/deployed DTO, effective template overrides/account access and
-queue redrive policies remain activation prerequisites. Shared live handover remains
-gated on both submitted and cancellation producers.
+queue visibility/redrive policies, measured analytics headroom and identity-secret
+provisioning remain activation prerequisites. Shared live handover remains
+gated on both producers being deployed and verified.
 
 `NotificationCommandDelivery` is deployment-owned. Every host consumes commands
 after successful startup readiness; there is no command-processing enablement
@@ -660,7 +729,7 @@ Suppression recorded with an unset cutover remains terminal after configuration,
 including an action at or after the new boundary. Delete matching replays without
 changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.
 
-## Submitted-email verification and local Notify credentials
+## Email verification and local Notify credentials
 
 `DockerSubmittedEmailTests` publishes to an isolated SNS topic and waits for the
 Docker consumer to read a WireMock declaration, publish a command and receive a
@@ -676,12 +745,22 @@ scenarios verify the original audit recipient, configured template and all five
 personalisation fields, acceptance before successful deletion, and terminal replay
 suppression. Compose continues to use its generated dummy key and fixture endpoint.
 
-The four `NotifySubmissionPreviewTests` use the genuine GOV.UK Notify preview API;
+Hosted cancellation scenarios additionally exercise actual declaration, live
+organisation, OAuth, scheme search and Account persons HTTP boundaries through
+SQS/Mongo and outgoing Notify HTTP. They cover producer/scheme/Welsh/deduplicated
+recipients, publication prefix/replay, valid empty acknowledgement, changed live
+recipients and older/failed declaration reads. They own isolated resources only.
+
+The four `NotifySubmissionPreviewTests` and eight `NotifyCancellationPreviewTests`
+use the genuine GOV.UK Notify preview API;
 they render synthetic personalisation without sending emails. They read the
 `Submission` template mappings from `src/Consumer/appsettings.json` and process
 `Submission__DirectEnglishTemplateId`, `Submission__DirectWelshTemplateId`,
 `Submission__SchemeEnglishTemplateId` and `Submission__SchemeWelshTemplateId`
-overrides. PR, main and hotfix checks supply the Actions `GOVUKNOTIFY_APIKEY` secret
+overrides. Cancellation previews read the `Cancellation` mappings and corresponding
+`Cancellation__` overrides above, with synthetic direct-producer personalisation.
+They check body year, regulator/email, English/Welsh certificate wording and names;
+policy tests independently protect scheme wording. PR, main and hotfix checks supply the Actions `GOVUKNOTIFY_APIKEY` secret
 only to a dedicated preview process. Required previews also apply to Dependabot PRs;
 repository administrators must provision a GOV.UK Notify **test-type API key** as
 `GOVUKNOTIFY_APIKEY` in both the Actions and Dependabot secret stores. Never use
@@ -689,14 +768,16 @@ a live sending key for previews; PR-built tests and dependencies can read this e
 there is no bot exemption. The PR image build and Trivy scan run before previews,
 so missing credentials or provider outages do not prevent those security checks.
 Required mode fails on missing credentials,
-provider errors or incorrect rendering, and a fresh TRX guard requires all four
-cases to execute and pass with zero skips. Publishing depends on that build job.
+provider errors or incorrect rendering. Fresh, separately guarded TRX reports
+require every submission and cancellation preview to execute and pass with zero
+skips; the default guard retains the four-submission contract and its explicit
+`cancellation` mode requires the eight cancellation cases. Publishing depends on that build job.
 Normal isolated integration execution in CI has no provider key and explicitly
 skips previews; it does not substitute for the required step. The CI report
 combines isolated integration results with the dedicated preview results using
 test identities, counting each test once. Missing reports remain unavailable,
-and failures or unrelated skips remain visible. Preview results also appear
-in their own row. Counts come from TRX evidence rather than a fixed case list.
+and failures or unrelated skips remain visible. Isolated integration, submission
+preview and cancellation preview results also appear in separate rows. Counts come from TRX evidence rather than a fixed case list.
 
 For local previews, create the Git-ignored root `.env` (also excluded from Docker
 build inputs) with a placeholder replaced privately:
@@ -708,7 +789,7 @@ GovukNotify_ApiKey=replace-with-your-private-notify-key
 Direct preview execution reads this fallback when `GOVUKNOTIFY_APIKEY` is absent:
 
 ```bash
-dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build -- --filter-class '*NotifySubmissionPreviewTests'
+dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build -- --filter-class '*Notify*PreviewTests'
 ```
 
 Without a key, local previews report explicit skips. To require provider execution
