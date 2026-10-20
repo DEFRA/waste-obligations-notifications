@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Text;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Defra.WasteObligations.Consumer.Cancellation;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
@@ -19,7 +20,8 @@ public sealed class AnalyticsEventConsumer(
     ApplicationStartup startup,
     SubmittedEmailProducer producer,
     INotificationCommandPublisher publisher,
-    INotificationCommandDigest digest
+    INotificationCommandDigest digest,
+    CancellationEmailProducer cancellationProducer
 ) : StartupBackgroundService(startup)
 {
     private const string ContentEncodingHeader = "Content-Encoding";
@@ -103,7 +105,7 @@ public sealed class AnalyticsEventConsumer(
             var declarationEntityId = SafeEntityId(analyticsEvent.EntityId);
             entityId = declarationEntityId ?? OpaqueCorrelation(analyticsEvent.EntityId);
 
-            if (analyticsEvent.IsSubmission)
+            if (analyticsEvent.IsSubmission || analyticsEvent.IsCancellation)
             {
                 stage = "validate-event";
                 if (
@@ -129,8 +131,16 @@ public sealed class AnalyticsEventConsumer(
 #pragma warning disable S1854 // Sonar does not account for this exceptional path through the awaited call.
                 stage = "read-declaration";
 #pragma warning restore S1854
-                var command = await RunBounded(
-                    token => producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token),
+                var commands = await RunBounded<IReadOnlyList<NotificationCommand>>(
+                    async token =>
+                        analyticsEvent.IsCancellation
+                            ? await cancellationProducer.Create(
+                                organisationId,
+                                id[5..].ToLowerInvariant(),
+                                version,
+                                token
+                            )
+                            : [await producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token)],
                     options.Value.ReadTimeoutSeconds,
                     stoppingToken
                 );
@@ -140,26 +150,43 @@ public sealed class AnalyticsEventConsumer(
                 await RunBounded(
                     async token =>
                     {
-                        await publisher.Publish(command, token);
+                        var startedAt = Stopwatch.GetTimestamp();
+                        foreach (var command in commands)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            if (
+                                Stopwatch.GetElapsedTime(startedAt)
+                                >= TimeSpan.FromSeconds(options.Value.PublishTimeoutSeconds)
+                            )
+                                throw new TimeoutException("Analytics publication budget exhausted.");
+
+                            await publisher.Publish(command, token);
+                            token.ThrowIfCancellationRequested();
+                            if (
+                                Stopwatch.GetElapsedTime(startedAt)
+                                >= TimeSpan.FromSeconds(options.Value.PublishTimeoutSeconds)
+                            )
+                                throw new TimeoutException("Analytics publication budget exhausted.");
+                            published = true;
+                            if (logger.IsEnabled(LogLevel.Information))
+                            {
+                                logger.LogInformation(
+                                    "Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}",
+                                    eventId,
+                                    entityId,
+                                    digest.CreateNotifyReference(command.IdempotencyKey),
+                                    command.NotificationType,
+                                    command.TemplateId,
+                                    command.ActionOccurredAtUtc
+                                );
+                            }
+                        }
+
                         return true;
                     },
                     options.Value.PublishTimeoutSeconds,
                     stoppingToken
                 );
-                published = true;
-
-                if (logger.IsEnabled(LogLevel.Information))
-                {
-                    logger.LogInformation(
-                        "Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}",
-                        eventId,
-                        entityId,
-                        digest.CreateNotifyReference(command.IdempotencyKey),
-                        command.NotificationType,
-                        command.TemplateId,
-                        command.ActionOccurredAtUtc
-                    );
-                }
             }
 
             if (logger.IsEnabled(LogLevel.Information))

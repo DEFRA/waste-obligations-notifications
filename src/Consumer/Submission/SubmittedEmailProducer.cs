@@ -9,7 +9,7 @@ public sealed class SubmittedEmailProducer(IWasteObligationsClient reader, IOpti
 {
     private const string InvalidDeclarationData = "invalid-declaration-data";
 
-    public async Task<NotificationCommand> Create(
+    public async Task<Declaration> Read(
         Guid organisationId,
         string declarationId,
         int eventVersion,
@@ -33,6 +33,45 @@ public sealed class SubmittedEmailProducer(IWasteObligationsClient reader, IOpti
             if (declaration.Version < eventVersion)
                 throw new SubmissionProcessingException("older-declaration-version");
 
+            return declaration;
+        }
+        catch (SubmissionProcessingException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+            when (exception
+                    is JsonException
+                        or InvalidOperationException
+                        or KeyNotFoundException
+                        or FormatException
+                        or InvalidDataException
+                        or OverflowException
+            )
+        {
+            throw new SubmissionProcessingException(InvalidDeclarationData);
+        }
+    }
+
+    public async Task<NotificationCommand> Create(
+        Guid organisationId,
+        string declarationId,
+        int eventVersion,
+        CancellationToken cancellationToken
+    )
+    {
+        var declaration = await Read(organisationId, declarationId, eventVersion, cancellationToken);
+
+        return Create(declaration);
+    }
+
+    public NotificationCommand Create(Declaration declaration)
+    {
+        try
+        {
+            var organisation =
+                declaration.Organisation ?? throw new SubmissionProcessingException(InvalidDeclarationData);
+            var declarationId = Required(declaration.Id);
             var submitted =
                 declaration.Audit?.First(entry => entry.Action == "Submitted")
                 ?? throw new SubmissionProcessingException(InvalidDeclarationData);
@@ -85,7 +124,6 @@ public sealed class SubmittedEmailProducer(IWasteObligationsClient reader, IOpti
             when (exception
                     is JsonException
                         or InvalidOperationException
-                        or KeyNotFoundException
                         or FormatException
                         or InvalidDataException
                         or OverflowException

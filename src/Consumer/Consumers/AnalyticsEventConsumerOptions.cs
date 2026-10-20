@@ -18,10 +18,10 @@ public sealed record AnalyticsEventConsumerOptions
     public int ReceiveTimeoutSeconds { get; init; } = 30;
 
     [Range(1, 300)]
-    public int ReadTimeoutSeconds { get; init; } = 20;
+    public int ReadTimeoutSeconds { get; init; } = 60;
 
     [Range(1, 300)]
-    public int PublishTimeoutSeconds { get; init; } = 10;
+    public int PublishTimeoutSeconds { get; init; } = 30;
 
     [Range(1, 300)]
     public int DeleteTimeoutSeconds { get; init; } = 5;
@@ -30,7 +30,7 @@ public sealed record AnalyticsEventConsumerOptions
     public int SafetyHeadroomSeconds { get; init; } = 10;
 
     [Range(1, 43200)]
-    public int VisibilityTimeoutSeconds { get; init; } = 90;
+    public int VisibilityTimeoutSeconds { get; init; } = 150;
 
     public bool HasValidProcessingBudget =>
         ReceiveTimeoutSeconds > WaitTimeSeconds

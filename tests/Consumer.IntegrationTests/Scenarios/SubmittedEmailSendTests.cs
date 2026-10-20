@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Amazon.Runtime;
 using Amazon.SQS;
@@ -151,6 +152,13 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                 );
                 var values = new Dictionary<string, string?>
                 {
+                    ["WasteOrganisations:BaseAddress"] = "https://organisations.test/",
+                    ["WasteOrganisations:ClientId"] = "isolated-reader",
+                    ["WasteOrganisations:ClientSecret"] = "synthetic-read-secret",
+                    ["AccountBackend:BaseAddress"] = "https://accounts.test/",
+                    ["AccountBackend:TokenEndpoint"] = "https://accounts.test/token",
+                    ["AccountBackend:ClientId"] = "isolated-reader",
+                    ["AccountBackend:ClientSecret"] = "synthetic-read-secret",
                     ["AWS_EMF_ENABLED"] = "false",
                     ["AnalyticsEventConsumer:QueueUrl"] = fixture.Sqs.AnalyticsUrl,
                     ["AnalyticsEventConsumer:ProcessingEnabled"] = "true",
@@ -363,7 +371,7 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
             );
             Assert.Equal("Basic", request.Headers.Authorization?.Scheme);
             Assert.Equal(
-                "aXNvbGF0ZWQtcmVhZGVyOnN5bnRoZXRpYy1yZWFkLXNlY3JldA==",
+                Convert.ToBase64String(Encoding.UTF8.GetBytes("isolated-reader:synthetic-read-secret")),
                 request.Headers.Authorization?.Parameter
             );
             Interlocked.Increment(ref _declarationReads);

@@ -1,4 +1,5 @@
 using Amazon.SQS;
+using Defra.WasteObligations.Consumer.Cancellation;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
@@ -27,6 +28,7 @@ public static class ServiceCollectionExtensions
 
         services.AddWasteObligationsClient(configuration);
         services.AddSubmittedEmailProducer(configuration);
+        services.AddCancellationEmailProducer(configuration);
         services.AddAWSService<IAmazonSQS>();
         services.AddHostedService<AnalyticsEventConsumer>();
 
