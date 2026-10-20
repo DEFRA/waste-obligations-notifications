@@ -102,10 +102,7 @@ public sealed class CancellationEmailProducer(
         if (audit.Reason is null || !UtcTimestamp.TryParse(audit.Timestamp, out var actionTime))
             throw new SubmissionProcessingException("invalid-declaration-data");
 
-        if (
-            declaration.ObligationYear <= 0
-            || string.IsNullOrWhiteSpace(declaration.Organisation!.RegistrationType)
-        )
+        if (declaration.ObligationYear <= 0 || string.IsNullOrWhiteSpace(declaration.Organisation!.RegistrationType))
             throw new SubmissionProcessingException("invalid-declaration-data");
 
         var family = audit.Reason switch
