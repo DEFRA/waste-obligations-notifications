@@ -59,6 +59,43 @@ public sealed class CancellationDependencyRegistrationTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WhenWasteOrganisationsCredentialsAreBound_ShouldRequireUsernameAndPassword(bool legacyNames)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["WasteOrganisations:BaseAddress"] = "https://organisations.test/",
+                    [$"WasteOrganisations:{(legacyNames ? "ClientId" : "Username")}"] = "user",
+                    [$"WasteOrganisations:{(legacyNames ? "ClientSecret" : "Password")}"] = "secret",
+                }
+            )
+            .Build();
+        var services = new ServiceCollection();
+        services.AddSingleton<IOptions<AnalyticsEventConsumerOptions>>(
+            Options.Create(
+                new AnalyticsEventConsumerOptions { QueueUrl = "http://localhost/analytics", ProcessingEnabled = true }
+            )
+        );
+        services.AddWasteOrganisationsClient(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        if (legacyNames)
+            Assert.Throws<OptionsValidationException>(() =>
+                provider.GetRequiredService<IOptions<WasteOrganisationsOptions>>().Value
+            );
+        else
+        {
+            var options = provider.GetRequiredService<IOptions<WasteOrganisationsOptions>>().Value;
+            Assert.Equal("user", options.Username);
+            Assert.Equal("secret", options.Password);
+            Assert.True(options.HasReadAccess);
+        }
+    }
+
+    [Theory]
     [InlineData("http://accounts.example.test", false)]
     [InlineData("https://accounts.example.test", true)]
     [InlineData("http://localhost:8083", true)]

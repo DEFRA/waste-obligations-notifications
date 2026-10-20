@@ -109,7 +109,7 @@ public sealed class CancellationDependencyClientTests
         using var http = send.CreateHttpStub();
         var client = new WasteOrganisationsClient(
             http,
-            Options.Create(new WasteOrganisationsOptions { ClientId = "user", ClientSecret = "secret" })
+            Options.Create(new WasteOrganisationsOptions { Username = "user", Password = "secret" })
         );
 
         var result = await client.Read(id, TestContext.Current.CancellationToken);
@@ -142,7 +142,7 @@ public sealed class CancellationDependencyClientTests
         var account = new AccountBackendClient(http, tokens);
         var organisations = new WasteOrganisationsClient(
             http,
-            Options.Create(new WasteOrganisationsOptions { ClientId = "user", ClientSecret = "secret" })
+            Options.Create(new WasteOrganisationsOptions { Username = "user", Password = "secret" })
         );
 
         await account.CheckHealth(TestContext.Current.CancellationToken);

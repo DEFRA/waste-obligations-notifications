@@ -13,6 +13,8 @@ namespace Defra.WasteObligations.Consumer.Tests.Cancellation;
 
 public sealed class CancellationEmailProducerTests
 {
+    private static readonly string[] SortedRecipientAddresses = ["a@example.test", "submitter@example.test"];
+
     [Theory]
     [InlineData("Not signed by correct person", "GB-ENG", "1502cfa2-9758-4410-b189-d1f95a7c774f")]
     [InlineData("Not signed by correct person", "GB-WLS", "7cab1c5e-9edf-4139-b3fd-3db4bcf3041d")]
@@ -218,10 +220,7 @@ public sealed class CancellationEmailProducerTests
             new OrganisationPerson(null, "Primary", "Person", " A@example.test ", "Approved Person"),
         ]);
         var first = await fixture.Create();
-        Assert.Equal(
-            new[] { "a@example.test", "submitter@example.test" },
-            first.Skip(1).Select(command => command.EmailAddress)
-        );
+        Assert.Equal(SortedRecipientAddresses, first.Skip(1).Select(command => command.EmailAddress));
         fixture.Persons = new OrganisationWithPersons([
             Fixture.Submitter() with
             {

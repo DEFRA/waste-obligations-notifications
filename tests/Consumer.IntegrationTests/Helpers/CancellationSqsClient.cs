@@ -55,10 +55,7 @@ public sealed class CancellationSqsClient : AmazonSQSClient
         var response = await base.SendMessageAsync(request, cancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.HttpStatusCode);
         Confirmed.Enqueue(
-            JsonSerializer.Deserialize<NotificationCommand>(
-                request.MessageBody,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web)
-            )!
+            JsonSerializer.Deserialize<NotificationCommand>(request.MessageBody, JsonSerializerOptions.Web)!
         );
 
         return response;

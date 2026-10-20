@@ -187,11 +187,11 @@ public sealed class AnalyticsEventConsumer(
                 var startedAt = Stopwatch.GetTimestamp();
                 foreach (var command in commands)
                 {
-                    EnsurePublicationDeadline(token, startedAt);
+                    EnsurePublicationDeadline(startedAt, token);
 
                     await publisher.Publish(command, token);
 
-                    EnsurePublicationDeadline(token, startedAt);
+                    EnsurePublicationDeadline(startedAt, token);
                     publicationConfirmed();
                     if (logger.IsEnabled(LogLevel.Information))
                     {
@@ -213,7 +213,7 @@ public sealed class AnalyticsEventConsumer(
             stoppingToken
         );
 
-    private void EnsurePublicationDeadline(CancellationToken cancellationToken, long startedAt)
+    private void EnsurePublicationDeadline(long startedAt, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(options.Value.PublishTimeoutSeconds))

@@ -19,6 +19,8 @@ public sealed class CancellationEmailProducer(
     IOptions<NotificationDefinitionsOptions> options
 ) : IAnalyticsNotificationProducer
 {
+    private const string InvalidDeclarationData = "invalid-declaration-data";
+
     public bool CanHandle(AnalyticsEvent analyticsEvent) => analyticsEvent.IsCancellation;
 
     public async Task<IReadOnlyList<NotificationCommand>> Create(
@@ -58,7 +60,7 @@ public sealed class CancellationEmailProducer(
                 declaration.Audit?.FirstOrDefault(entry => entry.Action == "Submitted")?.User,
                 organisation?.Persons ?? []
             );
-            if (recipients.Count == 0)
+            if (recipients.Length == 0)
                 return [];
 
             var predecessor = submitted.Create(declaration);
@@ -99,7 +101,7 @@ public sealed class CancellationEmailProducer(
                         or OverflowException
             )
         {
-            throw new SubmissionProcessingException("invalid-declaration-data");
+            throw new SubmissionProcessingException(InvalidDeclarationData);
         }
     }
 
@@ -107,12 +109,12 @@ public sealed class CancellationEmailProducer(
     {
         var audit =
             declaration.Audit?.FirstOrDefault(entry => entry.Action == "Cancelled")
-            ?? throw new SubmissionProcessingException("invalid-declaration-data");
+            ?? throw new SubmissionProcessingException(InvalidDeclarationData);
         if (audit.Reason is null || !UtcTimestamp.TryParse(audit.Timestamp, out var actionTime))
-            throw new SubmissionProcessingException("invalid-declaration-data");
+            throw new SubmissionProcessingException(InvalidDeclarationData);
 
         if (declaration.ObligationYear <= 0 || string.IsNullOrWhiteSpace(declaration.Organisation!.RegistrationType))
-            throw new SubmissionProcessingException("invalid-declaration-data");
+            throw new SubmissionProcessingException(InvalidDeclarationData);
 
         var family = audit.Reason switch
         {
@@ -166,7 +168,7 @@ public sealed class CancellationEmailProducer(
         }
     }
 
-    private static IReadOnlyList<CancellationRecipient> ResolveRecipients(
+    private static CancellationRecipient[] ResolveRecipients(
         DeclarationUser? submitter,
         IReadOnlyList<OrganisationPerson> persons
     )

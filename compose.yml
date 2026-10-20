@@ -127,8 +127,8 @@ services:
       Mongo__DatabaseName: submission-docker-e2e
       WasteObligations__BaseAddress: http://localhost/
       WasteOrganisations__BaseAddress: http://localhost/
-      WasteOrganisations__ClientId: isolated-reader
-      WasteOrganisations__ClientSecret: synthetic-read-secret
+      WasteOrganisations__Username: isolated-reader
+      WasteOrganisations__Password: synthetic-read-secret
       AccountBackend__BaseAddress: http://localhost/
       AccountBackend__TokenEndpoint: http://localhost/token
       AccountBackend__ClientId: isolated-reader

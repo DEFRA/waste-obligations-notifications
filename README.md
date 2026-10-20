@@ -52,8 +52,12 @@ Before deploying this image to any environment where analytics is enabled, provi
 | Boundary | Deployment settings |
 | --- | --- |
 | Waste Obligations Basic Read | `WasteObligations__BaseAddress`, `Username`, `Password` |
-| Waste Organisations Basic | `WasteOrganisations__BaseAddress`, `ClientId`, `ClientSecret` |
+| Waste Organisations Basic | `WasteOrganisations__BaseAddress`, `Username`, `Password` |
 | Account OAuth client credentials | `AccountBackend__BaseAddress`, `TokenEndpoint`, `ClientId`, `ClientSecret`, optional `Scope` |
+
+Waste Organisations deployments using `ClientId`/`ClientSecret` must migrate to
+`Username`/`Password` before this image deploys. The old names are not aliases.
+Account OAuth retains `ClientId`/`ClientSecret`.
 
 Each suffix in the table uses its boundary's prefix. Alternatively, disable
 analytics before deployment. Missing enabled-analytics access configuration

@@ -153,8 +153,8 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                 var values = new Dictionary<string, string?>
                 {
                     ["WasteOrganisations:BaseAddress"] = "https://organisations.test/",
-                    ["WasteOrganisations:ClientId"] = "isolated-reader",
-                    ["WasteOrganisations:ClientSecret"] = "synthetic-read-secret",
+                    ["WasteOrganisations:Username"] = "isolated-reader",
+                    ["WasteOrganisations:Password"] = "synthetic-read-secret",
                     ["AccountBackend:BaseAddress"] = "https://accounts.test/",
                     ["AccountBackend:TokenEndpoint"] = "https://accounts.test/token",
                     ["AccountBackend:ClientId"] = "isolated-reader",
