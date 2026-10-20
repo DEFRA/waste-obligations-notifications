@@ -27,27 +27,7 @@ public sealed class CancellationEmailProducer(
         try
         {
             var declaration = await submitted.Read(organisationId, declarationId, eventVersion, cancellationToken);
-            var audit =
-                declaration.Audit?.FirstOrDefault(entry => entry.Action == "Cancelled")
-                ?? throw new SubmissionProcessingException("invalid-declaration-data");
-            if (audit.Reason is null || !UtcTimestamp.TryParse(audit.Timestamp, out var actionTime))
-                throw new SubmissionProcessingException("invalid-declaration-data");
-
-            if (
-                declaration.ObligationYear <= 0
-                || string.IsNullOrWhiteSpace(declaration.Organisation!.RegistrationType)
-            )
-                throw new SubmissionProcessingException("invalid-declaration-data");
-
-            var family = audit.Reason switch
-            {
-                "Not signed by correct person" => "not-signed-by-correct-person",
-                "Recycling obligations changed" => "recycling-obligations-changed",
-                "Producer can meet recycling obligations" or "Compliance scheme can meet recycling obligations" =>
-                    "can-meet-recycling-obligations",
-                "Producer requested to cancel" or "Compliance scheme requested to cancel" => "producer-requested",
-                _ => null,
-            };
+            var (family, actionTime) = ReadCancellation(declaration);
             if (family is null)
                 return [];
 
@@ -58,7 +38,7 @@ public sealed class CancellationEmailProducer(
                 throw new SubmissionProcessingException("identity-mismatch");
 
             var accountId =
-                declaration.Organisation.RegistrationType == "ComplianceScheme"
+                declaration.Organisation!.RegistrationType == "ComplianceScheme"
                     ? await ResolveScheme(live.CompaniesHouseNumber, cancellationToken)
                     : live.Id;
             if (accountId is null)
@@ -112,6 +92,33 @@ public sealed class CancellationEmailProducer(
         {
             throw new SubmissionProcessingException("invalid-declaration-data");
         }
+    }
+
+    private static (string? Family, DateTimeOffset ActionTime) ReadCancellation(Declaration declaration)
+    {
+        var audit =
+            declaration.Audit?.FirstOrDefault(entry => entry.Action == "Cancelled")
+            ?? throw new SubmissionProcessingException("invalid-declaration-data");
+        if (audit.Reason is null || !UtcTimestamp.TryParse(audit.Timestamp, out var actionTime))
+            throw new SubmissionProcessingException("invalid-declaration-data");
+
+        if (
+            declaration.ObligationYear <= 0
+            || string.IsNullOrWhiteSpace(declaration.Organisation!.RegistrationType)
+        )
+            throw new SubmissionProcessingException("invalid-declaration-data");
+
+        var family = audit.Reason switch
+        {
+            "Not signed by correct person" => "not-signed-by-correct-person",
+            "Recycling obligations changed" => "recycling-obligations-changed",
+            "Producer can meet recycling obligations" or "Compliance scheme can meet recycling obligations" =>
+                "can-meet-recycling-obligations",
+            "Producer requested to cancel" or "Compliance scheme requested to cancel" => "producer-requested",
+            _ => null,
+        };
+
+        return (family, actionTime);
     }
 
     private async Task<Guid?> ResolveScheme(string? companiesHouseNumber, CancellationToken cancellationToken)

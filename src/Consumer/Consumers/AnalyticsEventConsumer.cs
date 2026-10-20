@@ -108,18 +108,9 @@ public sealed class AnalyticsEventConsumer(
             if (analyticsEvent.IsSubmission || analyticsEvent.IsCancellation)
             {
                 stage = "validate-event";
-                if (
-                    declarationEntityId is null
-                    || !analyticsEvent.SupportsSubmissionSchema
-                    || analyticsEvent.Version is not > 0
-                    || analyticsEvent.OrganisationId is null
-                    || analyticsEvent.OrganisationId == Guid.Empty
-                )
-                    throw new SubmissionProcessingException("invalid-event-data");
+                var (version, organisationId) = ValidateEvent(analyticsEvent, declarationEntityId);
 
                 var id = analyticsEvent.EntityId;
-                var version = analyticsEvent.Version.Value;
-                var organisationId = analyticsEvent.OrganisationId.Value;
 
                 EnsureRemaining(
                     receivedAt,
@@ -147,46 +138,7 @@ public sealed class AnalyticsEventConsumer(
 
                 EnsureRemaining(receivedAt, options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
                 stage = "publish-command";
-                await RunBounded(
-                    async token =>
-                    {
-                        var startedAt = Stopwatch.GetTimestamp();
-                        foreach (var command in commands)
-                        {
-                            token.ThrowIfCancellationRequested();
-                            if (
-                                Stopwatch.GetElapsedTime(startedAt)
-                                >= TimeSpan.FromSeconds(options.Value.PublishTimeoutSeconds)
-                            )
-                                throw new TimeoutException("Analytics publication budget exhausted.");
-
-                            await publisher.Publish(command, token);
-                            token.ThrowIfCancellationRequested();
-                            if (
-                                Stopwatch.GetElapsedTime(startedAt)
-                                >= TimeSpan.FromSeconds(options.Value.PublishTimeoutSeconds)
-                            )
-                                throw new TimeoutException("Analytics publication budget exhausted.");
-                            published = true;
-                            if (logger.IsEnabled(LogLevel.Information))
-                            {
-                                logger.LogInformation(
-                                    "Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}",
-                                    eventId,
-                                    entityId,
-                                    digest.CreateNotifyReference(command.IdempotencyKey),
-                                    command.NotificationType,
-                                    command.TemplateId,
-                                    command.ActionOccurredAtUtc
-                                );
-                            }
-                        }
-
-                        return true;
-                    },
-                    options.Value.PublishTimeoutSeconds,
-                    stoppingToken
-                );
+                await PublishCommands(commands, eventId, entityId, () => published = true, stoppingToken);
             }
 
             if (logger.IsEnabled(LogLevel.Information))
@@ -208,6 +160,69 @@ public sealed class AnalyticsEventConsumer(
             LogRetry(exception, stage, published, messageId, eventId, entityId);
             throw;
         }
+    }
+
+    private static (int Version, Guid OrganisationId) ValidateEvent(
+        AnalyticsEvent analyticsEvent,
+        string? declarationEntityId
+    )
+    {
+        if (
+            declarationEntityId is null
+            || !analyticsEvent.SupportsSubmissionSchema
+            || analyticsEvent.Version is not > 0
+            || analyticsEvent.OrganisationId is null
+            || analyticsEvent.OrganisationId == Guid.Empty
+        )
+            throw new SubmissionProcessingException("invalid-event-data");
+
+        return (analyticsEvent.Version.Value, analyticsEvent.OrganisationId.Value);
+    }
+
+    private Task<bool> PublishCommands(
+        IReadOnlyList<NotificationCommand> commands,
+        string? eventId,
+        string? entityId,
+        Action publicationConfirmed,
+        CancellationToken stoppingToken
+    ) =>
+        RunBounded(
+            async token =>
+            {
+                var startedAt = Stopwatch.GetTimestamp();
+                foreach (var command in commands)
+                {
+                    EnsurePublicationDeadline(token, startedAt);
+
+                    await publisher.Publish(command, token);
+
+                    EnsurePublicationDeadline(token, startedAt);
+                    publicationConfirmed();
+                    if (logger.IsEnabled(LogLevel.Information))
+                    {
+                        logger.LogInformation(
+                            "Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}",
+                            eventId,
+                            entityId,
+                            digest.CreateNotifyReference(command.IdempotencyKey),
+                            command.NotificationType,
+                            command.TemplateId,
+                            command.ActionOccurredAtUtc
+                        );
+                    }
+                }
+
+                return true;
+            },
+            options.Value.PublishTimeoutSeconds,
+            stoppingToken
+        );
+
+    private void EnsurePublicationDeadline(CancellationToken cancellationToken, long startedAt)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(options.Value.PublishTimeoutSeconds))
+            throw new TimeoutException("Analytics publication budget exhausted.");
     }
 
     private void LogFailure(Exception exception)
