@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Services.AccountBackend;
 using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
@@ -124,23 +123,41 @@ public sealed class CancellationDependencyHealthCheckTests
 
                 return pending.Task;
             });
+        var clock = Substitute.For<TimeProvider>();
+        TimerCallback? expire = null;
+        object? timerState = null;
+        clock
+            .CreateTimer(
+                Arg.Any<TimerCallback>(),
+                Arg.Any<object?>(),
+                TimeSpan.FromSeconds(10),
+                Timeout.InfiniteTimeSpan
+            )
+            .Returns(call =>
+            {
+                expire = call.Arg<TimerCallback>();
+                timerState = call[1];
+
+                return Substitute.For<ITimer>();
+            });
         var options = Options.Create(
             new AnalyticsEventConsumerOptions { QueueUrl = "http://localhost/analytics", ProcessingEnabled = true }
         );
         IHealthCheck check = account
-            ? new AccountBackendHealthCheck(options, accountClient)
-            : new WasteOrganisationsHealthCheck(options, organisationClient);
+            ? new AccountBackendHealthCheck(options, accountClient, clock)
+            : new WasteOrganisationsHealthCheck(options, organisationClient, clock);
 
-        var startedAt = Stopwatch.GetTimestamp();
         try
         {
-            var result = await check
-                .CheckHealthAsync(new HealthCheckContext(), CancellationToken.None)
-                .WaitAsync(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken);
+            var resultTask = check.CheckHealthAsync(new HealthCheckContext(), CancellationToken.None);
+            Assert.False(resultTask.IsCompleted);
+            Assert.NotNull(expire);
+
+            expire(timerState);
+            var result = await resultTask.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
 
             Assert.Equal(HealthStatus.Unhealthy, result.Status);
             Assert.True(dependencyToken.IsCancellationRequested);
-            Assert.True(Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(9));
             Assert.Equal(
                 account ? "AccountBackend service unavailable" : "WasteOrganisations service unavailable",
                 result.Description

@@ -8,14 +8,15 @@ internal static class AnalyticsDependencyHealthCheck
         bool processingEnabled,
         Func<CancellationToken, Task> checkHealth,
         string failureDescription,
+        TimeProvider timeProvider,
         CancellationToken cancellationToken
     )
     {
         if (!processingEnabled)
             return HealthCheckResult.Healthy("Analytics processing disabled");
 
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10), timeProvider);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
             await checkHealth(deadline.Token).WaitAsync(deadline.Token);

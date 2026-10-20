@@ -16,6 +16,7 @@ public static class ServiceCollectionExtensions
         services
             .AddOptions<WasteObligationsOptions>()
             .Bind(configuration.GetSection(WasteObligationsOptions.SectionName))
+            .ValidateDataAnnotations()
             .Validate<IOptions<AnalyticsEventConsumerOptions>>(
                 (options, analytics) => !analytics.Value.ProcessingEnabled || options.HasReadAccess,
                 "Waste Obligations read access requires HTTPS or loopback HTTP and configured Basic credentials when analytics processing is enabled"

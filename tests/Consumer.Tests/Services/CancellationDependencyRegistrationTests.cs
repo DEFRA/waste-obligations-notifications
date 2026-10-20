@@ -1,5 +1,6 @@
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Services.AccountBackend;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -102,15 +103,55 @@ public sealed class CancellationDependencyRegistrationTests
     }
 
     [Theory]
-    [InlineData("http://accounts.example.test", false)]
-    [InlineData("https://accounts.example.test", true)]
-    [InlineData("http://localhost:8083", true)]
-    public void WhenAccountAddressCarriesCredentials_ShouldRequireHttpsExceptLoopback(string address, bool valid)
+    [InlineData("https://user:secret@declarations.test/", "secret", true)]
+    [InlineData("http://declarations.test/", "secret", true)]
+    [InlineData("https://declarations.test/", "", false)]
+    public void WhenWasteObligationsAccessIsInvalid_ShouldRejectOptions(string address, string password, bool enabled)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    ["WasteObligations:BaseAddress"] = address,
+                    ["WasteObligations:Username"] = "reader",
+                    ["WasteObligations:Password"] = password,
+                }
+            )
+            .Build();
+        var services = new ServiceCollection();
+        services.AddSingleton<IOptions<AnalyticsEventConsumerOptions>>(
+            Options.Create(
+                new AnalyticsEventConsumerOptions
+                {
+                    QueueUrl = "http://localhost/analytics",
+                    ProcessingEnabled = enabled,
+                }
+            )
+        );
+        services.AddWasteObligationsClient(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptions<WasteObligationsOptions>>().Value
+        );
+    }
+
+    [Theory]
+    [InlineData("http://accounts.example.test", "http://accounts.example.test/token", false)]
+    [InlineData("https://accounts.example.test", "https://accounts.example.test/token", true)]
+    [InlineData("http://localhost:8083", "http://localhost:8083/token", true)]
+    [InlineData("https://accounts.example.test", "http://accounts.example.test/token", false)]
+    [InlineData("http://accounts.example.test", "https://accounts.example.test/token", false)]
+    public void WhenAccountAddressCarriesCredentials_ShouldRequireHttpsExceptLoopback(
+        string address,
+        string tokenEndpoint,
+        bool valid
+    )
     {
         var options = new AccountBackendOptions
         {
             BaseAddress = address,
-            TokenEndpoint = address + "/token",
+            TokenEndpoint = tokenEndpoint,
             ClientId = "client",
             ClientSecret = "secret",
         };

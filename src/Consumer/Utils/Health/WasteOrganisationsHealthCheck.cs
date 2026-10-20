@@ -7,7 +7,8 @@ namespace Defra.WasteObligations.Consumer.Utils.Health;
 
 public sealed class WasteOrganisationsHealthCheck(
     IOptions<AnalyticsEventConsumerOptions> options,
-    IWasteOrganisationsClient client
+    IWasteOrganisationsClient client,
+    TimeProvider? timeProvider = null
 ) : IHealthCheck
 {
     public Task<HealthCheckResult> CheckHealthAsync(
@@ -18,6 +19,7 @@ public sealed class WasteOrganisationsHealthCheck(
             options.Value.ProcessingEnabled,
             client.CheckHealth,
             "WasteOrganisations service unavailable",
+            timeProvider ?? TimeProvider.System,
             cancellationToken
         );
 }

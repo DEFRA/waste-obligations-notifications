@@ -7,7 +7,8 @@ namespace Defra.WasteObligations.Consumer.Utils.Health;
 
 public sealed class AccountBackendHealthCheck(
     IOptions<AnalyticsEventConsumerOptions> options,
-    IAccountBackendClient client
+    IAccountBackendClient client,
+    TimeProvider? timeProvider = null
 ) : IHealthCheck
 {
     public Task<HealthCheckResult> CheckHealthAsync(
@@ -18,6 +19,7 @@ public sealed class AccountBackendHealthCheck(
             options.Value.ProcessingEnabled,
             client.CheckHealth,
             "AccountBackend service unavailable",
+            timeProvider ?? TimeProvider.System,
             cancellationToken
         );
 }

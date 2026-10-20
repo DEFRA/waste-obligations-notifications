@@ -163,6 +163,18 @@ public sealed class CancellationEmailFixture : IAsyncDisposable
             TestContext.Current.CancellationToken
         );
 
+    public async Task SendPublishedReplay(NotificationCommand command) =>
+        await Sqs.SendMessageAsync(
+            new SendMessageRequest
+            {
+                QueueUrl = Sqs.CommandUrl,
+                MessageBody = JsonSerializer.Serialize(command, JsonSerializerOptions.Web),
+                MessageGroupId = Digest.CreateRecipientLane(command.EmailAddress),
+                MessageDeduplicationId = Guid.NewGuid().ToString("N"),
+            },
+            TestContext.Current.CancellationToken
+        );
+
     public async Task RetryAnalytics() =>
         await Sqs.ChangeMessageVisibilityAsync(
             Sqs.AnalyticsUrl,

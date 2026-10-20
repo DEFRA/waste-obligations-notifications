@@ -60,6 +60,8 @@ public sealed class CancellationEmailSendTests : IntegrationTestBase
                 Assert.Equal("stored-regulator@example.test", body.GetProperty("regulatorEmail").GetString());
                 if (country == "GB-WLS")
                     Assert.Equal("Cyfoeth Naturiol Cymru", body.GetProperty("regulator_cy").GetString());
+                else
+                    Assert.False(body.TryGetProperty("regulator_cy", out _));
             }
         );
         var submitter = Assert.Single(
@@ -81,6 +83,19 @@ public sealed class CancellationEmailSendTests : IntegrationTestBase
         });
         Assert.Equal(total, (await fixture.NotifyRequests()).Length);
         Assert.Equal(commands[0].IdempotencyKey, fixture.Sqs.Confirmed.ToArray()[total].IdempotencyKey);
+
+        var deletedBeforeTransportCopies = fixture.Sqs.CommandDeletions;
+        foreach (var command in commands.Skip(1))
+            await fixture.SendPublishedReplay(command);
+
+        await WaitForAsync(async () =>
+        {
+            Assert.Equal(deletedBeforeTransportCopies + total - 1, fixture.Sqs.CommandDeletions);
+            await fixture.AssertQueuesEmpty();
+        });
+
+        Assert.Equal(total, (await fixture.NotifyRequests()).Length);
+        await fixture.AssertAcceptedRecords(total);
     }
 
     [Theory]

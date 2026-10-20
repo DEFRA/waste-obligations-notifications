@@ -16,22 +16,83 @@ public sealed class CancellationEmailProducerTests
     private static readonly string[] SortedRecipientAddresses = ["a@example.test", "submitter@example.test"];
 
     [Theory]
-    [InlineData("Not signed by correct person", "GB-ENG", "1502cfa2-9758-4410-b189-d1f95a7c774f")]
-    [InlineData("Not signed by correct person", "GB-WLS", "7cab1c5e-9edf-4139-b3fd-3db4bcf3041d")]
-    [InlineData("Recycling obligations changed", "GB-ENG", "857808d4-d159-421e-92b6-bf9d59711a9e")]
-    [InlineData("Recycling obligations changed", "GB-WLS", "0a966633-b7ad-42dd-b286-af0cb2405ed2")]
-    [InlineData("Producer can meet recycling obligations", "GB-ENG", "86345150-cb25-4b59-94c3-578bed7e82d4")]
-    [InlineData("Producer can meet recycling obligations", "GB-WLS", "308e7224-0ab1-4f54-8e8d-1558c9c57a77")]
-    [InlineData("Compliance scheme can meet recycling obligations", "GB-ENG", "86345150-cb25-4b59-94c3-578bed7e82d4")]
-    [InlineData("Compliance scheme can meet recycling obligations", "GB-WLS", "308e7224-0ab1-4f54-8e8d-1558c9c57a77")]
-    [InlineData("Producer requested to cancel", "GB-ENG", "3e03c93f-955c-4db3-936c-bfa3f7725a5f")]
-    [InlineData("Producer requested to cancel", "GB-WLS", "e419a544-e1b3-4ea5-b8eb-a074e63aea1a")]
-    [InlineData("Compliance scheme requested to cancel", "GB-ENG", "3e03c93f-955c-4db3-936c-bfa3f7725a5f")]
-    [InlineData("Compliance scheme requested to cancel", "GB-WLS", "e419a544-e1b3-4ea5-b8eb-a074e63aea1a")]
+    [InlineData(
+        "Not signed by correct person",
+        "GB-ENG",
+        "1502cfa2-9758-4410-b189-d1f95a7c774f",
+        "declaration-cancelled-not-signed-by-correct-person-en"
+    )]
+    [InlineData(
+        "Not signed by correct person",
+        "GB-WLS",
+        "7cab1c5e-9edf-4139-b3fd-3db4bcf3041d",
+        "declaration-cancelled-not-signed-by-correct-person-cy"
+    )]
+    [InlineData(
+        "Recycling obligations changed",
+        "GB-ENG",
+        "857808d4-d159-421e-92b6-bf9d59711a9e",
+        "declaration-cancelled-recycling-obligations-changed-en"
+    )]
+    [InlineData(
+        "Recycling obligations changed",
+        "GB-WLS",
+        "0a966633-b7ad-42dd-b286-af0cb2405ed2",
+        "declaration-cancelled-recycling-obligations-changed-cy"
+    )]
+    [InlineData(
+        "Producer can meet recycling obligations",
+        "GB-ENG",
+        "86345150-cb25-4b59-94c3-578bed7e82d4",
+        "declaration-cancelled-can-meet-recycling-obligations-en"
+    )]
+    [InlineData(
+        "Producer can meet recycling obligations",
+        "GB-WLS",
+        "308e7224-0ab1-4f54-8e8d-1558c9c57a77",
+        "declaration-cancelled-can-meet-recycling-obligations-cy"
+    )]
+    [InlineData(
+        "Compliance scheme can meet recycling obligations",
+        "GB-ENG",
+        "86345150-cb25-4b59-94c3-578bed7e82d4",
+        "declaration-cancelled-can-meet-recycling-obligations-en"
+    )]
+    [InlineData(
+        "Compliance scheme can meet recycling obligations",
+        "GB-WLS",
+        "308e7224-0ab1-4f54-8e8d-1558c9c57a77",
+        "declaration-cancelled-can-meet-recycling-obligations-cy"
+    )]
+    [InlineData(
+        "Producer requested to cancel",
+        "GB-ENG",
+        "3e03c93f-955c-4db3-936c-bfa3f7725a5f",
+        "declaration-cancelled-producer-requested-en"
+    )]
+    [InlineData(
+        "Producer requested to cancel",
+        "GB-WLS",
+        "e419a544-e1b3-4ea5-b8eb-a074e63aea1a",
+        "declaration-cancelled-producer-requested-cy"
+    )]
+    [InlineData(
+        "Compliance scheme requested to cancel",
+        "GB-ENG",
+        "3e03c93f-955c-4db3-936c-bfa3f7725a5f",
+        "declaration-cancelled-producer-requested-en"
+    )]
+    [InlineData(
+        "Compliance scheme requested to cancel",
+        "GB-WLS",
+        "e419a544-e1b3-4ea5-b8eb-a074e63aea1a",
+        "declaration-cancelled-producer-requested-cy"
+    )]
     public async Task WhenKnownReasonIsRead_ShouldUseConfiguredDefaultAndOriginalAction(
         string reason,
         string country,
-        string template
+        string template,
+        string notificationType
     )
     {
         var fixture = new Fixture(reason, country);
@@ -46,6 +107,7 @@ public sealed class CancellationEmailProducerTests
         Assert.Equal("compliance-declaration:65f1f6570bb08052a8a27b01:submitted:v1", commands[0].IdempotencyKey);
         var command = commands[1];
         Assert.Equal(template, command.TemplateId);
+        Assert.Equal(notificationType, command.NotificationType);
         Assert.Equal("submitter@example.test", command.EmailAddress);
         Assert.Equal(
             DateTimeOffset.Parse("2026-10-01T12:00:00.123Z", System.Globalization.CultureInfo.InvariantCulture),

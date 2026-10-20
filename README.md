@@ -62,7 +62,9 @@ Account OAuth retains `ClientId`/`ClientSecret`.
 Each suffix in the table uses its boundary's prefix. Alternatively, disable
 analytics before deployment. Missing enabled-analytics access configuration
 rejects startup for the whole host, including delivery and administration.
-Addresses require HTTPS except loopback development endpoints. Background
+Addresses require HTTPS except loopback development endpoints and must not embed
+credentials. Remove URL-embedded credentials before deploying; use the separate
+Basic settings instead. Background
 analytics has no inbound headers to propagate. Account/OAuth follow the companion
 service's `HTTP_PROXY` convention with local bypass.
 
