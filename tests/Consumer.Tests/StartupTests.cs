@@ -13,6 +13,7 @@ using NSubstitute;
 
 namespace Defra.WasteObligations.Consumer.Tests;
 
+[Collection(nameof(Administration.ProductionLoggingCollection))]
 public class StartupTests : IClassFixture<ConsumerWebApplicationFactory>
 {
     private readonly ConsumerWebApplicationFactory _factory;

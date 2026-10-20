@@ -20,6 +20,7 @@ using NSubstitute;
 
 namespace Defra.WasteObligations.Consumer.Tests.Administration;
 
+[Collection(nameof(ProductionLoggingCollection))]
 public sealed class CommandDlqResendTests
 {
     private const string Route = "/admin/notification-commands/dlq/resend";
