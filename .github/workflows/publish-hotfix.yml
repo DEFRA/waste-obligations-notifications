@@ -38,6 +38,14 @@ jobs:
           rm -rf TestResults/NotifySubmissionPreviews
           dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifySubmissionPreviews -- --filter-class '*NotifySubmissionPreviewTests' --report-trx --report-trx-filename NotifySubmissionPreviews.trx
           python3 scripts/require-notify-previews.py TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx
+      - name: Require Notify cancellation previews
+        env:
+          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
+          NOTIFY_PREVIEWS_REQUIRED: "1"
+        run: |
+          rm -rf TestResults/NotifyCancellationPreviews
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifyCancellationPreviews -- --filter-class '*NotifyCancellationPreviewTests' --report-trx --report-trx-filename NotifyCancellationPreviews.trx
+          python3 scripts/require-notify-previews.py TestResults/NotifyCancellationPreviews/NotifyCancellationPreviews.trx cancellation
       - name: Docker Compose logs
         if: always()
         run: docker compose logs
@@ -49,7 +57,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: notify-preview-report
-          path: TestResults/NotifySubmissionPreviews
+          path: |
+            TestResults/NotifySubmissionPreviews
+            TestResults/NotifyCancellationPreviews
           if-no-files-found: warn
           retention-days: 7
 

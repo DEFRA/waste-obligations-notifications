@@ -35,6 +35,14 @@
     "Notify": {
       "status": "Healthy",
       "description": "Connected to GOV.UK Notify."
+    },
+    "AccountBackend": {
+      "status": "Healthy",
+      "description": "Analytics processing disabled"
+    },
+    "WasteOrganisations": {
+      "status": "Healthy",
+      "description": "Analytics processing disabled"
     }
   }
 }

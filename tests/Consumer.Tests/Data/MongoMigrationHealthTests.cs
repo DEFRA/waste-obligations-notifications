@@ -104,6 +104,13 @@ public sealed class MongoMigrationHealthTests
                 ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                 ["Mongo:DatabaseName"] = "health-test",
                 ["Notify:ApiKey"] = NotifyTestCredentials.ApiKey,
+                ["WasteOrganisations:BaseAddress"] = "https://organisations.test/",
+                ["WasteOrganisations:ClientId"] = "isolated-reader",
+                ["WasteOrganisations:ClientSecret"] = "synthetic-read-secret",
+                ["AccountBackend:BaseAddress"] = "https://accounts.test/",
+                ["AccountBackend:TokenEndpoint"] = "https://accounts.test/token",
+                ["AccountBackend:ClientId"] = "isolated-reader",
+                ["AccountBackend:ClientSecret"] = "synthetic-read-secret",
                 ["AWS_EMF_ENABLED"] = "false",
             }
         );

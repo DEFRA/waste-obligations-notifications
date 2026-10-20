@@ -2,10 +2,13 @@ using System.IO.Compression;
 using System.Text;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Defra.WasteObligations.Consumer.Cancellation;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Services.AccountBackend;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
+using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Logging;
@@ -265,7 +268,16 @@ public class AnalyticsEventConsumerTests
                 DeliveryOptions(),
                 new NotificationCommandDigest(DeliveryOptions())
             ),
-            new NotificationCommandDigest(DeliveryOptions())
+            new NotificationCommandDigest(DeliveryOptions()),
+            new CancellationEmailProducer(
+                new SubmittedEmailProducer(
+                    Substitute.For<IWasteObligationsClient>(),
+                    Options.Create(new SubmissionOptions())
+                ),
+                Substitute.For<IWasteOrganisationsClient>(),
+                Substitute.For<IAccountBackendClient>(),
+                Options.Create(new CancellationOptions())
+            )
         );
 
     private static IOptions<NotificationCommandDeliveryOptions> DeliveryOptions() =>

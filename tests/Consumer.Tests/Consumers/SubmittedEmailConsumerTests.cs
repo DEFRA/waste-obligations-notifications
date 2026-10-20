@@ -3,10 +3,13 @@ using System.Net;
 using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Defra.WasteObligations.Consumer.Cancellation;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Services.AccountBackend;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
+using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Logging;
@@ -648,7 +651,7 @@ public sealed class SubmittedEmailConsumerTests
                 .Returns(async call =>
                 {
                     Assert.Equal(1, call.Arg<ReceiveMessageRequest>().MaxNumberOfMessages);
-                    Assert.Equal(90, call.Arg<ReceiveMessageRequest>().VisibilityTimeout);
+                    Assert.Equal(150, call.Arg<ReceiveMessageRequest>().VisibilityTimeout);
                     ReceiveTimes.Add(System.Diagnostics.Stopwatch.GetElapsedTime(startedAt));
                     var index = received++;
                     if (index < events.Length)
@@ -687,7 +690,16 @@ public sealed class SubmittedEmailConsumerTests
                 startup,
                 _producer,
                 _publisher,
-                Digest
+                Digest,
+                new CancellationEmailProducer(
+                    new SubmittedEmailProducer(
+                        Substitute.For<IWasteObligationsClient>(),
+                        Options.Create(new SubmissionOptions())
+                    ),
+                    Substitute.For<IWasteOrganisationsClient>(),
+                    Substitute.For<IAccountBackendClient>(),
+                    Options.Create(new CancellationOptions())
+                )
             );
             await consumer.StartAsync(TestContext.Current.CancellationToken);
             await complete.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);

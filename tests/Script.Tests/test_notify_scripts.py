@@ -94,6 +94,7 @@ class NotifyEnvironmentTests(unittest.TestCase):
 class NotifyPreviewEvidenceTests(unittest.TestCase):
     METHODS = ["DirectEnglish_ShouldRenderSubmission", "DirectWelsh_ShouldRenderSubmission",
                "SchemeEnglish_ShouldRenderSubmission", "SchemeWelsh_ShouldRenderSubmission"]
+    CLASS_NAME = "NotifySubmissionPreviewTests"
     # This canonical TRX XML namespace identifies a format; it is not an HTTP endpoint.
     NAMESPACE = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"  # NOSONAR
 
@@ -105,22 +106,26 @@ class NotifyPreviewEvidenceTests(unittest.TestCase):
     def report(self):
         root = ET.Element("TestRun", xmlns=self.NAMESPACE)
         summary = ET.SubElement(root, "ResultSummary")
-        counters = ET.SubElement(summary, "Counters", total="4", executed="4", passed="4", failed="0", notExecuted="0")
+        count = str(len(self.METHODS))
+        counters = ET.SubElement(summary, "Counters", total=count, executed=count, passed=count, failed="0", notExecuted="0")
         definitions = ET.SubElement(root, "TestDefinitions")
         results = ET.SubElement(root, "Results")
         for index, method in enumerate(self.METHODS):
             definition = ET.SubElement(definitions, "UnitTest", id=str(index))
             ET.SubElement(definition, "TestMethod", name=method,
-                          className="Defra.Tests.NotifySubmissionPreviewTests, Assembly")
+                          className=f"Defra.Tests.{self.CLASS_NAME}, Assembly")
             ET.SubElement(results, "UnitTestResult", testId=str(index), outcome="Passed")
         return root, counters, definitions, results
 
     def invoke(self):
-        with patch.object(sys, "argv", ["guard", str(self.path)]), contextlib.redirect_stdout(io.StringIO()) as output:
+        arguments = ["guard", str(self.path)]
+        if self.CLASS_NAME == "NotifyCancellationPreviewTests":
+            arguments.append("cancellation")
+        with patch.object(sys, "argv", arguments), contextlib.redirect_stdout(io.StringIO()) as output:
             guard.main()
             return output.getvalue()
 
-    def test_four_unique_passed_cases_are_accepted(self):
+    def test_all_unique_passed_cases_are_accepted(self):
         root, _, _, _ = self.report()
         ET.ElementTree(root).write(self.path)
         self.assertIn("all four submission cases executed and passed", self.invoke())
@@ -171,3 +176,33 @@ class NotifyPreviewEvidenceTests(unittest.TestCase):
             self.invoke()
         with patch.object(sys, "argv", ["guard"]), self.assertRaises(SystemExit):
             guard.main()
+
+
+class NotifyCancellationEvidenceTests(NotifyPreviewEvidenceTests):
+    METHODS = ["NotSignedByCorrectPersonEnglish_ShouldRenderCancellation",
+               "NotSignedByCorrectPersonWelsh_ShouldRenderCancellation",
+               "RecyclingObligationsChangedEnglish_ShouldRenderCancellation",
+               "RecyclingObligationsChangedWelsh_ShouldRenderCancellation",
+               "CanMeetRecyclingObligationsEnglish_ShouldRenderCancellation",
+               "CanMeetRecyclingObligationsWelsh_ShouldRenderCancellation",
+               "ProducerRequestedEnglish_ShouldRenderCancellation",
+               "ProducerRequestedWelsh_ShouldRenderCancellation"]
+    CLASS_NAME = "NotifyCancellationPreviewTests"
+
+    def test_all_unique_passed_cases_are_accepted(self):
+        root, _, _, _ = self.report()
+        ET.ElementTree(root).write(self.path)
+        self.assertIn("all eight cancellation cases executed and passed", self.invoke())
+
+    def test_cancellation_evidence_does_not_satisfy_default_submission_contract(self):
+        root, _, _, _ = self.report()
+        ET.ElementTree(root).write(self.path)
+        with patch.object(sys, "argv", ["guard", str(self.path)]), self.assertRaises(SystemExit):
+            guard.main()
+
+    def test_submission_evidence_does_not_satisfy_cancellation_contract(self):
+        root, _, definitions, _ = self.report()
+        definitions[0][0].set("className", "Defra.Tests.NotifySubmissionPreviewTests")
+        ET.ElementTree(root).write(self.path)
+        with self.assertRaises(SystemExit):
+            self.invoke()

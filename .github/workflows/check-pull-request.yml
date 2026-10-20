@@ -126,6 +126,14 @@ jobs:
           rm -rf TestResults/NotifySubmissionPreviews
           dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifySubmissionPreviews -- --filter-class '*NotifySubmissionPreviewTests' --report-trx --report-trx-filename NotifySubmissionPreviews.trx
           python3 scripts/require-notify-previews.py TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx
+      - name: Require Notify cancellation previews
+        env:
+          GOVUKNOTIFY_APIKEY: ${{ secrets.GOVUKNOTIFY_APIKEY }}
+          NOTIFY_PREVIEWS_REQUIRED: "1"
+        run: |
+          rm -rf TestResults/NotifyCancellationPreviews
+          dotnet test --test-modules tests/Consumer.IntegrationTests/bin/Debug/net10.0/Consumer.IntegrationTests.dll --no-build --results-directory TestResults/NotifyCancellationPreviews -- --filter-class '*NotifyCancellationPreviewTests' --report-trx --report-trx-filename NotifyCancellationPreviews.trx
+          python3 scripts/require-notify-previews.py TestResults/NotifyCancellationPreviews/NotifyCancellationPreviews.trx cancellation
       - name: Upload CI reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -164,28 +172,39 @@ jobs:
           TRIVY: ${{ needs.pr-validator.outputs.trivy }}
         run: |
           test_summary() {
-            local report="$1"
-            local counters
+            python3 - "$1" <<'PY'
+          from pathlib import Path
+          import sys
+          import xml.etree.ElementTree as ET
 
-            if [ ! -f "$report" ]; then
-              printf '⚪ Not run'
-              return
-            fi
-
-            counters=$(grep -o '<Counters[^>]*/>' "$report")
-            total=$(printf '%s' "$counters" | sed -n 's/.* total="\([^"]*\)".*/\1/p')
-            passed=$(printf '%s' "$counters" | sed -n 's/.* passed="\([^"]*\)".*/\1/p')
-            failed=$(printf '%s' "$counters" | sed -n 's/.* failed="\([^"]*\)".*/\1/p')
-
-            if [ "$failed" = "0" ]; then
-              printf '✅ %s/%s passed' "$passed" "$total"
-            else
-              printf '❌ %s/%s passed, %s failed' "$passed" "$total" "$failed"
-            fi
+          path = Path(sys.argv[1])
+          if not path.is_file():
+              print("⚪ Not run")
+              sys.exit(0)
+          try:
+              counters = ET.parse(path).getroot().find("{*}ResultSummary/{*}Counters")
+              if counters is None:
+                  raise ValueError("Missing counters")
+              total = int(counters.attrib["total"])
+              passed = int(counters.attrib["passed"])
+              skipped = int(counters.get("notExecuted", "0"))
+              failed = total - passed - skipped
+              reported_failed = int(counters.attrib["failed"])
+              if total <= 0 or min(passed, skipped, failed, reported_failed) < 0 or reported_failed > failed:
+                  raise ValueError("Invalid counters")
+              if failed:
+                  print(f"❌ {passed}/{total} passed, {failed} failed")
+              elif skipped:
+                  print(f"⚠️ {passed}/{total} passed, {skipped} skipped")
+              else:
+                  print(f"✅ {passed}/{total} passed")
+          except (OSError, ET.ParseError, KeyError, ValueError):
+              print("⚪ Results unavailable (invalid TRX evidence)")
+          PY
           }
 
           integration_summary() {
-            python3 - "$1" "$2" <<'PY'
+            python3 - "$@" <<'PY'
           import sys
           import xml.etree.ElementTree as ET
 
@@ -217,10 +236,11 @@ jobs:
 
           try:
               combined = read_results(sys.argv[1])
-              previews = read_results(sys.argv[2])
-              for identity, outcome in previews.items():
-                  if identity not in combined or combined[identity] in {"Passed", "NotExecuted"}:
-                      combined[identity] = outcome
+              for path in sys.argv[2:]:
+                  previews = read_results(path)
+                  for identity, outcome in previews.items():
+                      if identity not in combined or combined[identity] in {"Passed", "NotExecuted"}:
+                          combined[identity] = outcome
               passed = sum(outcome == "Passed" for outcome in combined.values())
               skipped = sum(outcome == "NotExecuted" for outcome in combined.values())
               failed = len(combined) - passed - skipped
@@ -280,8 +300,10 @@ jobs:
             printf '| Dependency security review | %s |\n' "$(step_summary "$DEPENDENCY_REVIEW")"
             printf '| CI report download | %s |\n' "$(step_summary "$REPORT_DOWNLOAD")"
             printf '| Unit tests | %s |\n' "$(test_summary TestResults/Consumer.Tests/Consumer.Tests.trx)"
-            printf '| Integration tests (including Notify previews) | %s |\n' "$(integration_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx)"
+            printf '| Isolated integration tests | %s |\n' "$(test_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx)"
+            printf '| Integration tests (including Notify previews) | %s |\n' "$(integration_summary TestResults/Consumer.IntegrationTests/Consumer.IntegrationTests.trx TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx TestResults/NotifyCancellationPreviews/NotifyCancellationPreviews.trx)"
             printf '| Notify submission previews | %s |\n' "$(test_summary TestResults/NotifySubmissionPreviews/NotifySubmissionPreviews.trx)"
+            printf '| Notify cancellation previews | %s |\n' "$(test_summary TestResults/NotifyCancellationPreviews/NotifyCancellationPreviews.trx)"
             printf '| Docker image | %s |\n' "$(step_summary "$DOCKER_BUILD")"
             printf '| Trivy (Critical/High) | %s |\n' "$(trivy_summary)"
             echo
