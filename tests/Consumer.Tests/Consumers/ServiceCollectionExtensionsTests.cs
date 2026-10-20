@@ -13,6 +13,37 @@ namespace Defra.WasteObligations.Consumer.Tests.Consumers;
 
 public class ServiceCollectionExtensionsTests
 {
+    [Theory]
+    [InlineData("Submission", "DirectEnglishTemplateId")]
+    [InlineData("Cancellation", "ProducerRequestedCy")]
+    public void WhenLegacyTemplateOverridesRemain_ShouldRejectStartupWithMigrationGuidance(
+        string section,
+        string template
+    )
+    {
+        var configuration = CreateConfiguration();
+        configuration[$"{section}:{template}"] = "11111111-1111-4111-8111-111111111111";
+        using var provider = new ServiceCollection().AddAnalyticsEventConsumer(configuration).BuildServiceProvider();
+
+        var exception = Assert.Throws<OptionsValidationException>(() =>
+            provider.GetRequiredService<IStartupValidator>().Validate()
+        );
+
+        Assert.Contains("migrate overrides to Notifications:Definitions:", exception.Message);
+    }
+
+    [Fact]
+    public void WhenUnrelatedSettingsRemain_ShouldAcceptNotificationDefinitionOptions()
+    {
+        var configuration = CreateConfiguration();
+        configuration["AnotherFeature:TemplateId"] = "not-a-notification-template";
+        using var provider = new ServiceCollection().AddAnalyticsEventConsumer(configuration).BuildServiceProvider();
+
+        provider.GetRequiredService<IStartupValidator>().Validate();
+
+        Assert.True(provider.GetRequiredService<IOptions<NotificationDefinitionsOptions>>().Value.HasValidTemplates);
+    }
+
     [Fact]
     public void WhenAnotherDefinitionIsConfigured_ShouldBindAndResolveItsTemplates()
     {

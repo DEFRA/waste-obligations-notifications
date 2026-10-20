@@ -79,8 +79,12 @@ and checked-in settings for variant names and template defaults. Move existing
 `Submission__<variant>` and `Cancellation__<variant>` overrides to
 `Notifications__Definitions__DeclarationSubmitted__Templates__<variant>` and
 `Notifications__Definitions__DeclarationCancelled__Templates__<variant>` before
-rollout; default template IDs are unchanged. Finalize effective
-overrides and validate Notify account/template access before the dry run. A later
+deploying the new image, and remove the legacy sections/overrides at the same
+time. Startup rejects legacy template settings rather than silently ignoring
+overrides, so leaving them present prevents the entire host from starting,
+including command consumers and administrator routes. Default template IDs are
+unchanged. Finalize effective overrides and validate Notify account/template access
+before the dry run. A later
 template change for a replayable intention can cause an immutable-command conflict.
 
 Extended health authenticates downstream endpoints but does not prove deployed

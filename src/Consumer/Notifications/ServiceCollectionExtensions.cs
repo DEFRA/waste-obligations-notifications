@@ -16,6 +16,12 @@ public static class ServiceCollectionExtensions
             .AddOptions<NotificationDefinitionsOptions>()
             .Bind(configuration.GetSection(NotificationDefinitionsOptions.SectionName))
             .Validate(
+                _ =>
+                    !configuration.GetSection("Submission").Exists()
+                    && !configuration.GetSection("Cancellation").Exists(),
+                "Legacy Submission/Cancellation template settings are not supported; migrate overrides to Notifications:Definitions:<definition>:Templates before startup"
+            )
+            .Validate(
                 options => options.HasValidTemplates,
                 "Notification definitions require their template mappings as nonempty hyphenated UUIDs"
             )

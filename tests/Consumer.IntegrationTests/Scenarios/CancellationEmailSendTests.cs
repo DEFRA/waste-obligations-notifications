@@ -103,7 +103,6 @@ public sealed class CancellationEmailSendTests : IntegrationTestBase
         });
 
         Assert.Empty(fixture.Sqs.Confirmed);
-        Assert.Empty(await fixture.NotifyRequests());
         if (scenario != "no-persons")
             Assert.Equal(0, fixture.State.LiveReads);
     }

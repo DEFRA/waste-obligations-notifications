@@ -126,17 +126,18 @@ public sealed class CancellationDependencyClientTests
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send = (request, token) =>
         {
             Assert.True(token.CanBeCanceled);
-            if (request.RequestUri!.AbsolutePath == "/api/admin/health")
+            if (request.RequestUri!.AbsolutePath == "/admin/health")
                 Assert.Equal("Bearer test-token", request.Headers.Authorization!.ToString());
             else
             {
-                Assert.Equal("/api/health/authorized", request.RequestUri.AbsolutePath);
+                Assert.Equal("/health/authorized", request.RequestUri.AbsolutePath);
                 Assert.Equal("Basic dXNlcjpzZWNyZXQ=", request.Headers.Authorization!.ToString());
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
         };
         using var http = send.CreateHttpStub();
+        http.BaseAddress = new Uri("http://localhost/");
         using var tokens = CreateTokens();
         var account = new AccountBackendClient(http, tokens);
         var organisations = new WasteOrganisationsClient(

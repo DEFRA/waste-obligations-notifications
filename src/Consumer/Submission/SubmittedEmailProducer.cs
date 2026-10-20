@@ -104,19 +104,19 @@ public sealed class SubmittedEmailProducer(
             {
                 (false, false) => options.Value.GetTemplate(
                     NotificationDefinitionsOptions.DeclarationSubmitted,
-                    "DirectEnglishTemplateId"
+                    DeclarationNotificationTemplates.Submitted.DirectEnglishTemplateId
                 ),
                 (false, true) => options.Value.GetTemplate(
                     NotificationDefinitionsOptions.DeclarationSubmitted,
-                    "DirectWelshTemplateId"
+                    DeclarationNotificationTemplates.Submitted.DirectWelshTemplateId
                 ),
                 (true, false) => options.Value.GetTemplate(
                     NotificationDefinitionsOptions.DeclarationSubmitted,
-                    "SchemeEnglishTemplateId"
+                    DeclarationNotificationTemplates.Submitted.SchemeEnglishTemplateId
                 ),
                 (true, true) => options.Value.GetTemplate(
                     NotificationDefinitionsOptions.DeclarationSubmitted,
-                    "SchemeWelshTemplateId"
+                    DeclarationNotificationTemplates.Submitted.SchemeWelshTemplateId
                 ),
             };
 

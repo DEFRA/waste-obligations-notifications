@@ -204,35 +204,35 @@ public sealed class CancellationEmailProducer(
         {
             ("not-signed-by-correct-person", false) => mappings.GetTemplate(
                 NotificationDefinitionsOptions.DeclarationCancelled,
-                "NotSignedByCorrectPersonEn"
+                DeclarationNotificationTemplates.Cancelled.NotSignedByCorrectPersonEn
             ),
             ("not-signed-by-correct-person", true) => mappings.GetTemplate(
                 NotificationDefinitionsOptions.DeclarationCancelled,
-                "NotSignedByCorrectPersonCy"
+                DeclarationNotificationTemplates.Cancelled.NotSignedByCorrectPersonCy
             ),
             ("recycling-obligations-changed", false) => mappings.GetTemplate(
                 NotificationDefinitionsOptions.DeclarationCancelled,
-                "RecyclingObligationsChangedEn"
+                DeclarationNotificationTemplates.Cancelled.RecyclingObligationsChangedEn
             ),
             ("recycling-obligations-changed", true) => mappings.GetTemplate(
                 NotificationDefinitionsOptions.DeclarationCancelled,
-                "RecyclingObligationsChangedCy"
+                DeclarationNotificationTemplates.Cancelled.RecyclingObligationsChangedCy
             ),
             ("can-meet-recycling-obligations", false) => mappings.GetTemplate(
                 NotificationDefinitionsOptions.DeclarationCancelled,
-                "CanMeetRecyclingObligationsEn"
+                DeclarationNotificationTemplates.Cancelled.CanMeetRecyclingObligationsEn
             ),
             ("can-meet-recycling-obligations", true) => mappings.GetTemplate(
                 NotificationDefinitionsOptions.DeclarationCancelled,
-                "CanMeetRecyclingObligationsCy"
+                DeclarationNotificationTemplates.Cancelled.CanMeetRecyclingObligationsCy
             ),
             ("producer-requested", false) => mappings.GetTemplate(
                 NotificationDefinitionsOptions.DeclarationCancelled,
-                "ProducerRequestedEn"
+                DeclarationNotificationTemplates.Cancelled.ProducerRequestedEn
             ),
             ("producer-requested", true) => mappings.GetTemplate(
                 NotificationDefinitionsOptions.DeclarationCancelled,
-                "ProducerRequestedCy"
+                DeclarationNotificationTemplates.Cancelled.ProducerRequestedCy
             ),
             _ => throw new InvalidOperationException("Cancellation family invalid"),
         };
