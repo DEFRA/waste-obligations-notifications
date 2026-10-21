@@ -10,9 +10,6 @@ uses Mongo evidence to suppress terminal duplicates and GOV.UK Notify to send
 eligible commands. Notify acceptance is not proof of recipient delivery, and an
 indeterminate request can be sent again after claim expiry.
 
-If a declaration has been deleted, analytics can use its event snapshot to produce
-the same notification commands. Successful declaration reads remain authoritative.
-
 Start with [service behaviour](docs/service-behaviour.md) for the implementation
 entry points and operational boundaries. External publishers must follow the
 [notification-command producer contract](docs/notification-command-producer-contract.md).

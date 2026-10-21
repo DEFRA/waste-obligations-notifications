@@ -71,12 +71,11 @@ alternate send mechanism; live contacts are re-evaluated on retry. See
 [service entry points](../service-behaviour.md#cancellation-production) and tests
 for exact selection, mapping and empty-result behaviour.
 
-A missing declaration must not prevent production of an already recorded business
-action. On a declaration 404, both producers can use the event’s matching `after`
-snapshot while preserving the same command identities and audit action times.
-Successful reads remain authoritative; other failures do not select the fallback.
-This retains the shared submission prefix without introducing historical API
-endpoints or treating a 404 as an instruction to discard a notification.
+Event snapshots keep recorded notification intentions independent of a declaration’s
+continued existence, without introducing archival storage or historical API
+endpoints. The [shared reader](../../src/Consumer/Submission/SubmittedEmailProducer.cs)
+and [deletion/replay scenarios](../../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs)
+define the implemented boundary.
 
 This shared prefix establishes first-publication precedence on every host, without
 a global sequencer or ordering across declarations. Publication confirmation does

@@ -55,9 +55,15 @@ docker compose down -v --remove-orphans
 
 For documentation-only or comment-only changes, run `git diff --check`.
 
-Update the README when scope, local operation, configuration, or delivery
-behaviour changes. Add or update an ADR for a durable decision about message
-contracts, idempotency, ordering, privacy, storage, or the cutover boundary.
+A change to scope, local operation, configuration or delivery behaviour requires a
+documentation assessment, not necessarily additional prose. Update implementation
+and test links where needed. Add prose only for external contracts, operational
+requirements or decision rationale that cannot be established reliably from code
+and tests. Follow the documentation guidance in [AGENTS.md](AGENTS.md).
+
+Update the README when its overview, links or operational guidance need to change.
+Add or update an ADR when a durable decision or its rationale changes, including
+message contracts, idempotency, ordering, privacy, storage or the cutover boundary.
 Use the terms in [CONTEXT.md](CONTEXT.md) consistently. Keep current service
 contracts in [service behaviour](docs/service-behaviour.md) and coding conventions
 in [CODING_STANDARDS.md](CODING_STANDARDS.md).
