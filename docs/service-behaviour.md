@@ -24,6 +24,12 @@ administration supports inspection and recovery without changing business data.
 | Declaration boundary | [Waste Obligations client](../src/Consumer/Services/WasteObligations), [DTOs and version validation](../src/Consumer/Submission/SubmittedEmailProducer.cs) |
 | Analytics receive/enrichment/publication budget | [options](../src/Consumer/Consumers/AnalyticsEventConsumerOptions.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs) |
 
+A declaration 404 can fall back to the analytics event’s typed `after` snapshot.
+The snapshot must match the event identity and version and satisfy the existing
+notification validation. Successful reads remain authoritative; other read
+failures remain retryable. See the producer and hosted cancellation scenarios
+above for fallback and duplicate-suppression behaviour.
+
 Required publication must be confirmed before acknowledging its source. A valid
 no-email outcome can acknowledge without publication; validation/dependency or
 unconfirmed-publication failures remain retryable. Uncertain acknowledgement can
@@ -42,9 +48,10 @@ owns bilingual wording and personalisation. Review
 and [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs)
 for exact cases rather than maintaining a second mapping table here.
 
-Cancellation uses an authorised declaration read plus live organisation/Account
-reads. Actual cancellation intentions are preceded by confirmed publication of
-the original Submitted intention on every attempt. Empty results publish neither.
+Cancellation uses an authorised declaration read (or the validated event snapshot
+on 404) plus live organisation/Account reads. Actual cancellation intentions are
+preceded by confirmed publication of the original Submitted intention on every
+attempt. Empty results publish neither.
 Unrecognised cancellation reasons leave the analytics message for retry and dead-lettering.
 No eligible recipient or unresolved compliance scheme remains an acknowledged no-send
 outcome, logged with a fixed reason code and no recipient data.

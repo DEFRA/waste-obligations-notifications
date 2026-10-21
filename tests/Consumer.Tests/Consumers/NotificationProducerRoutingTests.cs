@@ -5,6 +5,7 @@ using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Notifications;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -30,7 +31,13 @@ public sealed class NotificationProducerRoutingTests
                 var producer = Substitute.For<IAnalyticsNotificationProducer>();
                 producer.CanHandle(Arg.Any<AnalyticsEvent>()).Returns(true);
                 producer
-                    .Create(Arg.Any<Guid>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+                    .Create(
+                        Arg.Any<Guid>(),
+                        Arg.Any<string>(),
+                        Arg.Any<int>(),
+                        Arg.Any<CancellationToken>(),
+                        Arg.Any<Declaration?>()
+                    )
                     .Returns(Task.FromResult<IReadOnlyList<NotificationCommand>>([]));
                 return producer;
             })
@@ -101,6 +108,12 @@ public sealed class NotificationProducerRoutingTests
         foreach (var producer in producers)
             await producer
                 .Received(matchingDefinitions == 1 ? 1 : 0)
-                .Create(Arg.Any<Guid>(), "65f1f6570bb08052a8a27b01", 1, Arg.Any<CancellationToken>());
+                .Create(
+                    Arg.Any<Guid>(),
+                    "65f1f6570bb08052a8a27b01",
+                    1,
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<Declaration?>()
+                );
     }
 }

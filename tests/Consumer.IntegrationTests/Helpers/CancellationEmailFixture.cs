@@ -140,8 +140,30 @@ public sealed class CancellationEmailFixture : IAsyncDisposable
     public async Task SendAnalytics(
         string before = "Submitted",
         string after = "Cancelled",
-        string eventType = "submission.amended"
-    ) =>
+        string eventType = "submission.amended",
+        bool includeDeclarationSnapshot = false,
+        int version = 2
+    )
+    {
+        var declaration = State.Declaration() with { Version = version };
+        if (eventType == "submission.created")
+            declaration = declaration with
+            {
+                Audit = declaration.Audit!.Where(entry => entry.Action == "Submitted").ToArray(),
+            };
+
+        object afterSnapshot = includeDeclarationSnapshot
+            ? new
+            {
+                status = after,
+                declaration.Id,
+                declaration.Version,
+                declaration.ObligationYear,
+                declaration.Organisation,
+                declaration.Audit,
+            }
+            : new { status = after, organisation = new { id = State.OrganisationId } };
+
         await Sqs.SendMessageAsync(
             new SendMessageRequest
             {
@@ -154,14 +176,16 @@ public sealed class CancellationEmailFixture : IAsyncDisposable
                         entity = "compliance_declaration",
                         eventType,
                         schemaVersion = "compliance_declaration_v1.3",
-                        version = 2,
+                        version,
                         before = new { status = before },
-                        after = new { status = after, organisation = new { id = State.OrganisationId } },
-                    }
+                        after = afterSnapshot,
+                    },
+                    JsonSerializerOptions.Web
                 ),
             },
             TestContext.Current.CancellationToken
         );
+    }
 
     public async Task SendPublishedReplay(NotificationCommand command) =>
         await Sqs.SendMessageAsync(

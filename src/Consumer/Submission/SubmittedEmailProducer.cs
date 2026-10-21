@@ -18,8 +18,9 @@ public sealed class SubmittedEmailProducer(
         Guid organisationId,
         string declarationId,
         int eventVersion,
-        CancellationToken cancellationToken
-    ) => [await Create(organisationId, declarationId, eventVersion, cancellationToken)];
+        CancellationToken cancellationToken,
+        Declaration? declarationSnapshot
+    ) => [await Create(organisationId, declarationId, eventVersion, cancellationToken, declarationSnapshot)];
 
     private const string InvalidDeclarationData = "invalid-declaration-data";
 
@@ -27,14 +28,19 @@ public sealed class SubmittedEmailProducer(
         Guid organisationId,
         string declarationId,
         int eventVersion,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        Declaration? declarationSnapshot = null
     )
     {
         try
         {
             var declaration = await reader.ReadDeclaration(organisationId, declarationId, cancellationToken);
             if (declaration is null)
-                throw new SubmissionProcessingException("declaration-not-found");
+            {
+                declaration = declarationSnapshot ?? throw new SubmissionProcessingException("declaration-not-found");
+                if (declaration.Version != eventVersion)
+                    throw new SubmissionProcessingException(InvalidDeclarationData);
+            }
 
             var organisation =
                 declaration.Organisation ?? throw new SubmissionProcessingException(InvalidDeclarationData);
@@ -71,10 +77,17 @@ public sealed class SubmittedEmailProducer(
         Guid organisationId,
         string declarationId,
         int eventVersion,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        Declaration? declarationSnapshot = null
     )
     {
-        var declaration = await Read(organisationId, declarationId, eventVersion, cancellationToken);
+        var declaration = await Read(
+            organisationId,
+            declarationId,
+            eventVersion,
+            cancellationToken,
+            declarationSnapshot
+        );
 
         return Create(declaration);
     }

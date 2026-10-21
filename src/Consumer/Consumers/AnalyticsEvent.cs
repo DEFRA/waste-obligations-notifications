@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 
 namespace Defra.WasteObligations.Consumer.Consumers;
 
@@ -11,7 +12,8 @@ public sealed record AnalyticsEvent(
     int? Version,
     Guid? OrganisationId,
     string? BeforeStatus = null,
-    string? AfterStatus = null
+    string? AfterStatus = null,
+    Declaration? DeclarationSnapshot = null
 )
 {
     private const string SchemaPrefix = "compliance_declaration_v";
@@ -38,7 +40,7 @@ public sealed record AnalyticsEvent(
         var organisation = Object(Object(root, "after"), "organisation");
         var organisationId = String(organisation, "id");
 
-        return new AnalyticsEvent(
+        var analyticsEvent = new AnalyticsEvent(
             RequiredString(root, "eventId"),
             RequiredString(root, "entityId"),
             String(root, "entity"),
@@ -53,6 +55,31 @@ public sealed record AnalyticsEvent(
             String(Object(root, "before"), "status"),
             String(Object(root, "after"), "status")
         );
+
+        return analyticsEvent.IsSubmission || analyticsEvent.IsCancellation
+            ? analyticsEvent with
+            {
+                DeclarationSnapshot = ReadDeclarationSnapshot(root),
+            }
+            : analyticsEvent;
+    }
+
+    private static Declaration? ReadDeclarationSnapshot(JsonElement root)
+    {
+        var after = Object(root, "after");
+        if (after.ValueKind != JsonValueKind.Object)
+            return null;
+
+        try
+        {
+            var declaration = after.Deserialize<Declaration>(JsonSerializerOptions.Web);
+
+            return declaration?.Id is null ? null : declaration;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static JsonElement Object(JsonElement element, string name) =>
