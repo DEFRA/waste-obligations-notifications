@@ -560,7 +560,7 @@ public sealed class CancellationEmailProducerTests
 
         public void AssertNoSendLog(string reason)
         {
-            var call = Assert.Single(_logger.ReceivedCalls().Where(call => call.GetMethodInfo().Name == "Log"));
+            var call = Assert.Single(_logger.ReceivedCalls(), call => call.GetMethodInfo().Name == "Log");
             var arguments = call.GetArguments();
             Assert.Equal(LogLevel.Information, arguments[0]);
             Assert.Null(arguments[3]);
