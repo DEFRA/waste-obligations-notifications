@@ -99,6 +99,9 @@ public sealed class SubmittedEmailConsumerTests
                 && entry.Text.StartsWith("Consumed analytics event", StringComparison.Ordinal)
         );
         Assert.Matches("Consumed analytics event opaque-[0-9a-f]{16} for opaque-[0-9a-f]{16}", consumed.Text);
+        var scope = Assert.Single(fixture.Logs.Scopes);
+        Assert.Matches("^opaque-[0-9a-f]{16}$", scope["EventId"]?.ToString());
+        Assert.Matches("^opaque-[0-9a-f]{16}$", scope["EntityId"]?.ToString());
         Assert.All(
             fixture.Logs.Entries,
             entry =>
@@ -586,6 +589,10 @@ public sealed class SubmittedEmailConsumerTests
                     StringComparison.Ordinal
                 )
         );
+        Assert.DoesNotContain(
+            fixture.Logs.Entries,
+            entry => entry.Text.StartsWith("Consumed analytics event", StringComparison.Ordinal)
+        );
         fixture.AssertSafeLogs();
     }
 
@@ -843,7 +850,8 @@ public sealed class SubmittedEmailConsumerTests
                     ),
                 ],
                 _publisher,
-                Digest
+                Digest,
+                Substitute.For<Defra.WasteObligations.Consumer.Utils.Metrics.INotificationJourneyMetrics>()
             );
             await consumer.StartAsync(TestContext.Current.CancellationToken);
             await complete.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
@@ -883,10 +891,17 @@ public sealed class SubmittedEmailConsumerTests
 
     private sealed class Logs : ILogger<AnalyticsEventConsumer>, ILogger<SubmittedEmailProducer>
     {
+        public ConcurrentQueue<IReadOnlyDictionary<string, object?>> Scopes { get; } = new();
         public ConcurrentQueue<(LogLevel Level, string Text, Exception? Exception)> Entries { get; } = new();
 
         public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
+            where TState : notnull
+        {
+            if (state is IEnumerable<KeyValuePair<string, object?>> properties)
+                Scopes.Enqueue(properties.ToDictionary(pair => pair.Key, pair => pair.Value));
+
+            return null;
+        }
 
         public bool IsEnabled(LogLevel logLevel) => true;
 

@@ -8,6 +8,7 @@ using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
+using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.Options;
 using Polly.Timeout;
 
@@ -20,7 +21,8 @@ public sealed class AnalyticsEventConsumer(
     ApplicationStartup startup,
     IEnumerable<IAnalyticsNotificationProducer> producers,
     INotificationCommandPublisher publisher,
-    INotificationCommandDigest digest
+    INotificationCommandDigest digest,
+    INotificationJourneyMetrics metrics
 ) : StartupBackgroundService(startup)
 {
     private const string ContentEncodingHeader = "Content-Encoding";
@@ -63,7 +65,7 @@ public sealed class AnalyticsEventConsumer(
     {
         try
         {
-            return await RunBounded(
+            var response = await RunBounded(
                 token =>
                     sqsClient.ReceiveMessageAsync(
                         new ReceiveMessageRequest
@@ -80,9 +82,14 @@ public sealed class AnalyticsEventConsumer(
                 options.Value.ReceiveTimeoutSeconds,
                 stoppingToken
             );
+
+            metrics.RecordPoll("analytics");
+
+            return response;
         }
         catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
         {
+            metrics.RecordFailure("analytics", "receive");
             LogFailure(exception);
             LogRetry(exception, "receive", false, null, null, null);
             throw;
@@ -96,6 +103,10 @@ public sealed class AnalyticsEventConsumer(
         string? messageId = null;
         var stage = "parse";
         var published = false;
+        var startedAt = Stopwatch.GetTimestamp();
+        var outcome = "ignored";
+        var commandCount = 0;
+        metrics.RecordAnalyticsReceived();
         try
         {
             messageId = SafeTransportCorrelation(message.MessageId);
@@ -103,6 +114,9 @@ public sealed class AnalyticsEventConsumer(
             eventId = SafeEventId(analyticsEvent.EventId) ?? OpaqueCorrelation(analyticsEvent.EventId);
             var declarationEntityId = SafeEntityId(analyticsEvent.EntityId);
             entityId = declarationEntityId ?? OpaqueCorrelation(analyticsEvent.EntityId);
+            using var scope = logger.BeginScope(
+                new Dictionary<string, object?> { ["EventId"] = eventId, ["EntityId"] = entityId }
+            );
 
             var producer = producers.SingleOrDefault(candidate => candidate.CanHandle(analyticsEvent));
             if (producer is not null)
@@ -137,15 +151,12 @@ public sealed class AnalyticsEventConsumer(
                     options.Value.ReadTimeoutSeconds,
                     stoppingToken
                 );
+                commandCount = commands.Count;
+                outcome = commandCount == 0 ? "no-notifications" : "commands-published";
 
                 EnsureRemaining(receivedAt, options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
                 stage = "publish-command";
                 await PublishCommands(commands, eventId, entityId, () => published = true, stoppingToken);
-            }
-
-            if (logger.IsEnabled(LogLevel.Information))
-            {
-                logger.LogInformation("Consumed analytics event {EventId} for {EntityId}", eventId, entityId);
             }
 
             stage = "acknowledge";
@@ -155,12 +166,30 @@ public sealed class AnalyticsEventConsumer(
                 options.Value.DeleteTimeoutSeconds,
                 stoppingToken
             );
+
+            metrics.RecordAnalyticsOutcome(outcome);
+
+            if (logger.IsEnabled(LogLevel.Information))
+            {
+                logger.LogInformation(
+                    "Consumed analytics event {EventId} for {EntityId}: {AnalyticsOutcome}, {CommandCount} commands",
+                    eventId,
+                    entityId,
+                    outcome,
+                    commandCount
+                );
+            }
         }
         catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
         {
+            metrics.RecordFailure("analytics", stage);
             LogFailure(exception);
             LogRetry(exception, stage, published, messageId, eventId, entityId);
             throw;
+        }
+        finally
+        {
+            metrics.RecordAnalyticsDuration(Stopwatch.GetElapsedTime(startedAt).TotalSeconds);
         }
     }
 
@@ -197,6 +226,7 @@ public sealed class AnalyticsEventConsumer(
                     EnsurePublicationDeadline(startedAt, token);
 
                     await publisher.Publish(command, token);
+                    metrics.RecordCommandPublished("analytics");
 
                     EnsurePublicationDeadline(startedAt, token);
                     publicationConfirmed();

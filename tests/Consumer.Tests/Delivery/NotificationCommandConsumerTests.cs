@@ -846,7 +846,8 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                     }
                 )
             ),
-            timeProvider ?? TimeProvider.System
+            timeProvider ?? TimeProvider.System,
+            _metricServices.GetRequiredService<INotificationJourneyMetrics>()
         );
 
     private static ApplicationStartup CompletedReadiness()

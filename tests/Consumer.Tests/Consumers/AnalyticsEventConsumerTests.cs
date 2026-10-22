@@ -153,7 +153,7 @@ public class AnalyticsEventConsumerTests
         var subject = CreateSubject(sqsClient, logger);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
-        await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Consumed analytics event", TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
         Assert.Contains(logger.Messages, message => message.Contains(EventId) && message.Contains(EntityId));
@@ -176,7 +176,7 @@ public class AnalyticsEventConsumerTests
         var subject = CreateSubject(sqsClient, logger);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
-        await deleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await logger.WaitForMessage("Consumed analytics event", TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
         Assert.Contains(logger.Messages, message => message.Contains(EventId) && message.Contains(EntityId));
@@ -283,7 +283,8 @@ public class AnalyticsEventConsumerTests
                 DeliveryOptions(),
                 new NotificationCommandDigest(DeliveryOptions())
             ),
-            new NotificationCommandDigest(DeliveryOptions())
+            new NotificationCommandDigest(DeliveryOptions()),
+            Substitute.For<Defra.WasteObligations.Consumer.Utils.Metrics.INotificationJourneyMetrics>()
         );
 
     private static IOptions<NotificationCommandDeliveryOptions> DeliveryOptions() =>

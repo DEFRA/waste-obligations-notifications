@@ -73,10 +73,32 @@ public static class MetricsExporter
                 or MetricNames.NotificationCommandNotifySendDuration
                 or MetricNames.NotificationCommandNotifyAcceptanceLatency
                 or MetricNames.NotificationCommandOutcomeLatency
-                or MetricNames.NotificationCommandDuplicateSuppressed;
+                or MetricNames.NotificationCommandDuplicateSuppressed
+                or MetricNames.AnalyticsEventReceived
+                or MetricNames.AnalyticsEventOutcome
+                or MetricNames.AnalyticsEventProcessingDuration
+                or MetricNames.NotificationCommandPublished
+                or MetricNames.NotificationProcessingFailure
+                or MetricNames.NotificationConsumerPoll
+                or MetricNames.NotificationDeliveryCutoverConfigured;
 
     private static bool IsCommandDimension(string name, string? value) =>
         name == MetricTags.NotificationType && NotificationCommandDeliveryOptions.IsDiagnosticLabel(value)
+        || name == MetricTags.Consumer && value is "analytics" or "delivery"
+        || name == MetricTags.Source && value == "analytics"
+        || name == MetricTags.Stage
+            && value
+                is "receive"
+                    or "parse"
+                    or "validate-event"
+                    or "read-declaration"
+                    or "publish-command"
+                    or "acknowledge"
+                    or "suppression"
+                    or "claim"
+                    or "send"
+                    or "record-acceptance"
+                    or "processing-budget"
         || name == MetricTags.Outcome
             && value
                 is NotificationDeliveryClassifications.DeliveryAccepted
@@ -87,5 +109,8 @@ public static class MetricsExporter
                     or "conflict"
                     or NotificationDeliveryClassifications.ActiveClaim
                     or "unavailable"
-                    or "failure";
+                    or "failure"
+                    or "ignored"
+                    or "no-notifications"
+                    or "commands-published";
 }

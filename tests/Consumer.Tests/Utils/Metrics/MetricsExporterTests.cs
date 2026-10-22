@@ -84,11 +84,21 @@ public sealed class MetricsExporterTests
             return;
         }
         Assert.Contains("Notification command EMF export failed (ArgumentException).", text, StringComparison.Ordinal);
-        Assert.Equal(19, documents.Length);
+        Assert.Equal(27, documents.Length);
         var ns = mode == "fallback" ? CommandMetrics.MeterName : "notifications-test";
         foreach (var document in documents)
         {
-            if (document.TryGetProperty("NotificationType", out _))
+            if (
+                document.TryGetProperty("AnalyticsEventReceived", out _)
+                || document.TryGetProperty("AnalyticsEventOutcome", out _)
+                || document.TryGetProperty("AnalyticsEventProcessingDuration", out _)
+                || document.TryGetProperty("NotificationCommandPublished", out _)
+                || document.TryGetProperty("NotificationProcessingFailure", out _)
+                || document.TryGetProperty("NotificationConsumerPoll", out _)
+                || document.TryGetProperty("NotificationDeliveryCutoverConfigured", out _)
+            )
+                AssertJourneyDocument(document, ns);
+            else if (document.TryGetProperty("NotificationType", out _))
                 AssertDocument(document, ns);
             else
                 AssertGuardedDocument(document, ns);
@@ -111,7 +121,7 @@ public sealed class MetricsExporterTests
                 .Order()
         );
         Assert.Equal(
-            10,
+            17,
             documents
                 .Select(document =>
                     document
@@ -124,6 +134,44 @@ public sealed class MetricsExporterTests
                 .Distinct()
                 .Count()
         );
+    }
+
+    private static void AssertJourneyDocument(JsonElement root, string ns)
+    {
+        var directive = Assert.Single(root.GetProperty("_aws").GetProperty("CloudWatchMetrics").EnumerateArray());
+        var metric = Assert.Single(directive.GetProperty("Metrics").EnumerateArray());
+        var name = metric.GetProperty("Name").GetString()!;
+        var expected = new Dictionary<string, (double Value, string Unit, Dictionary<string, string> Dimensions)>
+        {
+            ["AnalyticsEventReceived"] = (1, "Count", []),
+            ["AnalyticsEventOutcome"] = (1, "Count", new() { ["Outcome"] = "no-notifications" }),
+            ["AnalyticsEventProcessingDuration"] = (2.5, "Seconds", []),
+            ["NotificationCommandPublished"] = (1, "Count", new() { ["Source"] = "analytics" }),
+            ["NotificationProcessingFailure"] = root.TryGetProperty("Consumer", out _)
+                ? (1, "Count", new() { ["Consumer"] = "analytics", ["Stage"] = "parse" })
+                : (9, "Count", []),
+            ["NotificationConsumerPoll"] = (1, "Count", new() { ["Consumer"] = "delivery" }),
+            ["NotificationDeliveryCutoverConfigured"] = (0, "None", []),
+        };
+        var (value, unit, dimensions) = expected[name];
+        dimensions["Service"] = "waste-obligations-notifications";
+        Assert.Equal(ns, directive.GetProperty("Namespace").GetString());
+        Assert.Equal(value, root.GetProperty(name).GetDouble());
+        Assert.Equal(unit, metric.GetProperty("Unit").GetString());
+        Assert.Equal(
+            dimensions.Keys.Order(),
+            Assert
+                .Single(directive.GetProperty("Dimensions").EnumerateArray())
+                .EnumerateArray()
+                .Select(item => item.GetString())
+                .Order()
+        );
+        Assert.Equal(
+            dimensions.Keys.Concat(["_aws", name]).Order(),
+            root.EnumerateObject().Select(property => property.Name).Order()
+        );
+        foreach (var dimension in dimensions)
+            Assert.Equal(dimension.Value, root.GetProperty(dimension.Key).GetString());
     }
 
     private static void AssertDocument(JsonElement root, string ns)
@@ -221,6 +269,14 @@ public sealed class MetricsExporterTests
         metrics.RecordAcceptanceLatency("submitted", 125.25);
         metrics.RecordOutcomeLatency("submitted", "delivery-suppressed", 127.5);
         metrics.RecordDuplicate("submitted");
+        var journey = app.Services.GetRequiredService<INotificationJourneyMetrics>();
+        journey.RecordAnalyticsReceived();
+        journey.RecordAnalyticsOutcome("no-notifications");
+        journey.RecordAnalyticsDuration(2.5);
+        journey.RecordCommandPublished("analytics");
+        journey.RecordFailure("analytics", "parse");
+        journey.RecordPoll("delivery");
+        journey.RecordCutover(false);
         foreach (
             var outcome in new[]
             {
@@ -236,6 +292,15 @@ public sealed class MetricsExporterTests
             metrics.RecordOutcome("submitted", outcome);
         metrics.RecordOutcome(PrivateValue, PrivateValue);
         using var meter = new Meter(CommandMetrics.MeterName);
+        meter
+            .CreateCounter<long>("NotificationProcessingFailure", nameof(Unit.COUNT))
+            .Add(
+                9,
+                new KeyValuePair<string, object?>("Consumer", PrivateValue),
+                new KeyValuePair<string, object?>("Stage", PrivateValue),
+                new KeyValuePair<string, object?>("Source", PrivateValue),
+                new KeyValuePair<string, object?>("EventId", PrivateValue)
+            );
         meter
             .CreateCounter<long>("NotificationCommandReceived", nameof(Unit.COUNT))
             .Add(

@@ -3,6 +3,7 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
@@ -16,7 +17,8 @@ public sealed class NotificationCommandConsumer(
     ILogger<NotificationCommandConsumer> logger,
     INotifyEmailClient notifyClient,
     INotificationCommandDigest digest,
-    TimeProvider timeProvider
+    TimeProvider timeProvider,
+    INotificationJourneyMetrics journeyMetrics
 ) : StartupBackgroundService(startup)
 {
     protected override async Task ExecuteAfterStartup(CancellationToken stoppingToken)
@@ -32,18 +34,30 @@ public sealed class NotificationCommandConsumer(
             string? messageId = null;
             string? notificationType = null;
             string? reference = null;
+            var stage = "receive";
             try
             {
                 // SQS may make a message invisible before its receive response reaches this host.
                 var receiveStartedAt = Stopwatch.GetTimestamp();
                 var response = await ReceiveCommands(stoppingToken);
+                journeyMetrics.RecordPoll("delivery");
+                journeyMetrics.RecordCutover(cutover.HasValue);
                 foreach (var message in response.Messages ?? [])
                 {
                     messageId = message.MessageId;
+                    stage = "parse";
                     var command = ReadCommand(message);
                     notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
                     reference = digest.CreateNotifyReference(command.IdempotencyKey);
-                    await Process(message, command, reference, cutover, receiveStartedAt, stoppingToken);
+                    await Process(
+                        message,
+                        command,
+                        reference,
+                        cutover,
+                        receiveStartedAt,
+                        nextStage => stage = nextStage,
+                        stoppingToken
+                    );
                 }
             }
             catch (Exception) when (stoppingToken.IsCancellationRequested)
@@ -53,6 +67,7 @@ public sealed class NotificationCommandConsumer(
             }
             catch (Exception exception)
             {
+                journeyMetrics.RecordFailure("delivery", stage);
                 // Dependency exceptions may contain payload or recipient data. Log a bounded category only.
                 LogFailure(exception, messageId, notificationType, reference);
                 await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
@@ -96,6 +111,7 @@ public sealed class NotificationCommandConsumer(
         string reference,
         DateTimeOffset? cutover,
         long receiveStartedAt,
+        Action<string> setStage,
         CancellationToken stoppingToken
     )
     {
@@ -105,6 +121,7 @@ public sealed class NotificationCommandConsumer(
         var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
         if (cutover is null || command.ActionOccurredAtUtc < cutover)
         {
+            setStage("suppression");
             var result = await RunBounded(
                 token => store.RecordSuppression(command, token),
                 options.Value.ClaimTimeoutSeconds,
@@ -139,12 +156,14 @@ public sealed class NotificationCommandConsumer(
                 notificationType,
                 store,
                 receiveStartedAt,
+                setStage,
                 stoppingToken
             );
 
         metrics.RecordOutcome(notificationType, outcome);
         LogOutcome(message, command, reference, notificationType, outcome, cutover);
         stoppingToken.ThrowIfCancellationRequested();
+        setStage("acknowledge");
         await RunBounded(
             token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
             options.Value.DeleteTimeoutSeconds,
@@ -188,9 +207,11 @@ public sealed class NotificationCommandConsumer(
         string notificationType,
         INotificationDeliveryRecordStore store,
         long receiveStartedAt,
+        Action<string> setStage,
         CancellationToken stoppingToken
     )
     {
+        setStage("processing-budget");
         EnsureRemaining(
             receiveStartedAt,
             options.Value.VisibilityTimeoutSeconds,
@@ -199,6 +220,7 @@ public sealed class NotificationCommandConsumer(
         var claimStartedAt = Stopwatch.GetTimestamp();
         var attemptOwner = Guid.NewGuid().ToString("N");
         DeliveryClaimResult claim;
+        setStage("claim");
         try
         {
             claim = await RunBounded(
@@ -230,6 +252,7 @@ public sealed class NotificationCommandConsumer(
                     _ => NotificationCommandFailureReason.StoreError,
                 }
             );
+        setStage("processing-budget");
         EnsureRemaining(
             receiveStartedAt,
             options.Value.VisibilityTimeoutSeconds,
@@ -239,6 +262,7 @@ public sealed class NotificationCommandConsumer(
         var sendStartedAt = Stopwatch.GetTimestamp();
         NotifyAcceptance acceptance;
         DateTimeOffset acceptedAt;
+        setStage("send");
         try
         {
             acceptance = await RunBounded(
@@ -275,6 +299,7 @@ public sealed class NotificationCommandConsumer(
 
         // A confirmed send still needs durable evidence after timeout, lease expiry or shutdown.
         // Mongo's owner and pending-outcome checks fence a replaced or terminal claim.
+        setStage("record-acceptance");
         var recorded = await RunBounded(
             token => store.RecordAcceptance(command, attemptOwner, acceptance, token),
             options.Value.AcceptanceTimeoutSeconds,

@@ -715,7 +715,14 @@ public sealed class NotificationCommandSendTests : IDisposable
             .Returns(new DeleteMessageResponse())
             .AndDoes(_ => deleted.TrySetResult());
         var logger = new RecordingLogger();
-        using var consumer = Consumer(sqs, store, notify, logger, metrics: measurements.Instrumentation);
+        using var consumer = Consumer(
+            sqs,
+            store,
+            notify,
+            logger,
+            metrics: measurements.Instrumentation,
+            journeyMetrics: measurements.JourneyInstrumentation
+        );
 
         await consumer.StartAsync(TestContext.Current.CancellationToken);
         await (
@@ -726,6 +733,34 @@ public sealed class NotificationCommandSendTests : IDisposable
         await consumer.StopAsync(TestContext.Current.CancellationToken);
 
         var events = measurements.Events;
+        var failures = events
+            .Where(measurement => measurement.Name == MetricNames.NotificationProcessingFailure)
+            .ToArray();
+        var expectedStage = condition switch
+        {
+            "send-failed" => "send",
+            "acceptance-failed" => "record-acceptance",
+            "active-claim" or "claim-failed" => "claim",
+            _ => null,
+        };
+        if (expectedStage is null)
+            Assert.Empty(failures);
+        else
+        {
+            var failure = Assert.Single(failures);
+            Assert.Contains(failure.Tags, tag => tag.Key == MetricTags.Consumer && Equals(tag.Value, "delivery"));
+            Assert.Contains(failure.Tags, tag => tag.Key == MetricTags.Stage && Equals(tag.Value, expectedStage));
+        }
+        Assert.Equal(
+            1,
+            Assert.Single(events, measurement => measurement.Name == MetricNames.NotificationConsumerPoll).Value
+        );
+        var policy = Assert.Single(
+            events,
+            measurement => measurement.Name == MetricNames.NotificationDeliveryCutoverConfigured
+        );
+        Assert.Equal(1, policy.Value);
+        Assert.Equal("NONE", policy.Unit);
         Assert.Equal(
             1,
             events
@@ -788,6 +823,7 @@ public sealed class NotificationCommandSendTests : IDisposable
                 !measurement.Name.EndsWith("Duration", StringComparison.Ordinal)
                 && measurement.Name != MetricNames.NotificationCommandNotifyAcceptanceLatency
                 && measurement.Name != MetricNames.NotificationCommandOutcomeLatency
+                && measurement.Name != MetricNames.NotificationDeliveryCutoverConfigured
             ),
             measurement => Assert.Equal("COUNT", measurement.Unit)
         );
@@ -796,7 +832,7 @@ public sealed class NotificationCommandSendTests : IDisposable
             measurement =>
                 Assert.All(
                     measurement.Tags,
-                    tag => Assert.True(tag.Key is "Service" or "NotificationType" or "Outcome")
+                    tag => Assert.True(tag.Key is "Service" or "NotificationType" or "Outcome" or "Consumer" or "Stage")
                 )
         );
         foreach (var value in PrivateValues.Split(' '))
@@ -910,6 +946,72 @@ public sealed class NotificationCommandSendTests : IDisposable
         );
     }
 
+    [Theory]
+    [InlineData(null, 0)]
+    [InlineData("2026-09-29T00:00:00Z", 1)]
+    public async Task WhenDeliveryPollIsEmpty_ShouldReportActivityAndCutoverPolicy(string? cutover, int expectedPolicy)
+    {
+        using var measurements = new RecordingMeasurements();
+        var nextReceive = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sqs = Substitute.For<IAmazonSQS>();
+        var receives = 0;
+        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                if (Interlocked.Increment(ref receives) == 1)
+                    return new ReceiveMessageResponse { Messages = [] };
+
+                nextReceive.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+
+                return new ReceiveMessageResponse();
+            });
+        using var consumer = Consumer(
+            sqs,
+            Store(),
+            Notify(),
+            new RecordingLogger(),
+            new NotificationCommandDeliveryOptions
+            {
+                QueueUrl = QueueUrl,
+                EmailDeliveryCutoverUtc = cutover,
+                EvidenceDigestSecret = "test-secret",
+                RecipientLaneSecret = "test-lane",
+            },
+            journeyMetrics: measurements.JourneyInstrumentation
+        );
+
+        await consumer.StartAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            await nextReceive.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            await consumer.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            1,
+            Assert
+                .Single(measurements.Events, measurement => measurement.Name == MetricNames.NotificationConsumerPoll)
+                .Value
+        );
+        Assert.Equal(
+            expectedPolicy,
+            Assert
+                .Single(
+                    measurements.Events,
+                    measurement => measurement.Name == MetricNames.NotificationDeliveryCutoverConfigured
+                )
+                .Value
+        );
+        Assert.DoesNotContain(
+            measurements.Events,
+            measurement => measurement.Name == MetricNames.NotificationProcessingFailure
+        );
+    }
+
     private sealed class RecordingMeasurements : IDisposable
     {
         private readonly MeterListener _listener = new();
@@ -918,6 +1020,8 @@ public sealed class NotificationCommandSendTests : IDisposable
             .AddNotificationCommandMetrics()
             .BuildServiceProvider();
         public INotificationCommandMetrics Instrumentation { get; }
+        public INotificationJourneyMetrics JourneyInstrumentation =>
+            _services.GetRequiredService<INotificationJourneyMetrics>();
         public Measurement[] Events => _events.ToArray();
 
         public RecordingMeasurements()
@@ -934,6 +1038,7 @@ public sealed class NotificationCommandSendTests : IDisposable
             _listener.SetMeasurementEventCallback<double>(
                 (instrument, value, tags, _) => Record(instrument, value, tags)
             );
+            _listener.SetMeasurementEventCallback<int>((instrument, value, tags, _) => Record(instrument, value, tags));
             _listener.Start();
             Instrumentation = _services.GetRequiredService<INotificationCommandMetrics>();
         }
@@ -970,7 +1075,8 @@ public sealed class NotificationCommandSendTests : IDisposable
         INotifyEmailClient notify,
         RecordingLogger logger,
         NotificationCommandDeliveryOptions? options = null,
-        INotificationCommandMetrics? metrics = null
+        INotificationCommandMetrics? metrics = null,
+        INotificationJourneyMetrics? journeyMetrics = null
     )
     {
         var readiness = new ApplicationStartup();
@@ -1009,7 +1115,8 @@ public sealed class NotificationCommandSendTests : IDisposable
             logger,
             notify,
             digest,
-            TimeProvider.System
+            TimeProvider.System,
+            journeyMetrics ?? _metricServices.GetRequiredService<INotificationJourneyMetrics>()
         );
     }
 

@@ -151,7 +151,8 @@ public sealed class CancellationPublicationDeadlineTests
             startup,
             [submitted, cancellation],
             publisher,
-            digest
+            digest,
+            Substitute.For<Defra.WasteObligations.Consumer.Utils.Metrics.INotificationJourneyMetrics>()
         );
         await consumer.StartAsync(TestContext.Current.CancellationToken);
         try

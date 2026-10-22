@@ -145,6 +145,18 @@ is unset. Its outcome dimension separates suppression from confirmed Notify
 acceptance; acceptance uses the same endpoint as the acceptance-only metric.
 Suppression remains terminal: enabling sending later does not extend its sample.
 
+[Journey metrics](../src/Consumer/Utils/Metrics/NotificationJourneyMetrics.cs)
+connect analytics processing with the shared command delivery path. Analytics
+outcomes require confirmed source acknowledgement; publication counts include
+confirmed partial publications and replays. Counts describe attempts, not a
+conversion funnel: one event can produce zero or many commands.
+
+Use safe EventId/EntityId log scopes and NotifyReference to investigate a case,
+then consult retained delivery evidence. Successful polling shows consumer
+activity, including empty receives; it does not prove dependency health.
+Check queue age and dead-letter messages alongside processing failures. Empty
+latency panels cannot establish service health.
+
 ## Deployment ownership
 
 CDP owns queues/redrive, Mongo, credentials/ACLs, Notify access, metrics routing,
