@@ -522,6 +522,7 @@ public sealed class CancellationEmailProducerTests
 
         public Fixture(string reason = "Producer requested to cancel", string country = "GB-ENG")
         {
+            _logger.IsEnabled(LogLevel.Information).Returns(true);
             Declaration = new Declaration(
                 DeclarationId,
                 3,
@@ -564,7 +565,7 @@ public sealed class CancellationEmailProducerTests
             var arguments = call.GetArguments();
             Assert.Equal(LogLevel.Information, arguments[0]);
             Assert.Null(arguments[3]);
-            var state = Assert.IsAssignableFrom<IEnumerable<KeyValuePair<string, object>>>(arguments[2]);
+            var state = Assert.IsType<IEnumerable<KeyValuePair<string, object>>>(arguments[2], exactMatch: false);
             Assert.Collection(
                 state,
                 entry =>

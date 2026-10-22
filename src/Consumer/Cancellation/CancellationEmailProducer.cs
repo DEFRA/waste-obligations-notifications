@@ -50,10 +50,14 @@ public sealed class CancellationEmailProducer(
                     : live.Id;
             if (accountId is null)
             {
-                logger.LogInformation(
-                    "Cancellation produced no notifications ({ReasonCode})",
-                    "unresolved-compliance-scheme"
-                );
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    logger.LogInformation(
+                        "Cancellation produced no notifications ({ReasonCode})",
+                        "unresolved-compliance-scheme"
+                    );
+                }
+
                 return [];
             }
 
@@ -67,7 +71,14 @@ public sealed class CancellationEmailProducer(
             );
             if (recipients.Length == 0)
             {
-                logger.LogInformation("Cancellation produced no notifications ({ReasonCode})", "no-eligible-recipient");
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    logger.LogInformation(
+                        "Cancellation produced no notifications ({ReasonCode})",
+                        "no-eligible-recipient"
+                    );
+                }
+
                 return [];
             }
 
