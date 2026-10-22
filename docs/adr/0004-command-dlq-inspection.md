@@ -45,56 +45,28 @@ current delivery classification. The user approved this operator-view expansion 
 evidence. Invalid commands expose no partially extracted command fields or usable
 selection. Historical dependency errors remain unavailable.
 
-Sign a content-free selection with the existing evidence secret and a distinct
-HMAC domain. Single-message format `v2` contains receive-attempt ID, opaque SQS message ID, HMAC
-queue binding, absolute UTC expiry, immutable-field digest and original receive
-visibility timeout. Batch format `v3` also signs the original maximum receive size.
-Both formats remain valid. Replay uses the signed size and the signed original timeout across hosts rather
-than deriving a different value from remaining lifetime. Reject old `v1` tokens
-and require fresh inspection. Replay can reset visibility beyond token expiry,
-but the signed expiry still prevents further effects. Anchor expiry
-before receive and keep it below AWS's five-minute receive-attempt window.
-Correctly configured hosts validate the same selection without host-local keys
-or storing payloads.
+Use a content-free, expiring selection signed with the evidence secret and a
+separate HMAC domain. A selection binds the original receive attempt and immutable
+identity, allowing another correctly configured host to recover without retaining
+payloads. Replay can reset visibility beyond authorization expiry; expiry must
+still prevent further effects. The exact version and compatibility rules belong
+in [selection tokens](../../src/Consumer/Administration/CommandDlqSelectionTokens.cs).
 
-Redrive replays the signed receive attempt, verifies the selected message and
-immutable evidence, then publishes its exact body/encoding to the canonical
-recipient lane. Use `v1:command-dlq-redrive:` plus a JSON array of source DLQ URL
-and SQS message ID as the HMAC input with the evidence secret, returning a
-versioned hexadecimal transport ID. This domain differs from normal command-key
-publication and is stable across hosts and retries, permitting recovery while
-SQS remembers a consumed original copy. Confirm publication before deleting only
-the selected receipt. Bound the entire operation by dependency timeout and
-selection expiry, rejecting late confirmations before further effects. Redrive
-never changes delivery evidence; normal consumption retains terminal, conflict
-and active-claim guards.
+Selected redrive republishes unchanged content before removing the selected copy.
+A distinct stable transport identity permits recovery while SQS remembers an
+original consumed copy; durable command identity still governs subsequent sends.
+Batch recovery is intentionally not atomic. Discard records durable abandonment
+before removal, refusing protected or conflicting history. It prevents future
+attempts without establishing whether an earlier indeterminate Notify call failed.
+These choices preserve terminal evidence while permitting safe completion after
+uncertain responses; do not introduce a second recovery ledger.
 
-Batch redrive accepts one to ten signed selections from the same inspection. Reject
-mixed batches and repeated message IDs before effects. Replay once, then verify and
-redrive each selected message with the same publication-before-deletion rule. Return
-per-message outcomes because the batch is not atomic. After any deletion, recovery
-of remaining messages requires fresh inspection once visibility expires. Discard
-continues to act on one selected message, replaying the original batch size.
-
-Discard repeats selection validation under one bounded deadline and records
-`delivery-abandoned` before deleting only the selected receipt. Use the unique
-notification-key index and a server-`$$NOW` pipeline: create minimal abandonment
-or replace only matching expired pending evidence, retaining its record ID and
-clearing the obsolete owner/lease. A matching abandoned record supports
-idempotent deletion. Refuse active owners, immutable conflicts, accepted,
-suppressed and unknown outcomes without rewriting their history. The claim and
-acceptance predicates cannot both win against the abandonment transition.
-
-New abandonment retains the original eight-field shape. Store the exact command
-notification type, consistent with accepted/suppressed records, while the immutable
-digest preserves the original command type and fields. This supersedes the
-earlier abandonment-only diagnostic projection following the PR review.
-Existing abandoned records retain their stored diagnostic label; their original
-type may be unrecoverable and no backfill or terminal-history rewrite is performed.
-Private-bearing type values remain excluded from logs and metrics. Do not persist raw key, recipient, body
-or template. Failed or late writes preserve the source; failed deletion retains
-abandonment for later completion. Future duplicates are suppressed without
-Notify.
+See [redriver](../../src/Consumer/Administration/CommandDlqRedriver.cs),
+[discarder](../../src/Consumer/Administration/CommandDlqDiscarder.cs) and
+[store](../../src/Consumer/Delivery/MongoNotificationDeliveryRecordStore.cs) for
+current guards, response models and persistence. Abandonment retains exact command
+type consistent with other outcomes; earlier diagnostic labels remain unchanged
+without backfill. Private-bearing type values stay excluded from diagnostics.
 
 On 2026-10-08 the user approved whole-DLQ recovery through AWS's native message-move
 task. Resolve ARNs from the existing queue URLs, explicitly target the configured
@@ -116,87 +88,43 @@ ownership. The explicit resend producer now supplies parent correlation. Search
 projects that retained opaque relationship, provides exact parent filtering and navigation,
 and binds it into cursors. No lineage backfill is introduced.
 
-Use recording time for inclusive/exclusive UTC ranges and exact combined
-identifier filters. Sort newest first with Mongo ObjectId as a stable tie-breaker,
-and use bounded opaque cursors bound to the search filters. Unchanged-dataset
-traversal is stable; concurrent updates have no snapshot guarantee. Reuse the
-existing bounded administration dependency timeout and fixed safe failures.
-Search performs no queue, Notify or evidence-write operations. Forward migration
-002 adds three full, visible, nonunique indexes: descending recording time/ObjectId,
-and exact Notify ID or outcome followed by that same descending pair.
-They support bounded ordered listing and the selected exact filters without
-changing the critical unique notification-key index or using query hints.
+Recording time, exact filters and stable bounded cursors support operator
+investigation without interpreting action time as processing time. Concurrent
+updates do not provide a snapshot. The
+[query](../../src/Consumer/Administration/DeliveryRecordSearchQuery.cs),
+[reader](../../src/Consumer/Administration/MongoDeliveryRecordSearchReader.cs) and
+[query-plan scenarios](../../tests/Consumer.IntegrationTests/Scenarios/DeliveryRecordSearchQueryPlanTests.cs)
+own current filter, projection and cursor details.
 
-Delivery evidence is retained indefinitely (ADR 0001); no collection-size bound
-is established. Parent-only navigation must also work when a source has no
-replacements, without walking all retained original evidence. Optional migration
-003 therefore adds the nonunique visible index
-`{ resendOfNotificationKey: 1, recordedAtUtc: -1, _id: -1 }`, with partial predicate
-`{ resendOfNotificationKey: { $type: "string" } }`. Valid parentless originals add
-no entries. Parent queries expose this predicate to the planner while retaining
-the scalar-string guard, exact matching, ordering and cursor contracts.
-No index hint or date bounds are required for ordinary parent navigation.
-
-Migration 003 preserves incompatible owned definitions, confirms completed builds
-and rolls back only its own index. Initial construction scans retained evidence;
-subsequent storage and write-maintenance cost applies to indexed parent values.
-Monitor build completion before relying on replacement links. This remains an
-optional search migration, separate from critical delivery readiness; failures
-must be investigated rather than replacing existing index definitions.
-
-Migrations 002 and 003 are noncritical. Their failure does not gate delivery readiness; check
-optional migration completion before relying on efficient administration search.
-Reject incompatible owned indexes without replacing them, confirm index-build
-completion before recording migration history, and remove only owned names on
-rollback. Index builds consume resources and may continue after a client timeout;
-monitor completion and investigate conflicts before retrying. The three full indexes
-increase storage and maintenance on delivery-state writes. No data backfill or
-new configuration is introduced.
-
-Real-reader command capture and execution-statistics tests check representative
-unhinted ordered plans for listing, recording ranges, Notify/outcome filters,
-combined filters, unique-key lookup and deep tied-timestamp continuation for
-listing and Notify equality. This is not a
-performance guarantee for every filter combination or data distribution. Combined
-filters can retain residual filtering, and skew can increase examined keys/documents;
-the bounded administration timeout remains applicable.
+Evidence retention is indefinite. Parent-only lookup, including sources without
+replacements, must not walk every retained original. Optional migration 003 uses
+a partial parent index so parentless originals need no entries; migration 002
+supports ordinary search. Exact definitions and build/rollback checks live in
+[migrations](../../src/Consumer/Data/Migrations). Neither migration gates critical
+delivery readiness. Confirm their builds before relying on efficient search,
+monitor resource use and investigate incompatible definitions. Builds can outlive
+client timeout. No backfill is introduced. Representative plan tests are not a
+universal performance guarantee for every distribution/filter combination.
 
 ### Inspection recovery guidance and correlation
 
-Extend each inspection item with current-state operator guidance and only
-implemented usable actions, represented by HTTP method, endpoint and description.
-Keep action-time selection, immutable identity and state guards unchanged.
-Recorded acceptance is distinct from recipient delivery; accepted redrive cleans
-up a terminal queue copy, including after a later provider delivery failure.
-Explicit resend requests one stable replacement only for a matching accepted
-source on the DLQ, after operator Notify investigation. Pending guidance treats
-rejection and lost
-responses as conditional investigations and makes inconclusive-lookup duplicate
-risk explicit. Invalid, conflicting and unknown states direct engineering
-escalation without a new removal action.
-
-Return matching minimal retained evidence and available Notify correlation.
-Delivery writes also preserve and separately guard replacement parent metadata.
-Keep the evidence model in Delivery and map it to the Administration search-summary
-contract. Do not expose a mismatched record as matching evidence. Valid pending or
-unrecorded commands can derive the original Notify reference for investigation;
-this is not proof of acceptance. Provide an encoded exact delivery-record link.
-Invalid inputs expose no partial identity, correlation, navigation or usable action.
-All additional evidence remains confined to the authenticated response and excluded from diagnostic logs.
+Authenticated inspection exposes current evidence and only implemented recovery
+actions. These are recommendations, not authorization for later effects; actions
+revalidate selection and state. Pending evidence cannot distinguish rejection,
+a lost response or persistence failure. Accepted evidence does not prove delivery.
+Invalid/conflicting/unknown records require engineering escalation rather than an
+unsafe removal shortcut. See
+[recovery guidance](../../src/Consumer/Administration/CommandDlqRecoveryGuidance.cs)
+and [HTTP operator instructions](../../runbooks/http/README.md).
 
 ### Malformed retained evidence
 
-Preserve the required summary and recording-time/ObjectId cursor contract without
-fabricating missing dates. Matching inspection records with malformed mandatory
-summary fields classify as unknown and expose no matching summary; immutable
-conflicts keep precedence. Search applies scalar BSON-type and representable-date
-guards before page limits, excluding unreadable mandatory evidence while retaining
-unknown string outcomes. Optional malformed correlation/timestamps/version return
-null, with Int32/Int64 versions read only when representable as Int32. Exact
-optional identifiers require scalar strings, not Mongo array containment. Empty
-search results do not establish absence of malformed evidence. No backfill or
-record mutation occurs. A fixed search-failure diagnostic omits query/exception
-content and distinguishes caller cancellation.
+Do not fabricate missing dates or rewrite malformed history. Search excludes
+unreadable mandatory evidence before paging and preserves unknown string outcomes;
+inspection cannot offer usable recovery for unknown evidence. Empty search is not
+proof that malformed evidence does not exist. Optional malformed values remain
+absent. The reader and [search scenarios](../../tests/Consumer.IntegrationTests/Scenarios/DeliveryRecordSearchTests.cs)
+provide exact type and cursor contracts; failures expose fixed safe diagnostics.
 
 ### Administration request-log privacy
 

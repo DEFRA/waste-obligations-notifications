@@ -24,6 +24,7 @@ using NSubstitute;
 
 namespace Defra.WasteObligations.Consumer.Tests.Administration;
 
+[Collection(nameof(ProductionLoggingCollection))]
 public sealed class CommandDlqRedriveTests
 {
     private static readonly JsonSerializerOptions s_indentedJsonOptions = new(JsonSerializerDefaults.Web)

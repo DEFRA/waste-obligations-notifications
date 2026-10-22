@@ -1,7 +1,6 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text;
+using Defra.WasteObligations.Consumer.Services.Http;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Services.WasteObligations;
@@ -39,10 +38,7 @@ public sealed class WasteObligationsClient(HttpClient client, IOptions<WasteObli
             Version = client.BaseAddress?.Scheme == "https" ? HttpVersion.Version20 : HttpVersion.Version11,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue(
-            "Basic",
-            Convert.ToBase64String(Encoding.UTF8.GetBytes($"{options.Value.Username}:{options.Value.Password}"))
-        );
+        request.Headers.Authorization = options.Value.CreateAuthorizationHeader();
 
         return request;
     }

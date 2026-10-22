@@ -1,0 +1,12 @@
+### Anonymous readiness
+# @no-log
+GET {{host}}/health
+
+### Authenticated readiness
+# @no-log
+GET {{host}}/health/authorized
+Authorization: {{authorization}}
+
+### All health checks (anonymous)
+# @no-log
+GET {{host}}/health/all

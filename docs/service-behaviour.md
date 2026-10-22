@@ -1,708 +1,208 @@
 # Service behaviour
 
-This document describes message contracts and processing requirements. Use
-[CONTEXT.md](../CONTEXT.md) for terminology and the linked ADRs for decision
-rationale. The command architecture is accepted; the cutover ADR is accepted. Current
-implementation scope is described below.
+This guide identifies service boundaries and the executable sources of current
+behaviour. Code and tests own implemented decisions, mappings, validation and
+response shapes; ADRs retain why those decisions were made. Use
+[CONTEXT.md](../CONTEXT.md) for terminology and the
+[README](../README.md#configuration) for deployment settings.
 
 ## Current scope
 
-The analytics consumer enriches submitted compliance-declaration events through the
-Waste Obligations read API and publishes submitted-email commands before deleting
-the analytics message. Other valid analytics events retain their log-and-delete
-behaviour. Analytics does not persist event data or send email directly.
-With the default null cutover, the command consumer durably suppresses every
-valid command and deletes it without Notify. With a supplied boundary, it
-records pre-cutover commands as `delivery-suppressed` and
-sends at-or-after-cutover commands through GOV.UK Notify under a Mongo claim.
-Notify acceptance must be recorded before SQS deletion. Matching accepted,
-suppressed, or abandoned records suppress duplicates regardless of the current
-cutover. Configured Basic or OAuth
-administrators can inspect command-DLQ batches, redrive selected commands or discard one command-DLQ message. Redrive does not restore a command's
-original recipient-lane position.
+Analytics produces commands for compliance-declaration submission and cancellation;
+other valid analytics events retain their existing acknowledgement behaviour.
+Analytics does not send email or persist event data. Source-independent command
+delivery owns cutover, durable evidence and Notify requests. Authenticated
+administration supports inspection and recovery without changing business data.
 
 ## Consumers and message handling
 
-- Validate a message at the boundary, before any terminal action. Reject
-  malformed JSON, missing required values, invalid command shape, invalid UTC
-  timestamps, unsupported schema versions, and unsupported encodings.
-- Preserve the analytics-event transport contract: raw JSON and
-  `Content-Encoding: gzip+base64` are supported. Any other declared encoding is
-  a processing failure.
-- For `entity: compliance_declaration`, `eventType: submission.created`, require
-  a `compliance_declaration_v` schema version of at least `1.0` (the first
-  schema with organisation identity), a positive integer entity `version`,
-  `entityId: cdec_<ObjectId>` and `after.organisation.id` as a nonempty UUID.
-  Read `/organisations/{id}/compliance-declarations/{bare ObjectId}` with Basic
-  service credentials authorised for Read. Require matching declaration and
-  organisation identities and an equal or newer declaration version.
-- Event IDs are correlation values, not a submission acceptance or replay-identity
-  constraint. Recognised event/entity identifiers are logged directly; other
-  identifiers use opaque hashes. Declaration entity IDs must still match the read
-  contract when producing a submitted email.
-- Always use the first exact `Submitted` audit's email, name and explicit UTC
-  timestamp, including when the latest declaration is Accepted or Cancelled.
-  Persisted organisation country, registration type, regulator and regulator email
-  determine the command. Only the string `GB-WLS` selects Welsh; absent, null,
-  empty or non-string country values select English. Only `ComplianceScheme`
-  selects the scheme templates. Other registration types select direct templates.
-  English regulator articles are `The ` and `the `; Welsh has no articles.
-  Personalisation has exactly integer `obligationYear` and strings `regulatorLeading`,
-  `regulatorInline`, `regulatorEmail`, `user`.
-- The stable intended-email key is `compliance-declaration:{bare ObjectId}:submitted:v1`;
-  event IDs and later entity versions do not create a new intended email. No producer
-  ledger is introduced. The shared publisher normalises recipients and uses the
-  shared digest for recipient lanes; delivery's terminal evidence suppresses replay.
-- Matching events are deleted only after confirmed command publication. A missing
-  declaration, older version, missing required data, read or unconfirmed publication
-  failure leaves the event for retry. After confirmed publication, uncertain deletion
-  can cause replay and is diagnosed as acknowledgement uncertainty. Other valid
-  events continue to log their safe event/entity correlation and acknowledge.
-- Delete an SQS message only after all work needed to make it terminal has
-  succeeded. Parsing, validation, persistence, or processing failures must
-  leave the message in the queue for its redrive policy.
-- Both normal consumers request one message per receive and process it on each
-  host, with no batch-size option. A larger receive requires a reviewed
-  processing/visibility budget. Both immediately receive again after success
-  or an empty response; SQS long polling supplies idle waiting. Analytics requires
-  a 1–20 second wait and rejects zero. Their poll
-  intervals are cancellation-aware error backoff only. Dependency timeouts are
-  failures; host cancellation stops consumption. The command receive timeout must exceed its long-poll wait and
-  bounds that receive without changing the shared SQS client's configuration.
-  Analytics independently validates its single-message budget: 30 seconds receive,
-  20 read, 10 publish, 5 delete and 10 headroom fit its explicit 90-second visibility.
-  Each dependency is bounded; remaining visibility is checked before processing
-  stages. The command lease/visibility budget does not cover analytics work.
-  A disabled analytics consumer logs once and awaits cancellation.
-- Apply the logging restrictions in [coding standards](../CODING_STANDARDS.md).
+| Concern | Implementation and executable examples |
+| --- | --- |
+| Analytics parsing and scope | [AnalyticsEvent](../src/Consumer/Consumers/AnalyticsEvent.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs), [scope tests](../tests/Consumer.Tests/Cancellation/AnalyticsEventCancellationScopeTests.cs) |
+| Submitted intention and original audit | [SubmittedEmailProducer](../src/Consumer/Submission/SubmittedEmailProducer.cs), [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/SubmittedEmailSendTests.cs) |
+| Notification definitions and routing | [definition options](../src/Consumer/Notifications/NotificationDefinitionsOptions.cs), [registration](../src/Consumer/Notifications/ServiceCollectionExtensions.cs) |
+| Declaration boundary | [Waste Obligations client](../src/Consumer/Services/WasteObligations), [DTOs and version validation](../src/Consumer/Submission/SubmittedEmailProducer.cs) |
+| Analytics receive/enrichment/publication budget | [options](../src/Consumer/Consumers/AnalyticsEventConsumerOptions.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs) |
+
+Required publication must be confirmed before acknowledging its source. A valid
+no-email outcome can acknowledge without publication; validation/dependency or
+unconfirmed-publication failures remain retryable. Uncertain acknowledgement can
+replay confirmed work. Neither publication nor Notify acceptance proves recipient
+delivery. Consumer budgets are separate; a delivery lease does not cover analytics
+enrichment. Larger receive batches require a reviewed visibility budget.
+
+## Cancellation production
+
+The [cancellation producer](../src/Consumer/Cancellation/CancellationEmailProducer.cs)
+owns transition eligibility, audit selection, Account resolution, recipient
+filtering and immutable identities. [Presentation](../src/Consumer/Cancellation/CancellationPresentation.cs)
+owns bilingual wording and personalisation. Review
+[producer tests](../tests/Consumer.Tests/Cancellation/CancellationEmailProducerTests.cs),
+[presentation tests](../tests/Consumer.Tests/Cancellation/CancellationPresentationTests.cs)
+and [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs)
+for exact cases rather than maintaining a second mapping table here.
+
+Cancellation uses an authorised declaration read plus live organisation/Account
+reads. Actual cancellation intentions are preceded by confirmed publication of
+the original Submitted intention on every attempt. Empty results publish neither.
+Unrecognised cancellation reasons leave the analytics message for retry and dead-lettering.
+No eligible recipient or unresolved compliance scheme remains an acknowledged no-send
+outcome, logged with a fixed reason code and no recipient data.
+Retries re-evaluate live contacts; terminal evidence and immutable conflicts remain
+the replay boundary. No recipient snapshot or producer ledger is introduced.
+Publication precedence does not establish inbox order: recipient lanes, recovery
+and resend can change later delivery order.
 
 ## Notification commands and data protection
 
-Producer wire fields, timestamp precision and exact FIFO lane calculation are
-specified in the [producer contract](notification-command-producer-contract.md).
+External publishers must follow the [producer contract](notification-command-producer-contract.md).
+For internal behaviour follow:
 
-- Keep notification delivery separate from the analytics-event path. Analytics
-  consumption produces commands but does not send email, mutate business data,
-  or persist event data.
-- Validate commands before publishing or consuming them. Normalise a recipient
-  only where the command contract requires it.
-- Consume commands unconditionally after successful startup readiness. Null
-  cutover permanently suppresses them; it does not pause consumption. Validate
-  the configured FIFO queue, digest secrets, Notify credentials/API URL, complete
-  processing budget and any supplied UTC cutover at
-  startup. Invalid values and deployment placeholders prevent startup and queue
-  effects. Digest creation independently rejects unconfigured secrets.
-- Use the idempotency key as the FIFO message-deduplication ID and a
-  non-reversible per-recipient digest as the FIFO message-group ID.
-  Validate the key before publishing or consuming: it must contain 1–128
-  characters from the ASCII letters, digits and punctuation allowed by
-  [SQS SendMessage](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html#API_SendMessage_RequestParameters).
-  Reject invalid keys without changing them; never trim, truncate or replace
-  the key to fit the queue constraints.
-- Run versioned Mongo migrations under a renewable exclusive lease on every host. Critical migrations gate `/health`; migration 001 is
-  critical because its full unique notification-key index enforces idempotency.
-  Require the build to complete before recording history or readiness; catalog
-  presence alone is insufficient. Reject incompatible existing definitions without
-  dropping them. Matching completed hidden indexes satisfy the prerequisite.
-  Confirm applied critical history and the latest critical schema once at
-  startup. Both consumers await the first successful anonymous health response
-  through a shared hosting boundary. Admin HTTP requests return 503 until the shared startup boundary is released.
-  Stores and administration services have no completion dependency.
-  This does not detect later manual schema changes. Completion by another host can satisfy this check, including
-  after the local host exhausts its migration attempts. A lease-renewal failure
-  cancels the engine; only after it stops can the host release and reacquire
-  the lease. While critical readiness is incomplete, an attempt failure also
-  relinquishes the lease after stopped work, followed by a five-second backoff.
-  Once readiness is established, standard failures retry under the lease with
-  the existing 30-second delay. Use a 30-second lease renewed every ten seconds.
-  Attempts share one bounded host-wide budget across acquisitions and phases.
-  Host shutdown cancels the migration engine but continues renewing its lease
-  while renewal succeeds until execution stops.
-  Bound acquisition and renewal confirmation by a deadline measured from the
-  request start, reserving half a renewal interval before expiry. Cancel the
-  engine independently of renewal I/O when confirmation misses that deadline;
-  ignore late success and reject renewal of an expired lease. Await outstanding
-  renewal work before local release or reacquisition. Cancellation-resistant
-  engine operations can still outlive ownership loss; the lease provides no
-  fencing after expiry.
-  Bound each critical operation by 20 seconds and each standard operation by
-  300 seconds. Preserve ordered prerequisites; a standard migration between
-  two critical versions does not inherit the earlier critical deadline.
-  Migration failures and
-  prolonged readiness waits produce error logs. Unapplied critical migrations
-  keep `/health` unhealthy and consumers paused.
-- Use configured bounded diagnostic type labels in logs and command metrics;
-  unconfigured notification types use `other`. Log fixed failure reasons and
-  exception type names without exception objects, messages or response contents.
-- Persist only the minimal, versioned HMAC evidence needed for command
-  idempotency and outcomes. Do not persist recipient addresses,
-  personalisation, template content, rendered content, or full GOV.UK Notify
-  responses.
-  New suppression records retain their original eight fields; optional lease
-  and Notify fields are omitted when absent. Claims and accepted records keep
-  their additional evidence. Existing documents are not rewritten, and older
-  record models are not expected to read pending or accepted records.
-- Treat a duplicate command with different immutable fields as a conflict and
-  leave it retryable. A pre-cutover command is terminal only after its
-  `delivery-suppressed` outcome is recorded. A nonterminal claim cannot be
-  mistaken for suppressed evidence or overwritten by suppression.
-- Claim a post-cutover command atomically using the unique notification-key
-  index, matching immutable digest, fresh attempt owner, and Mongo's expiry
-  clock. Active claims cannot send again; expired claims permit one new owner.
-  Acceptance updates require the same owner and a pending outcome, even after
-  lease expiry. Accepted evidence includes the opaque versioned HMAC Notify reference,
-  template ID/version, Notify notification ID, correlation digests, and timestamps.
-- Make one Notify request per claim with no HTTP retry or redirect. Normalize the
-  recipient for the request. Give pooled connections a two-minute lifetime so
-  the retained client refreshes DNS when opening replacement connections.
-  Require `201 Created` and consistent minimal
-  acceptance evidence; malformed success is indeterminate and remains retryable.
-  Never log dependency exception text or full responses, which may contain PII.
-  The pinned `GovukNotify` client owns email authentication, serialization and
-  response models, using Waste Obligations' injectable client factory convention.
-  Its per-operation transport preserves configured routing and carries the
-  operation's cancellation through complete response buffering. SDK request and
-  response objects are disposed after success or failure without disposing the
-  shared typed `HttpClient`. JSON personalisation values retain their original
-  semantics; only minimal acceptance evidence is projected from the SDK model.
-- Validate the complete bounded attempt budget at startup. Initially visibility
-  is 120 seconds and command leases are 90 seconds, leaving retry headroom; receive, claim, send, acceptance and deletion
-  bounds are 30, 5, 60, 10 and 5 seconds, plus 10 seconds headroom. Measure elapsed
-  time monotonically from receive/claim request starts and reject late confirmations
-  before sending. Request visibility explicitly on receive without changing shared
-  queue configuration. Pass cancellation through the entire Notify request and
-  response buffering. A failed send retains its claim until expiry.
-- A Notify timeout, lost response, crash, or failed acceptance write does not prove
-  rejection. Queue retry after expiry may send a duplicate email. An already
-  in-flight request can outlive ownership during a process stall; Mongo rejects
-  acceptance from a replaced owner or terminal claim. A complete, valid Notify
-  acceptance is persisted with a fresh bounded token even after send timeout,
-  ownership-budget expiry or shutdown; it is never discarded just for lateness.
-  No Notify-reference reconciliation is implemented. Queue
-  deletion failure after durable acceptance retries as a terminal duplicate.
-- Compare the immutable UTC business-action timestamp with the deployment-owned
-  cutover value. Any supplied cutover and serialized action timestamps must
-  explicitly include `Z` or a zero offset (`+00:00` or `-00:00`). Reject absent
-  or nonzero offsets instead of interpreting them in the host timezone or
-  converting them. Truncate both timestamps to whole milliseconds before
-  comparison, matching MongoDB storage precision. Apply the same truncation to
-  command serialisation and immutable-field digests so sub-millisecond precision
-  lost on a Mongo roundtrip does not create a conflict. Do not use processing time
-  or mutable entity state.
+- [Command publisher and parser](../src/Consumer/Commands).
+- [Delivery consumer](../src/Consumer/Delivery/NotificationCommandConsumer.cs), [store](../src/Consumer/Delivery/MongoNotificationDeliveryRecordStore.cs) and [digest](../src/Consumer/Delivery/NotificationCommandDigest.cs).
+- [Notify boundary](../src/Consumer/Delivery/NotifyEmailClient.cs) and [SDK transport](../src/Consumer/Delivery/NotifySdkHttpClient.cs).
+- [Delivery regression scenarios](../tests/Consumer.IntegrationTests/Scenarios/NotificationCommandDeliveryTests.cs), [send scenarios](../tests/Consumer.IntegrationTests/Scenarios/NotificationCommandSendTests.cs) and [null cutover scenarios](../tests/Consumer.IntegrationTests/Scenarios/NullCutoverDeliveryTests.cs).
 
-Operational logs and metrics use a diagnostics-only allowlist of notification
-categories, with an `other` fallback for unknown values. Startup bounds the list
-to 32 non-PII labels of at most 64 lowercase ASCII letters, digits or hyphens.
-This does not restrict producer-defined command types or alter stored immutable
-identity. Claim results and durations, Notify accepted/failed attempts and send
-durations, and terminal duplicates are observed at the hosted-consumer boundary.
-Notify acceptance is counted before persistence; failure means an attempt lacked
-confirmed acceptance and includes indeterminate cancellation and timeout. These
-metrics do not claim recipient delivery or rejection.
-
-Failure logs retain a fixed reason category and the original exception type
-name alongside permitted correlation. Categories distinguish invalid commands,
-conflicts, active claims, Notify 4xx rejection, indeterminate sends, store/queue
-errors, lost ownership, exhausted processing budgets and unexpected errors.
-They contain no dependency exception text, inner exception or response body.
-DLQ operators can correlate a selected message ID with these logs; historical
-errors are not reconstructed or added to persisted delivery evidence.
-
-Instruments follow Waste Obligations' DI-owned meter and singleton instrumentation
-conventions. Shared names and tag keys use PascalCase; counters use CloudWatch
-`COUNT` and claim/send durations use `MILLISECONDS`, matching email-send timing.
-Command dimensions are the fixed Notifications `Service`, bounded
-`NotificationType` and fixed `Outcome`. The process-wide exporter follows Waste
-Obligations' static meter listener and EMF `MetricsLogger` mechanism, initialised
-before the host starts. It observes the known command instruments by meter name.
-One measurement emits one SDK document; logger disposal performs the flush.
-The SDK owns its process-wide environment cache, platform metadata decoration,
-agent transport and lifecycle.
-
-Export defaults to enabled and requires a configured namespace, except that
-`AWS_EMF_ENVIRONMENT=Local` allows a blank namespace and uses the Notifications
-namespace. Disabled export does not resolve an SDK environment. Local development
-and isolated tests disable it. SDK environment selection and routing read actual
-process environment variables. No custom metadata transport, environment factory
-or shutdown lifecycle is present. SDK internal diagnostics are disabled; export
-failures expose a fixed message and exception type without private contents.
-Metrics remain best effort. See the README for configuration and CDP routing.
-
-`/health/all` includes a light read-only Notify check on every host, including
-with null cutover. It makes one authenticated `GET /v2/templates?type=email`,
-requires `200 OK`, and uses the pinned SDK template-list operation. The SDK
-reads and deserializes template data; it is discarded without logging, persistence
-or exposure in the health result. The existing ten-second health timeout cancels
-the complete HTTP request and response buffering; a late response
-after cancellation cannot report healthy. Results and logs expose only fixed
-descriptions, without dependency exceptions or response data. `/health` stays independent
-of extended dependency checks. This check does not validate a specific template
-or confirm recipient delivery.
-
-The command architecture is described in
-[ADR 0001](adr/0001-notification-command-delivery-architecture.md), and the
-cutover decision in [ADR 0002](adr/0002-email-delivery-cutover-boundary.md).
+Retain minimal evidence indefinitely, not recipients, personalisation, rendered
+content or full provider responses. Protect identity secrets for that lifetime.
+Terminal outcomes cannot be reset to force a send. A failed or indeterminate
+Notify request can be retried after claim expiry and produce another email;
+there is no exactly-once guarantee or Notify-reference reconciliation. See
+[architecture rationale](adr/0001-notification-command-delivery-architecture.md),
+[cutover rationale](adr/0002-email-delivery-cutover-boundary.md) and
+[coding privacy requirements](../CODING_STANDARDS.md#validation-configuration-and-security).
 
 ## Command-DLQ verification command
 
-`POST /admin/notification-commands/dlq/verification-command` shares the Admin ACL and startup boundary. It accepts no payload, including framed/chunked bodies. Generate a fresh prefixed key with schema 1, action time 2000-01-01 UTC, type `admin-verification`, recipient `verification@example.invalid`, an all-zero template ID and empty personalisation. Validate and normalise the command before any effect. Confirm fresh permanent suppression before publishing one FIFO message to the configured DLQ, using the key for deduplication and the canonical recipient lane. One dependency deadline covers both effects; failures expose fixed 503 details. Rejected, cancelled or late suppression never publishes. Publication failure leaves suppression evidence intact. Return only the generated key and SQS message ID after timely confirmed publication.
-
-Successful redrive is followed by ordinary consumer processing: matching terminal evidence suppresses Notify and the consumer deletes the source message without changing the record. This holds for null or earlier cutover values. Creation confirms queuing rather than completed processing. Inspection selects up to ten next-visible messages, so locate the generated identity in the returned batch before acting. Suppressed probes cannot be discarded; successful native discard remains separately unverified. Local replay uses the labelled controlled API adapter and does not prove native FIFO replay.
+The [verification-command creator](../src/Consumer/Administration/CommandDlqVerificationCommandCreator.cs)
+provides a synthetic permanently suppressed probe for operator recovery checks.
+It confirms queuing, not processing, and cannot prove successful discard.
+Use the [native runbook](command-dlq-native-sqs-verification.md); it does not
+authorize agents to touch shared queues or provision cloud resources.
 
 ## Command-DLQ status
 
-`GET /admin/notification-commands/dlq/status` uses the same Admin ACL and startup
-boundary. It reads SQS attributes and returns approximate visible, in-flight,
-delayed and total message counts, plus the latest AWS redrive task's status, start
-time and approximate progress. It never receives messages or changes visibility.
-Counts are eventually consistent; inspecting commands moves them into the in-flight
-count until their visibility expires or they are removed. Missing or invalid
-attributes and failed or late responses produce a fixed 503 result.
+[Queue operations](../src/Consumer/Administration/CommandDlqQueueOperations.cs)
+provide approximate counts and native redrive-task status without receiving
+messages. Counts are eventually consistent. Inspecting messages changes visibility
+and receive count, so it can affect the observed counts.
 
 ## Whole command-DLQ redrive
 
-`POST /admin/notification-commands/dlq/redrive-all` uses the same Admin ACL and
-startup boundary and accepts no body. Resolve both configured queues' ARNs and
-start AWS `StartMessageMoveTask` with the DLQ as source and the command queue as
-explicit destination. AWS chooses the transfer rate. A confirmed task returns
-202 with its task handle and a Location pointing to the status endpoint; this
-confirms task creation rather than completion or email delivery. AWS owns the task
-and permits one active task per DLQ. No message content is read, transformed or
-persisted by this endpoint, including malformed commands.
-
-One dependency deadline covers ARN lookup and task creation. Failures and late
-confirmations return a fixed 503; creation may still have succeeded, so check
-status before retrying. AWS redrive operates on available messages. Let existing
-inspection visibility periods expire before whole-queue recovery. Normal command
-consumption still applies cutover, duplicate, conflict and claim rules; terminal
-suppression or abandonment is not undone. Deployed IAM must permit redrive and task
-listing as well as the source receive/delete and destination send operations.
+[Queue operations](../src/Consumer/Administration/CommandDlqQueueOperations.cs)
+start native AWS movement to the configured command queue. Task creation does
+not prove completion or delivery. Let inspection visibility expire first and
+check status before retrying uncertain task creation. Recovery retains ordinary
+cutover, conflict, claim and terminal suppression rules.
 
 ## Command-DLQ inspection
 
-Administration is always registered independently of sending.
-`POST /admin/notification-commands/dlq/inspect` requires authenticated
-Basic or Bearer credentials from the Waste Obligations `Acl.Clients` shape with
-an ACL `admin` scope. Basic requires an ApiKey client and its secret; Bearer
-requires exactly one `client_id` identifying an OAuth client. Unknown clients,
-wrong client types, incorrect/malformed credentials, invalid lifetimes and
-read/write-only clients cannot reach queue or record operations. Token-provided
-scope or role claims cannot grant privileges; only configured ACL scopes apply. Validate
-all configured ACL entries, distinct command/DLQ FIFO URLs and digest secrets at
-startup. An empty ACL or one with no admin scope permits startup and denies all
-administrator calls.
-See [ADR 0004](adr/0004-command-dlq-inspection.md).
+Use [HTTP requests and operator guidance](../runbooks/http/README.md) for endpoint
+methods, authentication, selection and recovery. Current responses/actions are
+specified by [administration endpoints](../src/Consumer/Administration),
+[recovery guidance](../src/Consumer/Administration/CommandDlqRecoveryGuidance.cs)
+and [response snapshots](../tests/Consumer.Tests/Administration).
 
-Bearer follows the explicitly approved Waste Obligations gateway trust contract:
-the private CDP gateway validates Cognito signatures, issuer and audience. The
-service parses tokens and validates lifetime with the framework's default
-five-minute clock skew, but does not verify signature, issuer or audience.
-Gateway authentication must protect every administrator route. Direct backend
-callers can assert an ACL client identity; deployment-owned network controls
-must establish that trust boundary. Private routing alone does not establish
-gateway validation.
-Another CDP service reaching the backend could forge an unexpired token for a
-known OAuth administrator client ID and permanently abandon delivery. Client IDs
-are not secrets. This consequence belongs to the explicitly approved gateway-only
-contract and requires deployment-owned access controls for administrator access.
+Administration is always registered and uses the Admin ACL plus startup readiness.
+The accepted [gateway-only Bearer trust contract](adr/0004-command-dlq-inspection.md)
+requires gateway validation and restricted direct backend access. Empty ACLs deny
+access. Email inputs are allowed only in authenticated inspection responses,
+never logs, metrics, selection tokens or Mongo evidence.
 
-Every host consumes commands and starts the same Mongo migrations, including
-with null cutover. Null permanently suppresses delivery; it does not pause consumption. Its HTTP boundary returns 503 until the first successful anonymous
-`/health` response completes, before receiving up to ten next-visible
-FIFO DLQ messages in one request. Receive uses a fresh attempt ID, zero wait and visibility
-covering the bounded selection lifetime. Inspection changes those messages'
-visibility and receive counts but never deletes, publishes, abandons or overwrites
-delivery evidence. An empty queue returns no content. Failures expose fixed
-safe messages and leave the message available for later visibility-timeout retry.
+Selections expire; replay can keep messages invisible beyond selection expiry.
+Wait for visibility and reinspect when necessary. Selected redrive preserves
+command content and confirms publication before removal; discard confirms
+abandonment before removal. Neither can undo terminal suppression or acceptance.
+Malformed commands/conflicts require engineering escalation and configured queue
+retention or controlled removal; no verified removal tool is supplied here.
 
-The response contains a `messages` array. Each valid entry exposes the original command's
-schema version, idempotency key, notification type, action timestamp, normalised
-recipient address, template ID and personalisation, plus SQS message ID, timestamps,
-receive count, current delivery classification, recipient digest and selection token.
-Each entry also includes `operatorGuidance` and `availableActions` (method,
-endpoint and description). Actions are classification-specific recommendations
-for implemented operations. Redrive validates the current selection and command
-content; discard also checks current delivery evidence. The inspection snapshot
-does not authorise a later action. Matching retained evidence appears in
-`deliveryRecord` using the search-summary shape, with available Notify ID/reference
-also exposed at the item level. Conflicting evidence is never returned as a
-matching summary. Pending or unrecorded commands expose their derived original
-Notify reference for investigating uncertain results, not proof of acceptance.
-Valid commands provide encoded `links.deliveryRecord` and `links.resends` search URLs.
-Malformed/unsupported entries expose no command identity, correlation, record,
-navigation or usable selected action, and direct engineering escalation.
+Local tests label their receive-attempt replay adapter because Floci lacks native
+replay. Real isolated FIFO/Mongo tests validate wiring and durable guards, not
+native AWS replay. Follow the [native verification runbook](command-dlq-native-sqs-verification.md)
+for that separate evidence requirement.
 
-Guidance describes current evidence, not the historical failure cause or live
-recipient delivery. The implemented recovery choices are:
+## Email diagnostics
 
-| Classification | Guidance and available actions |
-| --- | --- |
-| `delivery-accepted` | Check Notify. Recorded acceptance does not prove recipient delivery. Wait if processing; redrive cleans up a terminal queue copy without another send. Later delivery failure leaves acceptance intact. Check existing replacements and investigate before requesting the one stable replacement through resend. An inconclusive lookup leaves duplicate risk. Inspect/redrive/resend. |
-| `active-claim` | Wait and inspect again. The lease does not prove the owning process is running. Selected redrive is not offered while active; discard refuses active claims. |
-| `expired-claim` | Check Notify using the original reference. If delivered, discard to stop further attempts; if processing, wait. If rejection is confirmed, fix its cause, including credentials where relevant, before redrive. An inconclusive lookup retains duplicate risk. Inspect/redrive/discard. |
-| `unrecorded` | Investigate and fix the processing failure before redrive, or discard if further attempts are no longer required. Redrive/discard. |
-| `delivery-suppressed` | Confirm the handover policy; the legacy sender may have sent. Redrive only cleans up the terminal copy and cannot undo suppression. Inspect/redrive. |
-| `delivery-abandoned` | Confirm the prior decision; discard performs idempotent cleanup. Abandonment does not prove an earlier uncertain request failed. Discard only. |
-| `immutable-conflict`, invalid/unsupported, unknown state | Escalate to engineering. No selected recovery or removal action is offered. |
-
-Pending evidence cannot distinguish rejection, a lost response, a crash before
-sending or failed acceptance persistence. Absence in Notify is not proof that no
-request was accepted. Neither suppression nor abandonment can be overridden.
-Explicit resend is limited to matching accepted commands still on the DLQ; no new direct removal action is provided.
-
-Command content is permitted only in authenticated inspection responses; it must
-not appear in logs, metrics, tokens or Mongo evidence. Rendered emails and Notify
-responses are not returned. Historical dependency errors are not persisted.
-Malformed or unsupported commands expose only SQS metadata and a fixed
-classification, with no partially extracted command fields or usable selection.
-
-The shared-secret, versioned HMAC selection contains only FIFO receive-attempt
-ID, opaque SQS message ID, HMAC queue binding, absolute UTC expiry, immutable
-evidence digest and original receive visibility timeout. Batch format `v3` also
-binds the original maximum receive size. Inspection now issues `v4`, also binding
-the opaque notification key and optional parent. `v2`/`v3` remain valid for
-redrive/discard; resend requires fresh identity-bound inspection. Replay uses
-the original size and timeout across hosts with different local settings. Old `v1`
-selections require fresh inspection. Replay resets visibility and may leave the
-message hidden after token expiry; it never extends authorization to act.
-It contains neither raw command identity nor body/receipt
-content, works across correctly configured hosts and is not persisted. Preserve the evidence secret across hosts and deployments while evidence, selections or replayable commands exist. It also derives Notify references and redrive deduplication IDs through distinct HMAC domains. Key rotation is unsupported; changing it can invalidate selections and duplicate detection. Expiry
-is anchored before receive, is strictly within AWS's five-minute attempt window,
-and is not extended by a delayed response. Pass bounded cancellation to queue
-and storage calls and reject late confirmations. Redrive uses this selection
-contract; discard uses the same authenticated selection body.
-
-`POST /admin/notification-commands/dlq/redrive` accepts the selection token in its
-JSON body and requires the same Basic/Bearer Admin policy. Invalid or expired tokens
-return a fixed bad-request result before receiving. Replay uses the signed FIFO
-receive-attempt ID, original maximum receive size and zero wait. Missing, changed or malformed
-selected commands return a fixed conflict without publishing or deleting. The
-whole operation shares one bounded dependency
-deadline capped by the selection's remaining lifetime; late confirmations cannot
-start the next effect.
-
-Publish the exact source body and message attributes, including `Content-Encoding`,
-with the canonical recipient lane. Use a versioned, domain-separated HMAC of
-source DLQ URL and SQS message ID as transport deduplication identity. It remains
-stable across hosts/retries and differs from the producer command-key identity,
-so a consumed original copy's five-minute SQS deduplication memory cannot swallow
-recovery. Keep the command idempotency key unchanged. Recovery joins current lane
-order and does not rewrite delivery evidence or apply discard restrictions;
-normal consumption still checks conflicts, active claims and terminal outcomes.
-
-Only confirmed publication permits deletion of the replayed selected receipt.
-Failed, timed-out or late publication leaves the source even if a destination
-copy exists. Failed deletion retains publication; a repeat uses the same recovery
-transport identity. Outside SQS's deduplication window, another copy remains
-subject to durable command identity. Redrive responses and logs contain fixed
-safe results, no raw command fields, receipt, selection token or dependency
-exception text. No additional HTTP retries or Notify reconciliation are added.
-
-Redrive also accepts `{ "selectionTokens": ["..."] }` for one to ten distinct
-messages from the same inspection. Validate all tokens before queue effects and
-replay the receive attempt once. Each selected command is independently verified,
-published unchanged and deleted only after confirmed publication. Return a `messages`
-array of SQS message IDs and fixed `redriven`, `unavailable` or `failed` outcomes.
-A batch is not atomic; completed entries are retained when another entry fails.
-Reinspect remaining messages after visibility expires rather than replaying a batch
-whose messages have already been deleted. Mixed batches, duplicates, invalid or
-expired tokens are rejected before receiving. The single-token request remains supported.
-
-`POST /admin/notification-commands/dlq/discard` applies the same authenticated,
-bounded replay and command verification. Invalid, expired, changed or malformed
-selections cannot create evidence or delete. Atomically record abandonment before
-selected deletion. New records retain only the original eight minimal fields;
-notification/recipient/immutable fields are keyed digests, notification type is
-the exact command type consistent with accepted/suppressed records, and timestamps/outcome record
-abandonment. The immutable digest still covers the original type and delivery
-identity. Never store raw key, recipient, personalisation or template in new
-abandonment evidence. The notification type can contain private-bearing text;
-the safe diagnostic projection still applies to logs and metrics.
-Existing abandoned records retain their stored label without backfill or history
-rewrite; their original type may no longer be recoverable.
-
-A per-key unique index and Mongo server-time pipeline permit a new record or a
-matching expired pending claim. Active claims, immutable conflicts, accepted or
-suppressed records and unknown states return conflict without changing history
-or deleting. An expired transition clears obsolete owner/lease fields and
-preserves record identity; matching abandonment allows idempotent removal.
-Claim recovery and acceptance cannot win the same atomic transition as
-abandonment. Future consumer duplicates are acknowledged without Notify.
-
-The entire discard operation shares its dependency timeout, capped by selection
-expiry. Failed or late abandonment confirmation leaves the source even if the
-write completed. Failed deletion retains durable abandonment, allowing a repeat
-on another host. Abandonment prevents future attempts and does not establish
-whether an earlier indeterminate Notify request succeeded. Responses/logs remain
-fixed and safe; the raw inspection identity exception does not extend to discard
-responses. Only notification type is stored raw, matching other delivery outcomes.
-
-Floci lacks native receive-attempt replay. Local tests explicitly supply that
-one API behavior with a test-only adapter while real FIFO queues verify
-publication, deduplication, deletion and isolation, and real Mongo verifies
-readiness and unchanged evidence. Native AWS replay remains a deployment
-validation requirement.
-
-Command queue/DLQ/Mongo and Notify extended health run on every host, including
-with null cutover. Critical migrations gate `/health`; both consumers and
-administration start after its first successful anonymous response completes.
-
-## Submitted-email diagnostics
-
-Confirmed publication logs safe event/entity correlation, an opaque Notify reference,
-configured UUID template, bounded variant and original action time. Delivery outcome
-logs use the same reference and distinguish unset-cutover suppression, actions before
-cutover, durably recorded Notify acceptance and matching terminal duplicates. None
-claims recipient delivery. Unsafe arbitrary template strings are omitted from delivery
-logs. Retry warnings use fixed stage/reason values and available safe SQS/event/entity
-correlation, without exception text, PII, payloads or raw intended-email keys.
-The four `declaration-submitted-direct-en`, `declaration-submitted-direct-cy`,
-`declaration-submitted-scheme-en`, `declaration-submitted-scheme-cy` categories use
-existing bounded delivery metrics, with no second metric mechanism.
-
-Before this image reaches an environment with analytics processing already enabled,
-provision the Waste Obligations read address, credentials and Read ACL. Alternatively,
-confirm `AnalyticsEventConsumer__ProcessingEnabled=false` before deployment.
-Missing read configuration with processing enabled rejects startup for the whole
-host, including command delivery and DLQ administration.
+[Analytics diagnostics](../src/Consumer/Consumers/AnalyticsEventConsumer.cs),
+[delivery metrics](../src/Consumer/Delivery/NotificationCommandMetrics.cs) and
+[metric exporter](../src/Consumer/Utils/Metrics/MetricsExporter.cs) own current
+fixed reason/category names and instrument behaviour. Configure only trusted,
+non-PII category labels. An acceptance metric is not delivery evidence; an
+unconfirmed attempt is not proof of rejection. Do not reconstruct historical
+failure causes from current evidence. [Administration request-log redaction](../src/Consumer/Utils/Logging/AdminRequestLogRedactor.cs)
+keeps query values out of diagnostic metadata without changing request binding.
 
 ## Deployment ownership
 
-- The analytics queue must be a separate SNS subscription from the producer
-  queue, with its own redrive policy. Never reuse the producer queue.
-- `AnalyticsEventConsumer__QueueUrl` and
-  `AnalyticsEventConsumer__ProcessingEnabled` are deployment-owned settings.
-- `WasteObligations__BaseAddress`, `WasteObligations__Username` and `WasteObligations__Password`
-  provide deployment-owned Read access. Credentials and an HTTPS service address (HTTP is allowed only for loopback
-  local development and fixtures) are validated when analytics processing is enabled. The extended downstream health check calls `health/authorized` with Basic
-  credentials, proving service authentication; it does not prove the Read scope
-  or declaration DTO contract.
-  Disabled analytics requires no declaration-read credentials. HTTPS requests
-  prefer HTTP/2 with protocol fallback. The client retries transient GET failures
-  at most twice with exponential jitter, bounded by a ten-second total and
-  three-second attempt timeout; the outer read/health cancellation budget wins.
-  These defaults are inherited by `WasteObligationsOptions` and can be overridden
-  through `WasteObligations:TotalRequestTimeout`, `WasteObligations:AttemptTimeout`
-  and `WasteObligations:Retry`. Only timeout, retry and attempt timeout strategies
-  are installed; there is no circuit breaker. The outer processing budget still
-  caps the operation regardless of these settings.
-  Unsafe methods are not retried. A 404 returns no declaration; the submission
-  producer decides to retain the event for recovery.
-- The four `Submission__DirectEnglishTemplateId`, `Submission__DirectWelshTemplateId`,
-  `Submission__SchemeEnglishTemplateId`, `Submission__SchemeWelshTemplateId` values
-  are validated as nonempty canonical hyphenated UUIDs at startup. Checked-in defaults are not proof of
-  deployed Notify account access or effective overrides.
-- Required provider previews need a GOV.UK Notify test-type API key, never a live
-  sending key. Provision `GOVUKNOTIFY_APIKEY` in both Actions and Dependabot secret
-  stores before enabling the required gate. PR-built tests and updated dependencies
-  can read this environment value; a missing key fails the required preview check.
-- Command queue, MongoDB, cutover, digest-secret and `AWS_EMF_*` settings are also
-  deployment-owned. Local Compose settings do not configure CDP environments.
-  Set the actual collector endpoint explicitly for CDP/FluentBit; the pinned SDK's
-  Fluent-host endpoint derivation is malformed.
-- Administration DLQ URL, selection/timeout settings, Basic/OAuth client
-  credentials/scopes and operator routing are deployment-owned. Compose defaults
-  do not configure CDP access.
+CDP owns queues/redrive, Mongo, credentials/ACLs, Notify access, metrics routing,
+cutover and identity secrets. Compose owns isolated local resources only. The
+[README configuration guide](../README.md#configuration) identifies required
+settings and separate authentication, TLS/IAM and collector-routing checks.
+Enabled analytics requires declaration, organisation and Account access before
+rollout, even on hosts currently receiving only submission events. Otherwise
+disable analytics before deployment; missing access can reject whole-host startup.
 
 ## Behaviour verification
 
-The Docker submission happy path publishes through an isolated SNS topic to the
-actual container consumer, uses WireMock HTTP responses for Waste Obligations and
-Notify, and waits for the outgoing send and durable command acceptance.
-
-Unit tests cover parsing, validation, logging, deletion, and failure behaviour.
-Compose-backed integration tests cover health and SNS-to-SQS-to-consumer wiring.
-Test that stored command evidence and logs do not disclose protected identifiers,
-addresses, unsafe arbitrary template text, or personalisation. Validated analytics
-event/entity IDs and configured UUID templates are logged as required above.
+Use [required local checks](../CONTRIBUTING.md#required-checks).
+[Integration scenarios](../tests/Consumer.IntegrationTests/Scenarios) own full-path
+expectations; [unit tests](../tests/Consumer.Tests) own detailed policy, validation
+and privacy assertions. Provider previews require separate real Notify access
+and guarded TRX evidence. Keep integration and preview results distinct, using
+reported test identities rather than fixed summary counts. Preview success does
+not prove deployed Read ACL, native replay, analytics headroom or cutover readiness.
 
 ## Initial deployment and cutover
 
-The default cutover is null. Consumption suppresses all valid commands
-without a Notify send while Waste Obligations retains direct delivery. Suppression
-must be durable before deletion; malformed commands, conflicts and persistence
-failures retain the message. Administration cannot clear malformed commands or
-immutable conflicts; configured queue retention or deployment-owned controlled
-removal is required. This service supplies no verified removal tool for those
-messages. Existing suppressed evidence is terminal when a
-future cutover is configured. A non-null cutover requires explicit UTC and the
-same millisecond precision as command identity. Other configuration requirements
-remain in force.
+Follow the [handover procedure](../README.md#nullable-initial-cutover-and-handover)
+and [ADR 0002](adr/0002-email-delivery-cutover-boundary.md). Null cutover permanently
+suppresses valid commands and cannot preserve a backlog. Finalize mappings before
+the dry run and preserve them while those intentions can replay.
 
-Finalize all template overrides before the null-cutover producer dry run starts.
-Template ID is part of immutable command evidence: changing it for a replayed
-submission creates a conflict that is retried into the command DLQ, even when the
-original command was suppressed. Preserve those mappings while replays remain possible.
+Activation requires deployed response/version contracts, read/health privileges,
+effective template rendering, measured peak/retry latency within visibility,
+redrive policies and stable secrets. Both producers must be ready. Configure
+Notifications with future X first, verify all hosts and stop old null consumers,
+then complete Waste Obligations rollout with identical X before the boundary.
+After X recovery is forward-only; do not change the cutover to force a resend.
 
-Before activation verify the deployed MO-562 response/version contract, Read credential/ACL,
-effective template configuration/access and queue redrive policies. Null-cutover
-submission production supports terminal dry-run suppression; live shared handover
-remains gated on both submission and cancellation producers.
-
-After the producer dry run, configure Notifications with a future X first.
-Verify every active Notifications host has X and the post-cutover delivery
-implementation, and stop every old null-cutover consumer. Then configure Waste
-Obligations with the identical X and verify its rollout completes before X.
-After X, use Notifications recovery and do not clear or change the cutover.
-ADR0002 records this accepted, forward-only handover. Local examples do not
-configure deployed values.
-
-Critical migration completion is reported by the `MongoMigrationCompletion`
-entry in `/health/all` and gates `/health` for every host.
-Migration 001 is flagged `Critical = true`; migrations default to non-critical.
-An absent or invalid critical prerequisite returns 503, including when another
-host owns the lease or every host exhausts its attempts. Already-applied critical
-migrations satisfy readiness without being rerun. Non-critical failures do not
-block readiness. The latest critical migration owns the current schema validation;
-older critical history remains required without retaining obsolete schema checks.
-
-HTTP and migration work start first. Both consumers wait through a shared hosting
-boundary until this host completes its first successful anonymous `/health`
-response. `/health/all` and `/health/authorized` do not release that boundary.
-Stores and business operations have no migration checks. Health reads a latched
-startup result and performs no Mongo queries; later dependency outages are
-reported by extended health. CDP controls replacement of hosts that remain
-unhealthy. Long critical migrations must fit the actual platform startup budget
-or be applied before rollout; the documented 95 seconds is not an overall
-deployment deadline. Metrics and startup logging remain available for diagnosis.
-
-Suppression recorded with an unset cutover remains terminal after configuration,
-including an action at or after the new boundary. Delete matching replays without
-changing the record. Fresh post-cutover commands follow the claimed Notify delivery path.
-
-The four submitted-email variants have isolated full-path integration coverage from
-analytics consumption through declaration HTTP enrichment, confirmed FIFO command
-publication, Mongo-backed delivery and the outgoing Compose Notify HTTP request.
-Successful acceptance/deletion and handled replay are verified against independently
-chosen expected recipient, template and five personalisation values.
-
-PR, main and hotfix validation additionally requires four genuine Notify submission
-previews, using configured mappings and synthetic personalisation. Previewing sends
-no email. Missing credentials, provider failure, incorrect rendering, missing report,
-skipped cases or fewer than four passed cases fail required validation and block
-publishing. Isolated service tests keep the fixture endpoint and dummy key. Local
-previews explicitly skip without credentials; the ignored root `.env` convention
-and runtime fallback wrapper are documented in the README. Preview credentials and
-rendered content are never reported. Preview success proves template access/rendering
-for those effective mappings, rather than deployed Read ACL or cutover readiness.
+Critical migration completion gates `/health`; consumers/admin wait for its first
+successful anonymous response. Extended diagnostics do not release that startup
+boundary. Long critical migrations must fit actual platform startup budgets or
+be applied before rollout; CDP owns replacement of unhealthy hosts. Readiness
+does not prove optional search-index completion or future dependency availability.
 
 ## Retained delivery-record search
 
-Authenticated `GET /admin/notification-commands/delivery-records` searches current
-retained Mongo evidence independently of queue copies. The existing Admin policy
-and startup readiness boundary apply. It never receives, publishes or deletes
-queue messages, calls Notify, or changes delivery records.
+[Search query](../src/Consumer/Administration/DeliveryRecordSearchQuery.cs),
+[Mongo reader](../src/Consumer/Administration/MongoDeliveryRecordSearchReader.cs)
+and [search scenarios](../tests/Consumer.IntegrationTests/Scenarios/DeliveryRecordSearchTests.cs)
+define filters, cursor semantics and summaries. Use the [HTTP runbook](../runbooks/http/README.md)
+for requests. Search is authenticated, read-only and independent of queue copies;
+it does not authorize recovery or report live Notify delivery. Recording time
+is different from business-action time. Concurrent updates do not provide a
+snapshot, and empty results cannot prove absence of malformed evidence.
 
-Opaque keys, Notify identifiers and other retained correlation are exposed through
-authenticated administration responses and remain excluded from logs. Administration
-request query strings are redacted from hosting diagnostics and ECS URL fields,
-including for rejected requests. Request-start/finish, path, method, status and
-correlation metadata remain available. Redaction affects event snapshots only;
-request filters, authorization and non-administration logging are unchanged.
-
-Filters are `recordedFromUtc` (inclusive), `recordedToUtc` (exclusive),
-`notifyNotificationId`, `notificationKey` and `outcome`.
-Query names are case-insensitive; names outside these filters, `pageSize` and `cursor` return 400.
-Date bounds require explicit UTC (`Z` or a zero offset) and use the latest
-`recordedAtUtc` processing-state time, rather than `actionOccurredAtUtc`.
-Supplied filters combine; Notify IDs and opaque keys match exactly, including
-case. All retained outcomes are returned by default. Outcome filtering matches
-an exact bounded value, including unrecognised retained outcomes. Typical values
-are `delivery-pending`, `delivery-accepted`, `delivery-suppressed` and
-`delivery-abandoned`. Pending evidence remains pending irrespective of lease
-expiry; search does not classify a historical failure or check live delivery.
-
-Responses contain `records` and nullable `nextCursor`. `pageSize` defaults to 25
-and accepts 1–100. Results sort by recording time descending, then stable Mongo
-identifier descending. Continue with the returned opaque cursor and the same
-filters; changing filters or malformed cursors returns 400. An unchanged dataset
-has no page omissions or repetitions. Concurrent state updates do not provide a
-historical snapshot. Empty searches return an empty records array and null cursor.
-Dependency work uses the existing administration timeout; failures return a fixed
-503 response without dependency details, and request cancellation propagates.
-
-Inspection treats matching evidence with malformed mandatory summary fields as
-`unknown-delivery-state`, with no matching summary or usable selected recovery
-action. Immutable conflicts retain precedence. Search excludes malformed mandatory
-evidence before sorting/page limits: identity/type/outcome must be scalar strings,
-recording/action times representable BSON dates, and the tie-breaker an ObjectId.
-Unknown string outcomes remain searchable. The readable-record set preserves
-stable cursors; missing or invalid timestamps are never reconstructed from commands
-or processing time. Empty exact lookup does not prove that no malformed record
-exists. Optional malformed fields return null; template versions accept Int32 or
-Int64 within Int32 range without coercing fractional/string values. Optional exact
-identifier filters require scalar strings and do not match array containment.
-Reads do not rewrite or backfill evidence.
-
-Search dependency failures emit one fixed error diagnostic without query values,
-identifiers or exception content; caller cancellation emits no failure diagnostic.
-
-Optional forward migration 002 adds three full, visible, nonunique search indexes:
-recording time/ObjectId descending, and exact Notify ID or outcome
-followed by the same descending pair. Optional migration 003 adds a visible,
-nonunique parent/time/ObjectId index with keys
-`{ resendOfNotificationKey: 1, recordedAtUtc: -1, _id: -1 }` and partial predicate
-`{ resendOfNotificationKey: { $type: "string" } }`. The reader exposes that predicate
-alongside its scalar guard so parent-only matching and empty lookups can use the
-index. Valid parentless originals add no entries. Retention is indefinite; no
-small-collection assumption or required date bound underlies parent navigation.
-The critical unique notification-key index
-continues to guard delivery identity. Search uses no index hints. Integration
-tests check representative query plans for bounded ordered reads; combined filters can retain
-residual filtering, and skew may increase examined records. No universal
-performance guarantee is implied.
-
-The search-index migrations do not gate critical delivery readiness. Investigate
-optional migration failures and confirm completion before relying on efficient
-search. Builds consume resources, can outlive a client timeout, and require
-monitoring. Initial parent-index construction scans retained evidence; subsequent
-storage and maintenance applies to indexed parent values. Confirm migration 003
-and its index build have completed before relying on replacement navigation.
-The three full indexes also add storage and delivery-state write maintenance.
-Incompatible owned definitions are preserved and rejected; rollback drops only
-these owned search indexes. No data backfill, payload or configuration change is
-required.
-
-Summaries include opaque identity, retained outcome/type, business-action and
-recording timestamps, and available acceptance, lease, template and Notify
-correlation. Recipient/immutable digests, attempt owners and email payloads are
-excluded. Recorded acceptance is not proof of recipient delivery. Replacements
-retain their validated opaque parent and expose an encoded `links.sourceRecord`.
-Exact `resendOfNotificationKey` filtering combines with other filters and is bound
-into continuation cursors. Search does not create replacement commands or alter
-stored evidence. No evidence backfill is introduced.
+Optional [search migrations](../src/Consumer/Data/Migrations) must complete before
+relying on efficient navigation, especially parent-only replacement lookups over
+indefinitely retained evidence. Builds consume resources and can outlive a client
+timeout. Investigate failures; do not replace incompatible definitions or claim
+universal query-performance guarantees from representative plan tests.
 
 ## Accepted-command resend
 
-Authenticated `POST /admin/notification-commands/dlq/resend` accepts exactly one
-current `selectionToken`. It replays the signed FIFO receive parameters, checks
-source identity, immutable content and parent, and rechecks matching accepted
-evidence before acting. Every other classification is refused without publication
-or deletion. No request-ID, batch or Mongo-history resend is provided.
+The [resender](../src/Consumer/Administration/CommandDlqResender.cs) and
+[resend tests](../tests/Consumer.Tests/Administration/CommandDlqResendTests.cs)
+define accepted-source eligibility and stable replacement identity. Resend
+requires a current identity-bound DLQ selection, not retained history alone.
+Ordinary redrive remains terminal cleanup. Check Notify and existing replacements
+before requesting another intended email; uncertain Notify outcomes retain the
+duplicate risk. Publication/removal does not prove acceptance or immediate
+replacement-record availability.
 
-For immediate source A, the reserved raw key `resend:<A opaque notification key>`
-identifies B. This is stable across copies, selections, retries and hosts, and B
-carries A's key in optional `resendOfNotificationKey`. Selecting eligible accepted
-B later derives a separate replacement. Email inputs and original action time
-remain unchanged. The original immutable digest format remains unchanged;
-parent equality is guarded separately on every claim, duplicate, suppression,
-acceptance and abandonment path. Contradictory or malformed parent evidence
-cannot overwrite history or permit sending. Expired pending abandonment retains
-its parent. Parentless original records need no migration or backfill.
-
-Confirmed publication precedes selected-source deletion. Success returns source
-and replacement opaque keys, `publicationStatus: confirmed`,
-`sourceMessageRemoved: true` and encoded source/replacement record links. B's
-record may not exist until processing; none of these fields proves Notify
-acceptance or recipient delivery. Uncertain publication/deletion or loss of the
-HTTP response can be retried only while a valid source copy is selectable; it
-always derives the same B. Terminal B suppresses repeated sending, while an
-unconfirmed Notify result retains the established automatic-retry duplicate risk.
-A's evidence remains unchanged, and ordinary replay/redrive cannot resend A.
-
-This development change deploys the consumer and administration endpoints in the
-same changeset; no staged rollout or resend feature flag is required. Mixed-version
-operation is not supported. Preserve all existing startup/cutover constraints. Check Notify
-and replacement progress before deciding; later provider failure alone does not
-create a DLQ item. Follow the README recovery steps and the separate native
-accepted-source verification runbook; local adapters do not prove native replay.
+Deploy the consumer and administration endpoints in the same development
+changeset. No staged rollout or resend feature flag is required; mixed-version
+operation is not supported. Preserve existing startup/cutover constraints. The
+[producer contract](notification-command-producer-contract.md#explicit-replacement-metadata)
+and separate [native accepted-source verification](command-dlq-native-sqs-verification.md#accepted-command-resend)
+remain applicable. Never reset evidence or override cutover/suppression to resend.

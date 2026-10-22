@@ -60,8 +60,12 @@ class HttpRunbookTests(unittest.TestCase):
         self.assertTrue(self.authenticated, "No authenticated endpoints were discovered")
         self.assertSetEqual(self.routes, {endpoint for endpoint, _, _ in self.requests})
 
-    def test_protected_requests_include_environment_authorization(self):
+    def test_requests_use_direct_oauth_or_local_basic_authorization(self):
         for endpoint, block, filename in self.requests:
-            if endpoint in self.authenticated:
-                with self.subTest(endpoint=endpoint, file=filename):
-                    self.assertIn("Authorization: {{authorization}}", block)
+            with self.subTest(endpoint=endpoint, file=filename):
+                if filename.endswith(".docker.http"):
+                    if endpoint in self.authenticated:
+                        self.assertIn("Authorization: {{authorization}}", block)
+                else:
+                    self.assertIn('Authorization: Bearer {{$auth.token("service")}}', block)
+                    self.assertNotIn("Authorization: {{authorization}}", block)

@@ -9,7 +9,9 @@ public sealed record AnalyticsEvent(
     string? EventType,
     string? SchemaVersion,
     int? Version,
-    Guid? OrganisationId
+    Guid? OrganisationId,
+    string? BeforeStatus = null,
+    string? AfterStatus = null
 )
 {
     private const string SchemaPrefix = "compliance_declaration_v";
@@ -17,7 +19,13 @@ public sealed record AnalyticsEvent(
 
     public bool IsSubmission => Entity == "compliance_declaration" && EventType == "submission.created";
 
-    public bool SupportsSubmissionSchema =>
+    public bool IsCancellation =>
+        Entity == "compliance_declaration"
+        && EventType == "submission.amended"
+        && BeforeStatus is "Submitted" or "Accepted"
+        && AfterStatus == "Cancelled";
+
+    public bool SupportsDeclarationSchema =>
         SchemaVersion is { } schema
         && schema.StartsWith(SchemaPrefix, StringComparison.Ordinal)
         && System.Version.TryParse(schema[SchemaPrefix.Length..], out var version)
@@ -41,7 +49,9 @@ public sealed record AnalyticsEvent(
             && version.TryGetInt32(out var value)
                 ? value
                 : null,
-            Guid.TryParse(organisationId, out var id) ? id : null
+            Guid.TryParse(organisationId, out var id) ? id : null,
+            String(Object(root, "before"), "status"),
+            String(Object(root, "after"), "status")
         );
     }
 

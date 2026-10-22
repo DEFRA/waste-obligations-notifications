@@ -50,8 +50,9 @@ which sets the service instance count to zero and also stops analytics and admin
 endpoints. Redeploy with the same cutover, digest keys and retained evidence; after
 X, undeployment does not reverse the handover.
 
-Deploy both services with null first, activate the MO-549/MO-550 producers and
-compare suppression evidence with Waste Obligations sends. Then choose the
+Deploy both services with null first, ensure both Submitted and cancellation
+producers are ready with verified deployment access, mappings and analytics budget,
+and compare suppression evidence with Waste Obligations sends. Then choose the
 identical future X and configure Notifications first. Confirm every active host
 has X and the post-cutover delivery implementation, and stop every old null-cutover
 consumer before configuring Waste Obligations with X. Complete and verify the

@@ -3,10 +3,14 @@ using System.Net;
 using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Defra.WasteObligations.Consumer.Cancellation;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Notifications;
+using Defra.WasteObligations.Consumer.Services.AccountBackend;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
+using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Logging;
@@ -491,13 +495,26 @@ public sealed class SubmittedEmailConsumerTests
     }
 
     [Theory]
-    [InlineData("schema")]
-    [InlineData("malformed-schema")]
-    [InlineData("version")]
-    [InlineData("organisation")]
-    public async Task WhenMatchingSubmissionEventIsInvalid_ShouldRetainWithoutReadingOrPublishing(string fault)
+    [InlineData("schema", false)]
+    [InlineData("malformed-schema", false)]
+    [InlineData("version", false)]
+    [InlineData("organisation", false)]
+    [InlineData("schema", true)]
+    [InlineData("version", true)]
+    [InlineData("organisation", true)]
+    public async Task WhenMatchingAnalyticsEventIsInvalid_ShouldRetainWithoutReadingOrPublishing(
+        string fault,
+        bool cancellation
+    )
     {
         var body = Event("01JZ8RXBMTY2K15SJB3PCFN3D5");
+        if (cancellation)
+            body = body.Replace("submission.created", "submission.amended", StringComparison.Ordinal)
+                .Replace(
+                    "\"after\":{\"organisation\":",
+                    "\"before\":{\"status\":\"Submitted\"},\"after\":{\"status\":\"Cancelled\",\"organisation\":",
+                    StringComparison.Ordinal
+                );
         body = fault switch
         {
             "schema" => body.Replace(
@@ -579,15 +596,13 @@ public sealed class SubmittedEmailConsumerTests
         )
         {
             _failDelete = failDelete;
-            var submission = Options.Create(
-                new SubmissionOptions
-                {
-                    DirectEnglishTemplateId = DirectEnglish,
-                    DirectWelshTemplateId = DirectWelsh,
-                    SchemeEnglishTemplateId = SchemeEnglish,
-                    SchemeWelshTemplateId = SchemeWelsh,
-                }
-            );
+            var definitions = new NotificationDefinitionsOptions();
+            var templates = definitions.Definitions[NotificationDefinitionsOptions.DeclarationSubmitted].Templates;
+            templates["DirectEnglishTemplateId"] = DirectEnglish;
+            templates["DirectWelshTemplateId"] = DirectWelsh;
+            templates["SchemeEnglishTemplateId"] = SchemeEnglish;
+            templates["SchemeWelshTemplateId"] = SchemeWelsh;
+            var submission = Options.Create(definitions);
             _http = new HttpClient(
                 new Handler(
                     (request, token) =>
@@ -648,7 +663,7 @@ public sealed class SubmittedEmailConsumerTests
                 .Returns(async call =>
                 {
                     Assert.Equal(1, call.Arg<ReceiveMessageRequest>().MaxNumberOfMessages);
-                    Assert.Equal(90, call.Arg<ReceiveMessageRequest>().VisibilityTimeout);
+                    Assert.Equal(150, call.Arg<ReceiveMessageRequest>().VisibilityTimeout);
                     ReceiveTimes.Add(System.Diagnostics.Stopwatch.GetElapsedTime(startedAt));
                     var index = received++;
                     if (index < events.Length)
@@ -685,7 +700,16 @@ public sealed class SubmittedEmailConsumerTests
                 ),
                 Logs,
                 startup,
-                _producer,
+                [
+                    _producer,
+                    new CancellationEmailProducer(
+                        _producer,
+                        Substitute.For<IWasteOrganisationsClient>(),
+                        Substitute.For<IAccountBackendClient>(),
+                        Options.Create(new NotificationDefinitionsOptions()),
+                        Microsoft.Extensions.Logging.Abstractions.NullLogger<CancellationEmailProducer>.Instance
+                    ),
+                ],
                 _publisher,
                 Digest
             );

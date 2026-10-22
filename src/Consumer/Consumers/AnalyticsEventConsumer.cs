@@ -5,6 +5,7 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Microsoft.Extensions.Options;
@@ -17,7 +18,7 @@ public sealed class AnalyticsEventConsumer(
     IOptions<AnalyticsEventConsumerOptions> options,
     ILogger<AnalyticsEventConsumer> logger,
     ApplicationStartup startup,
-    SubmittedEmailProducer producer,
+    IEnumerable<IAnalyticsNotificationProducer> producers,
     INotificationCommandPublisher publisher,
     INotificationCommandDigest digest
 ) : StartupBackgroundService(startup)
@@ -103,21 +104,16 @@ public sealed class AnalyticsEventConsumer(
             var declarationEntityId = SafeEntityId(analyticsEvent.EntityId);
             entityId = declarationEntityId ?? OpaqueCorrelation(analyticsEvent.EntityId);
 
-            if (analyticsEvent.IsSubmission)
+            var producer = producers.SingleOrDefault(candidate => candidate.CanHandle(analyticsEvent));
+            if (producer is not null)
             {
+                // The enclosing catch reads this stage when event validation throws.
+#pragma warning disable S1854 // Sonar does not account for the helper's exceptional path.
                 stage = "validate-event";
-                if (
-                    declarationEntityId is null
-                    || !analyticsEvent.SupportsSubmissionSchema
-                    || analyticsEvent.Version is not > 0
-                    || analyticsEvent.OrganisationId is null
-                    || analyticsEvent.OrganisationId == Guid.Empty
-                )
-                    throw new SubmissionProcessingException("invalid-event-data");
+#pragma warning restore S1854
+                var (version, organisationId) = ValidateEvent(analyticsEvent, declarationEntityId);
 
                 var id = analyticsEvent.EntityId;
-                var version = analyticsEvent.Version.Value;
-                var organisationId = analyticsEvent.OrganisationId.Value;
 
                 EnsureRemaining(
                     receivedAt,
@@ -129,7 +125,7 @@ public sealed class AnalyticsEventConsumer(
 #pragma warning disable S1854 // Sonar does not account for this exceptional path through the awaited call.
                 stage = "read-declaration";
 #pragma warning restore S1854
-                var command = await RunBounded(
+                var commands = await RunBounded<IReadOnlyList<NotificationCommand>>(
                     token => producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token),
                     options.Value.ReadTimeoutSeconds,
                     stoppingToken
@@ -137,29 +133,7 @@ public sealed class AnalyticsEventConsumer(
 
                 EnsureRemaining(receivedAt, options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
                 stage = "publish-command";
-                await RunBounded(
-                    async token =>
-                    {
-                        await publisher.Publish(command, token);
-                        return true;
-                    },
-                    options.Value.PublishTimeoutSeconds,
-                    stoppingToken
-                );
-                published = true;
-
-                if (logger.IsEnabled(LogLevel.Information))
-                {
-                    logger.LogInformation(
-                        "Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}",
-                        eventId,
-                        entityId,
-                        digest.CreateNotifyReference(command.IdempotencyKey),
-                        command.NotificationType,
-                        command.TemplateId,
-                        command.ActionOccurredAtUtc
-                    );
-                }
+                await PublishCommands(commands, eventId, entityId, () => published = true, stoppingToken);
             }
 
             if (logger.IsEnabled(LogLevel.Information))
@@ -181,6 +155,69 @@ public sealed class AnalyticsEventConsumer(
             LogRetry(exception, stage, published, messageId, eventId, entityId);
             throw;
         }
+    }
+
+    private static (int Version, Guid OrganisationId) ValidateEvent(
+        AnalyticsEvent analyticsEvent,
+        string? declarationEntityId
+    )
+    {
+        if (
+            declarationEntityId is null
+            || !analyticsEvent.SupportsDeclarationSchema
+            || analyticsEvent.Version is not > 0
+            || analyticsEvent.OrganisationId is null
+            || analyticsEvent.OrganisationId == Guid.Empty
+        )
+            throw new SubmissionProcessingException("invalid-event-data");
+
+        return (analyticsEvent.Version.Value, analyticsEvent.OrganisationId.Value);
+    }
+
+    private Task<bool> PublishCommands(
+        IReadOnlyList<NotificationCommand> commands,
+        string? eventId,
+        string? entityId,
+        Action publicationConfirmed,
+        CancellationToken stoppingToken
+    ) =>
+        RunBounded(
+            async token =>
+            {
+                var startedAt = Stopwatch.GetTimestamp();
+                foreach (var command in commands)
+                {
+                    EnsurePublicationDeadline(startedAt, token);
+
+                    await publisher.Publish(command, token);
+
+                    EnsurePublicationDeadline(startedAt, token);
+                    publicationConfirmed();
+                    if (logger.IsEnabled(LogLevel.Information))
+                    {
+                        logger.LogInformation(
+                            "Published notification command for event {EventId} entity {EntityId} with Notify reference {NotifyReference}, type {NotificationType}, template {TemplateId}, action {ActionOccurredAtUtc}",
+                            eventId,
+                            entityId,
+                            digest.CreateNotifyReference(command.IdempotencyKey),
+                            command.NotificationType,
+                            command.TemplateId,
+                            command.ActionOccurredAtUtc
+                        );
+                    }
+                }
+
+                return true;
+            },
+            options.Value.PublishTimeoutSeconds,
+            stoppingToken
+        );
+
+    private void EnsurePublicationDeadline(long startedAt, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromSeconds(options.Value.PublishTimeoutSeconds))
+            throw new TimeoutException("Analytics publication budget exhausted.");
     }
 
     private void LogFailure(Exception exception)

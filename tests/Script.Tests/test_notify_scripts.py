@@ -92,8 +92,21 @@ class NotifyEnvironmentTests(unittest.TestCase):
 
 
 class NotifyPreviewEvidenceTests(unittest.TestCase):
-    METHODS = ["DirectEnglish_ShouldRenderSubmission", "DirectWelsh_ShouldRenderSubmission",
-               "SchemeEnglish_ShouldRenderSubmission", "SchemeWelsh_ShouldRenderSubmission"]
+    CASES = [
+        ("NotifySubmissionPreviewTests", name) for name in [
+            "DirectEnglish_ShouldRenderSubmission", "DirectWelsh_ShouldRenderSubmission",
+            "SchemeEnglish_ShouldRenderSubmission", "SchemeWelsh_ShouldRenderSubmission"]
+    ] + [
+        ("NotifyCancellationPreviewTests", name) for name in [
+            "NotSignedByCorrectPersonEnglish_ShouldRenderCancellation",
+            "NotSignedByCorrectPersonWelsh_ShouldRenderCancellation",
+            "RecyclingObligationsChangedEnglish_ShouldRenderCancellation",
+            "RecyclingObligationsChangedWelsh_ShouldRenderCancellation",
+            "CanMeetRecyclingObligationsEnglish_ShouldRenderCancellation",
+            "CanMeetRecyclingObligationsWelsh_ShouldRenderCancellation",
+            "ProducerRequestedEnglish_ShouldRenderCancellation",
+            "ProducerRequestedWelsh_ShouldRenderCancellation"]
+    ]
     # This canonical TRX XML namespace identifies a format; it is not an HTTP endpoint.
     NAMESPACE = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"  # NOSONAR
 
@@ -105,13 +118,14 @@ class NotifyPreviewEvidenceTests(unittest.TestCase):
     def report(self):
         root = ET.Element("TestRun", xmlns=self.NAMESPACE)
         summary = ET.SubElement(root, "ResultSummary")
-        counters = ET.SubElement(summary, "Counters", total="4", executed="4", passed="4", failed="0", notExecuted="0")
+        count = str(len(self.CASES))
+        counters = ET.SubElement(summary, "Counters", total=count, executed=count, passed=count, failed="0", notExecuted="0")
         definitions = ET.SubElement(root, "TestDefinitions")
         results = ET.SubElement(root, "Results")
-        for index, method in enumerate(self.METHODS):
+        for index, (class_name, method) in enumerate(self.CASES):
             definition = ET.SubElement(definitions, "UnitTest", id=str(index))
             ET.SubElement(definition, "TestMethod", name=method,
-                          className="Defra.Tests.NotifySubmissionPreviewTests, Assembly")
+                          className=f"Defra.WasteObligations.Consumer.IntegrationTests.Scenarios.{class_name}, Assembly")
             ET.SubElement(results, "UnitTestResult", testId=str(index), outcome="Passed")
         return root, counters, definitions, results
 
@@ -120,27 +134,48 @@ class NotifyPreviewEvidenceTests(unittest.TestCase):
             guard.main()
             return output.getvalue()
 
-    def test_four_unique_passed_cases_are_accepted(self):
+    def test_all_unique_passed_cases_are_accepted(self):
         root, _, _, _ = self.report()
         ET.ElementTree(root).write(self.path)
-        self.assertIn("all four submission cases executed and passed", self.invoke())
+        self.assertIn("all 12 cases executed and passed", self.invoke())
 
-    def test_failed_skipped_duplicate_wrong_class_and_unmatched_cases_are_rejected(self):
-        for kind in ["failed", "skipped", "duplicate", "wrong-class", "unknown-id", "missing-method", "fewer"]:
+    def test_failed_skipped_duplicate_unexpected_and_unmatched_cases_are_rejected(self):
+        for kind in ["failed", "skipped", "duplicate", "wrong-class", "wrong-family", "unknown-id",
+                     "missing-method", "fewer", "unexpected", "duplicate-id", "unused-definition"]:
             with self.subTest(kind=kind):
                 root, _, definitions, results = self.report()
                 if kind in ("failed", "skipped"):
                     results[3].set("outcome", "Failed" if kind == "failed" else "NotExecuted")
                 elif kind == "duplicate":
-                    definitions[3][0].set("name", self.METHODS[0])
+                    definitions[3][0].set("name", self.CASES[0][1])
                 elif kind == "wrong-class":
-                    definitions[3][0].set("className", "Defra.Tests.OtherTests")
+                    definitions[3][0].set("className", "Other.NotifySubmissionPreviewTests")
+                elif kind == "wrong-family":
+                    definitions[3][0].set("className", "Defra.WasteObligations.Consumer.IntegrationTests.Scenarios.NotifyCancellationPreviewTests")
                 elif kind == "unknown-id":
                     results[3].set("testId", "missing")
                 elif kind == "missing-method":
                     definitions[3].remove(definitions[3][0])
+                elif kind == "unexpected":
+                    definitions[3][0].set("name", "UnexpectedPreview")
+                elif kind == "duplicate-id":
+                    definitions[3].set("id", "0")
+                elif kind == "unused-definition":
+                    ET.SubElement(definitions, "UnitTest", id="unused")
                 else:
                     results.remove(results[3])
+                ET.ElementTree(root).write(self.path)
+                with self.assertRaises(SystemExit):
+                    self.invoke()
+
+    def test_neither_family_alone_satisfies_the_gate(self):
+        for family in ("NotifySubmissionPreviewTests", "NotifyCancellationPreviewTests"):
+            with self.subTest(family=family):
+                root, _, definitions, results = self.report()
+                for index in reversed(range(len(self.CASES))):
+                    if self.CASES[index][0] != family:
+                        definitions.remove(definitions[index])
+                        results.remove(results[index])
                 ET.ElementTree(root).write(self.path)
                 with self.assertRaises(SystemExit):
                     self.invoke()
@@ -163,11 +198,12 @@ class NotifyPreviewEvidenceTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.invoke()
 
-    def test_missing_malformed_reports_and_missing_argument_are_rejected(self):
+    def test_missing_malformed_reports_and_incorrect_arguments_are_rejected(self):
         with self.assertRaises(SystemExit):
             self.invoke()
         self.path.write_text("not XML", encoding="utf-8")
         with self.assertRaises(SystemExit):
             self.invoke()
-        with patch.object(sys, "argv", ["guard"]), self.assertRaises(SystemExit):
-            guard.main()
+        for arguments in ([], [str(self.path), "cancellation"]):
+            with patch.object(sys, "argv", ["guard"] + arguments), self.assertRaises(SystemExit):
+                guard.main()

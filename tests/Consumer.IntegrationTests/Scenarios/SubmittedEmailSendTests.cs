@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using Amazon.Runtime;
 using Amazon.SQS;
@@ -151,6 +152,13 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                 );
                 var values = new Dictionary<string, string?>
                 {
+                    ["WasteOrganisations:BaseAddress"] = "https://organisations.test/",
+                    ["WasteOrganisations:Username"] = "isolated-reader",
+                    ["WasteOrganisations:Password"] = "synthetic-read-secret",
+                    ["AccountBackend:BaseAddress"] = "https://accounts.test/",
+                    ["AccountBackend:TokenEndpoint"] = "https://accounts.test/token",
+                    ["AccountBackend:ClientId"] = "isolated-reader",
+                    ["AccountBackend:ClientSecret"] = "synthetic-read-secret",
                     ["AWS_EMF_ENABLED"] = "false",
                     ["AnalyticsEventConsumer:QueueUrl"] = fixture.Sqs.AnalyticsUrl,
                     ["AnalyticsEventConsumer:ProcessingEnabled"] = "true",
@@ -159,10 +167,14 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                     ["WasteObligations:BaseAddress"] = "https://declaration.test/",
                     ["WasteObligations:Username"] = "isolated-reader",
                     ["WasteObligations:Password"] = "synthetic-read-secret",
-                    ["Submission:DirectEnglishTemplateId"] = "11111111-1111-4111-8111-111111111111",
-                    ["Submission:DirectWelshTemplateId"] = "22222222-2222-4222-8222-222222222222",
-                    ["Submission:SchemeEnglishTemplateId"] = "33333333-3333-4333-8333-333333333333",
-                    ["Submission:SchemeWelshTemplateId"] = "44444444-4444-4444-8444-444444444444",
+                    ["Notifications:Definitions:DeclarationSubmitted:Templates:DirectEnglishTemplateId"] =
+                        "11111111-1111-4111-8111-111111111111",
+                    ["Notifications:Definitions:DeclarationSubmitted:Templates:DirectWelshTemplateId"] =
+                        "22222222-2222-4222-8222-222222222222",
+                    ["Notifications:Definitions:DeclarationSubmitted:Templates:SchemeEnglishTemplateId"] =
+                        "33333333-3333-4333-8333-333333333333",
+                    ["Notifications:Definitions:DeclarationSubmitted:Templates:SchemeWelshTemplateId"] =
+                        "44444444-4444-4444-8444-444444444444",
                     ["NotificationCommandDelivery:QueueUrl"] = fixture.Sqs.CommandUrl,
                     ["NotificationCommandDelivery:EmailDeliveryCutoverUtc"] = "2026-09-01T00:00:00Z",
                     ["NotificationCommandDelivery:EvidenceDigestSecret"] = "isolated-submission-evidence-secret",
@@ -363,7 +375,7 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
             );
             Assert.Equal("Basic", request.Headers.Authorization?.Scheme);
             Assert.Equal(
-                "aXNvbGF0ZWQtcmVhZGVyOnN5bnRoZXRpYy1yZWFkLXNlY3JldA==",
+                Convert.ToBase64String(Encoding.UTF8.GetBytes("isolated-reader:synthetic-read-secret")),
                 request.Headers.Authorization?.Parameter
             );
             Interlocked.Increment(ref _declarationReads);

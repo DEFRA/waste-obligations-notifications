@@ -20,6 +20,7 @@ using NSubstitute;
 
 namespace Defra.WasteObligations.Consumer.Tests;
 
+[Collection(nameof(Administration.ProductionLoggingCollection))]
 public sealed class NotifyHealthTests
 {
     private const string PrivateData =

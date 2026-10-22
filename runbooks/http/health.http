@@ -1,12 +1,16 @@
-### Anonymous readiness
+### Readiness (anonymous in the service; gateway authentication required)
 # @no-log
 GET {{host}}/health
+Authorization: Bearer {{$auth.token("service")}}
 
-### Authenticated readiness
+### Basic-auth readiness (Bearer-only request expects service 401)
+# The gateway requires Bearer, but this endpoint requires service Basic authentication.
+# Use /health above for deployed readiness; use health.docker.http for local Basic readiness.
 # @no-log
 GET {{host}}/health/authorized
-Authorization: {{authorization}}
+Authorization: Bearer {{$auth.token("service")}}
 
-### All health checks (anonymous)
+### All health checks (anonymous in the service; gateway authentication required)
 # @no-log
 GET {{host}}/health/all
+Authorization: Bearer {{$auth.token("service")}}

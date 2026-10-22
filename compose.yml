@@ -126,6 +126,13 @@ services:
       CommandDlqAdministration__QueueUrl: http://floci:4566/000000000000/submission_e2e_commands_dlq.fifo
       Mongo__DatabaseName: submission-docker-e2e
       WasteObligations__BaseAddress: http://localhost/
+      WasteOrganisations__BaseAddress: http://localhost/
+      WasteOrganisations__Username: isolated-reader
+      WasteOrganisations__Password: synthetic-read-secret
+      AccountBackend__BaseAddress: http://localhost/
+      AccountBackend__TokenEndpoint: http://localhost/token
+      AccountBackend__ClientId: isolated-reader
+      AccountBackend__ClientSecret: synthetic-read-secret
       WasteObligations__Username: isolated-docker-reader
       WasteObligations__Password: synthetic-docker-read-secret
       Notify__BaseAddress: http://localhost/
