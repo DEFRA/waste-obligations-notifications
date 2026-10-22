@@ -151,7 +151,7 @@ outcomes require confirmed source acknowledgement; publication counts include
 confirmed partial publications and replays. Counts describe attempts, not a
 conversion funnel: one event can produce zero or many commands.
 
-Use safe EventId/EntityId log scopes and NotifyReference to investigate a case,
+Use safe EventId/EntityId values in log messages and NotifyReference to investigate a case,
 then consult retained delivery evidence. Successful polling shows consumer
 activity, including empty receives; it does not prove dependency health.
 Check queue age and dead-letter messages alongside processing failures. Empty

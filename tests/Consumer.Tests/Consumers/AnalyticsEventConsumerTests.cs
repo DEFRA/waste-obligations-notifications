@@ -237,7 +237,11 @@ public class AnalyticsEventConsumerTests
 
         Assert.Contains(
             logger.Messages,
-            message => message == "Analytics event consumption failed (InvalidOperationException)"
+            message =>
+                message.StartsWith(
+                    "Analytics event consumption failed (InvalidOperationException) for event",
+                    StringComparison.Ordinal
+                )
         );
     }
 

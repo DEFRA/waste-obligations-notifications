@@ -117,9 +117,6 @@ public sealed class AnalyticsEventConsumer(
             eventId = SafeEventId(analyticsEvent.EventId) ?? OpaqueCorrelation(analyticsEvent.EventId);
             var declarationEntityId = SafeEntityId(analyticsEvent.EntityId);
             entityId = declarationEntityId ?? OpaqueCorrelation(analyticsEvent.EntityId);
-            using var scope = logger.BeginScope(
-                new Dictionary<string, object?> { ["EventId"] = eventId, ["EntityId"] = entityId }
-            );
 
             var producer = producers.SingleOrDefault(candidate => candidate.CanHandle(analyticsEvent));
             if (producer is not null)
@@ -189,7 +186,7 @@ public sealed class AnalyticsEventConsumer(
         catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
         {
             metrics.RecordFailure(NotificationJourneyValues.Consumer.Analytics, stage);
-            LogFailure(exception);
+            LogFailure(exception, eventId, entityId);
             LogRetry(exception, stage, published, messageId, eventId, entityId);
             throw;
         }
@@ -263,10 +260,15 @@ public sealed class AnalyticsEventConsumer(
             throw new TimeoutException("Analytics publication budget exhausted.");
     }
 
-    private void LogFailure(Exception exception)
+    private void LogFailure(Exception exception, string? eventId = null, string? entityId = null)
     {
         // Dependency exception text can contain personal data.
-        logger.LogError("Analytics event consumption failed ({ExceptionType})", exception.GetType().Name);
+        logger.LogError(
+            "Analytics event consumption failed ({ExceptionType}) for event {EventId}, entity {EntityId}",
+            exception.GetType().Name,
+            eventId,
+            entityId
+        );
     }
 
     private void LogRetry(
