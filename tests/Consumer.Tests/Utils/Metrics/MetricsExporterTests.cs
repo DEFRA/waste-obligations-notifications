@@ -84,7 +84,7 @@ public sealed class MetricsExporterTests
             return;
         }
         Assert.Contains("Notification command EMF export failed (ArgumentException).", text, StringComparison.Ordinal);
-        Assert.Equal(18, documents.Length);
+        Assert.Equal(19, documents.Length);
         var ns = mode == "fallback" ? CommandMetrics.MeterName : "notifications-test";
         foreach (var document in documents)
         {
@@ -111,7 +111,7 @@ public sealed class MetricsExporterTests
                 .Order()
         );
         Assert.Equal(
-            9,
+            10,
             documents
                 .Select(document =>
                     document
@@ -138,6 +138,7 @@ public sealed class MetricsExporterTests
             ["NotificationCommandNotifySendFailure"] = (1, "Count", null),
             ["NotificationCommandNotifySendDuration"] = (75.25, "Milliseconds", null),
             ["NotificationCommandNotifyAcceptanceLatency"] = (125.25, "Seconds", null),
+            ["NotificationCommandOutcomeLatency"] = (127.5, "Seconds", "delivery-suppressed"),
             ["NotificationCommandDuplicateSuppressed"] = (1, "Count", null),
         };
         var directive = Assert.Single(root.GetProperty("_aws").GetProperty("CloudWatchMetrics").EnumerateArray());
@@ -218,6 +219,7 @@ public sealed class MetricsExporterTests
         metrics.RecordSendFailure("submitted");
         metrics.RecordSendDuration("submitted", 75.25);
         metrics.RecordAcceptanceLatency("submitted", 125.25);
+        metrics.RecordOutcomeLatency("submitted", "delivery-suppressed", 127.5);
         metrics.RecordDuplicate("submitted");
         foreach (
             var outcome in new[]

@@ -787,6 +787,7 @@ public sealed class NotificationCommandSendTests : IDisposable
             events.Where(measurement =>
                 !measurement.Name.EndsWith("Duration", StringComparison.Ordinal)
                 && measurement.Name != MetricNames.NotificationCommandNotifyAcceptanceLatency
+                && measurement.Name != MetricNames.NotificationCommandOutcomeLatency
             ),
             measurement => Assert.Equal("COUNT", measurement.Unit)
         );

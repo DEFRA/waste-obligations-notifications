@@ -15,6 +15,7 @@ public sealed class NotificationCommandMetrics : INotificationCommandMetrics
     private readonly Counter<long> _sendFailure;
     private readonly Histogram<double> _sendDuration;
     private readonly Histogram<double> _acceptanceLatency;
+    private readonly Histogram<double> _outcomeLatency;
     private readonly Counter<long> _duplicates;
 
     public NotificationCommandMetrics(IMeterFactory meterFactory)
@@ -60,6 +61,11 @@ public sealed class NotificationCommandMetrics : INotificationCommandMetrics
             nameof(Unit.SECONDS),
             "Elapsed seconds from the notification action to confirmed Notify acceptance"
         );
+        _outcomeLatency = meter.CreateHistogram<double>(
+            MetricNames.NotificationCommandOutcomeLatency,
+            nameof(Unit.SECONDS),
+            "Elapsed seconds from the notification action to recorded suppression or confirmed Notify acceptance"
+        );
         _duplicates = meter.CreateCounter<long>(
             MetricNames.NotificationCommandDuplicateSuppressed,
             nameof(Unit.COUNT),
@@ -104,6 +110,14 @@ public sealed class NotificationCommandMetrics : INotificationCommandMetrics
 
     public void RecordAcceptanceLatency(string notificationType, double elapsedSeconds) =>
         _acceptanceLatency.Record(elapsedSeconds, BuildTags(notificationType));
+
+    public void RecordOutcomeLatency(string notificationType, string outcome, double elapsedSeconds)
+    {
+        var tags = BuildTags(notificationType);
+        tags.Add(MetricTags.Outcome, outcome);
+
+        _outcomeLatency.Record(elapsedSeconds, tags);
+    }
 
     private void RecordClaimOutcome(string notificationType, string outcome, double elapsedMilliseconds)
     {

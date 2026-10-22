@@ -140,6 +140,11 @@ See the [consumer](../src/Consumer/Delivery/NotificationCommandConsumer.cs) and
 [latency tests](../tests/Consumer.Tests/Delivery/NotificationCommandConsumerTests.cs)
 for sampling boundaries.
 
+Action-to-outcome latency also covers recorded suppression, including when cutover
+is unset. Its outcome dimension separates suppression from confirmed Notify
+acceptance; acceptance uses the same endpoint as the acceptance-only metric.
+Suppression remains terminal: enabling sending later does not extend its sample.
+
 ## Deployment ownership
 
 CDP owns queues/redrive, Mongo, credentials/ACLs, Notify access, metrics routing,

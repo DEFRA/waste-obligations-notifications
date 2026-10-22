@@ -111,6 +111,8 @@ public sealed class NotificationCommandConsumer(
                 stoppingToken,
                 failureReason: NotificationCommandFailureReason.StoreError
             );
+            var suppressedAt = timeProvider.GetUtcNow();
+
             if (result is SuppressionClaimResult.Conflict or SuppressionClaimResult.ActiveClaim)
                 throw new NotificationCommandProcessingException(
                     result == SuppressionClaimResult.Conflict
@@ -121,6 +123,13 @@ public sealed class NotificationCommandConsumer(
             {
                 metrics.RecordDuplicate(notificationType);
                 outcome = "terminal-duplicate";
+            }
+
+            if (result == SuppressionClaimResult.Recorded)
+            {
+                var elapsedSeconds = (suppressedAt - command.ActionOccurredAtUtc).TotalSeconds;
+                if (elapsedSeconds >= 0)
+                    metrics.RecordOutcomeLatency(notificationType, outcome, elapsedSeconds);
             }
         }
         else
@@ -229,6 +238,7 @@ public sealed class NotificationCommandConsumer(
         EnsureRemaining(claimStartedAt, options.Value.CommandLeaseSeconds, options.Value.CompletionBudgetSeconds);
         var sendStartedAt = Stopwatch.GetTimestamp();
         NotifyAcceptance acceptance;
+        DateTimeOffset acceptedAt;
         try
         {
             acceptance = await RunBounded(
@@ -238,12 +248,9 @@ public sealed class NotificationCommandConsumer(
                 preserveCompletedResult: true,
                 failureReason: NotificationCommandFailureReason.NotifyIndeterminate
             );
-            var acceptedAt = timeProvider.GetUtcNow();
+            acceptedAt = timeProvider.GetUtcNow();
 
             metrics.RecordSendAccepted(notificationType);
-            var elapsedSeconds = (acceptedAt - command.ActionOccurredAtUtc).TotalSeconds;
-            if (elapsedSeconds >= 0)
-                metrics.RecordAcceptanceLatency(notificationType, elapsedSeconds);
         }
         catch
         {
@@ -254,6 +261,18 @@ public sealed class NotificationCommandConsumer(
         {
             metrics.RecordSendDuration(notificationType, Stopwatch.GetElapsedTime(sendStartedAt).TotalMilliseconds);
         }
+
+        var elapsedSeconds = (acceptedAt - command.ActionOccurredAtUtc).TotalSeconds;
+        if (elapsedSeconds >= 0)
+        {
+            metrics.RecordAcceptanceLatency(notificationType, elapsedSeconds);
+            metrics.RecordOutcomeLatency(
+                notificationType,
+                NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue(),
+                elapsedSeconds
+            );
+        }
+
         // A confirmed send still needs durable evidence after timeout, lease expiry or shutdown.
         // Mongo's owner and pending-outcome checks fence a replaced or terminal claim.
         var recorded = await RunBounded(

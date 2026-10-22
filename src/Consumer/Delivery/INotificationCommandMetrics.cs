@@ -10,5 +10,6 @@ public interface INotificationCommandMetrics
     void RecordSendFailure(string notificationType);
     void RecordSendDuration(string notificationType, double elapsedMilliseconds);
     void RecordAcceptanceLatency(string notificationType, double elapsedSeconds);
+    void RecordOutcomeLatency(string notificationType, string outcome, double elapsedSeconds);
     void RecordDuplicate(string notificationType);
 }
