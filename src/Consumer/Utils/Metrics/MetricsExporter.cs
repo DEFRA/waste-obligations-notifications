@@ -71,7 +71,6 @@ public static class MetricsExporter
                 or MetricNames.NotificationCommandNotifySendAccepted
                 or MetricNames.NotificationCommandNotifySendFailure
                 or MetricNames.NotificationCommandNotifySendDuration
-                or MetricNames.NotificationCommandNotifyAcceptanceLatency
                 or MetricNames.NotificationCommandOutcomeLatency
                 or MetricNames.NotificationCommandDuplicateSuppressed
                 or MetricNames.AnalyticsEventReceived

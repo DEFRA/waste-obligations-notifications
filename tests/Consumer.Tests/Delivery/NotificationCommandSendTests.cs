@@ -807,7 +807,10 @@ public sealed class NotificationCommandSendTests : IDisposable
             }
         );
         var acceptanceLatencies = events
-            .Where(measurement => measurement.Name == MetricNames.NotificationCommandNotifyAcceptanceLatency)
+            .Where(measurement =>
+                measurement.Name == MetricNames.NotificationCommandOutcomeLatency
+                && measurement.Tags.Any(tag => tag.Key == MetricTags.Outcome && Equals(tag.Value, "delivery-accepted"))
+            )
             .ToArray();
         Assert.Equal(acceptedSends, acceptanceLatencies.Length);
         Assert.All(
@@ -821,7 +824,6 @@ public sealed class NotificationCommandSendTests : IDisposable
         Assert.All(
             events.Where(measurement =>
                 !measurement.Name.EndsWith("Duration", StringComparison.Ordinal)
-                && measurement.Name != MetricNames.NotificationCommandNotifyAcceptanceLatency
                 && measurement.Name != MetricNames.NotificationCommandOutcomeLatency
                 && measurement.Name != MetricNames.NotificationDeliveryCutoverConfigured
             ),

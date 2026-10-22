@@ -132,18 +132,15 @@ unconfirmed attempt is not proof of rejection. Do not reconstruct historical
 failure causes from current evidence. [Administration request-log redaction](../src/Consumer/Utils/Logging/AdminRequestLogRedactor.cs)
 keeps query values out of diagnostic metadata without changing request binding.
 
-Action-to-acceptance latency uses the command's original action timestamp and the
-service clock when Notify acceptance is confirmed. It includes upstream delays
-and retries, and remains a sample even if storing acceptance subsequently fails.
-It measures acceptance, not inbox delivery; clocks across services must be aligned.
-See the [consumer](../src/Consumer/Delivery/NotificationCommandConsumer.cs) and
-[latency tests](../tests/Consumer.Tests/Delivery/NotificationCommandConsumerTests.cs)
+Action-to-outcome latency uses the original action timestamp and ends at confirmed
+Notify acceptance or recorded suppression, including when cutover is unset.
+The outcome dimension distinguishes those endpoints. It includes upstream delays
+and retries; acceptance remains a sample even if storing acceptance subsequently
+fails. It measures acceptance, not inbox delivery, and clocks across services must
+be aligned. Suppression remains terminal: enabling sending later does not extend
+its sample. See the [consumer](../src/Consumer/Delivery/NotificationCommandConsumer.cs)
+and [latency tests](../tests/Consumer.Tests/Delivery/NotificationCommandConsumerTests.cs)
 for sampling boundaries.
-
-Action-to-outcome latency also covers recorded suppression, including when cutover
-is unset. Its outcome dimension separates suppression from confirmed Notify
-acceptance; acceptance uses the same endpoint as the acceptance-only metric.
-Suppression remains terminal: enabling sending later does not extend its sample.
 
 [Journey metrics](../src/Consumer/Utils/Metrics/NotificationJourneyMetrics.cs)
 connect analytics processing with the shared command delivery path. Analytics

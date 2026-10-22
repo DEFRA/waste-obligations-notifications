@@ -16,7 +16,6 @@ public static class MetricNames
     public const string NotificationCommandNotifySendAccepted = nameof(NotificationCommandNotifySendAccepted);
     public const string NotificationCommandNotifySendFailure = nameof(NotificationCommandNotifySendFailure);
     public const string NotificationCommandNotifySendDuration = nameof(NotificationCommandNotifySendDuration);
-    public const string NotificationCommandNotifyAcceptanceLatency = nameof(NotificationCommandNotifyAcceptanceLatency);
     public const string NotificationCommandOutcomeLatency = nameof(NotificationCommandOutcomeLatency);
     public const string NotificationCommandDuplicateSuppressed = nameof(NotificationCommandDuplicateSuppressed);
 }

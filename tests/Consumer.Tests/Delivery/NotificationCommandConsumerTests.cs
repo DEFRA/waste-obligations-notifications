@@ -32,21 +32,20 @@ public sealed class NotificationCommandConsumerTests : IDisposable
     public void Dispose() => _metricServices.Dispose();
 
     [Theory]
-    [InlineData("accepted", 125.25, "delivery-accepted", 125.25)]
-    [InlineData("acceptance-store-failed", 125.25, "delivery-accepted", 125.25)]
-    [InlineData("notify-failed", null, null, null)]
-    [InlineData("duplicate", null, null, null)]
-    [InlineData("suppressed", null, "delivery-suppressed", 127.5)]
-    [InlineData("before-cutover", null, "delivery-suppressed", 127.5)]
-    [InlineData("suppressed-duplicate", null, null, null)]
-    [InlineData("suppressed-failed", null, null, null)]
-    [InlineData("suppressed-conflict", null, null, null)]
-    [InlineData("suppressed-active-claim", null, null, null)]
-    [InlineData("suppressed-future-action", null, null, null)]
-    [InlineData("future-action", null, null, null)]
+    [InlineData("accepted", "delivery-accepted", 125.25)]
+    [InlineData("acceptance-store-failed", "delivery-accepted", 125.25)]
+    [InlineData("notify-failed", null, null)]
+    [InlineData("duplicate", null, null)]
+    [InlineData("suppressed", "delivery-suppressed", 127.5)]
+    [InlineData("before-cutover", "delivery-suppressed", 127.5)]
+    [InlineData("suppressed-duplicate", null, null)]
+    [InlineData("suppressed-failed", null, null)]
+    [InlineData("suppressed-conflict", null, null)]
+    [InlineData("suppressed-active-claim", null, null)]
+    [InlineData("suppressed-future-action", null, null)]
+    [InlineData("future-action", null, null)]
     public async Task Start_ShouldMeasureActionToSuppressionOrConfirmedNotifyAcceptance(
         string scenario,
-        double? expectedSeconds,
         string? expectedOutcome,
         double? expectedOutcomeSeconds
     )
@@ -61,12 +60,7 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, owner) =>
         {
-            if (
-                instrument.Meter == meter
-                && instrument.Name
-                    is MetricNames.NotificationCommandNotifyAcceptanceLatency
-                        or MetricNames.NotificationCommandOutcomeLatency
-            )
+            if (instrument.Meter == meter && instrument.Name == MetricNames.NotificationCommandOutcomeLatency)
                 owner.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<double>(
@@ -168,14 +162,6 @@ public sealed class NotificationCommandConsumerTests : IDisposable
             )
             .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
-
-        var acceptanceMeasurements = measurements
-            .Where(value => value.Name == MetricNames.NotificationCommandNotifyAcceptanceLatency)
-            .ToArray();
-        if (expectedSeconds is { } expected)
-            Assert.Equal(expected, Assert.Single(acceptanceMeasurements).Value);
-        else
-            Assert.Empty(acceptanceMeasurements);
 
         var outcomeMeasurements = measurements
             .Where(value => value.Name == MetricNames.NotificationCommandOutcomeLatency)

@@ -289,7 +289,6 @@ public sealed class NotificationCommandConsumer(
         var elapsedSeconds = (acceptedAt - command.ActionOccurredAtUtc).TotalSeconds;
         if (elapsedSeconds >= 0)
         {
-            metrics.RecordAcceptanceLatency(notificationType, elapsedSeconds);
             metrics.RecordOutcomeLatency(
                 notificationType,
                 NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue(),

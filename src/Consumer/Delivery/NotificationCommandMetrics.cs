@@ -14,7 +14,6 @@ public sealed class NotificationCommandMetrics : INotificationCommandMetrics
     private readonly Counter<long> _sendAccepted;
     private readonly Counter<long> _sendFailure;
     private readonly Histogram<double> _sendDuration;
-    private readonly Histogram<double> _acceptanceLatency;
     private readonly Histogram<double> _outcomeLatency;
     private readonly Counter<long> _duplicates;
 
@@ -55,11 +54,6 @@ public sealed class NotificationCommandMetrics : INotificationCommandMetrics
             MetricNames.NotificationCommandNotifySendDuration,
             nameof(Unit.MILLISECONDS),
             "Elapsed time spent sending a notification through Notify"
-        );
-        _acceptanceLatency = meter.CreateHistogram<double>(
-            MetricNames.NotificationCommandNotifyAcceptanceLatency,
-            nameof(Unit.SECONDS),
-            "Elapsed seconds from the notification action to confirmed Notify acceptance"
         );
         _outcomeLatency = meter.CreateHistogram<double>(
             MetricNames.NotificationCommandOutcomeLatency,
@@ -107,9 +101,6 @@ public sealed class NotificationCommandMetrics : INotificationCommandMetrics
         _sendDuration.Record(elapsedMilliseconds, BuildTags(notificationType));
 
     public void RecordDuplicate(string notificationType) => _duplicates.Add(1, BuildTags(notificationType));
-
-    public void RecordAcceptanceLatency(string notificationType, double elapsedSeconds) =>
-        _acceptanceLatency.Record(elapsedSeconds, BuildTags(notificationType));
 
     public void RecordOutcomeLatency(string notificationType, string outcome, double elapsedSeconds)
     {
