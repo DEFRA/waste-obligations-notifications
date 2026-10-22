@@ -16,7 +16,8 @@ public sealed class CancellationEmailProducer(
     SubmittedEmailProducer submitted,
     IWasteOrganisationsClient organisations,
     IAccountBackendClient accounts,
-    IOptions<NotificationDefinitionsOptions> options
+    IOptions<NotificationDefinitionsOptions> options,
+    ILogger<CancellationEmailProducer> logger
 ) : IAnalyticsNotificationProducer
 {
     private const string InvalidDeclarationData = "invalid-declaration-data";
@@ -34,8 +35,6 @@ public sealed class CancellationEmailProducer(
         {
             var declaration = await submitted.Read(organisationId, declarationId, eventVersion, cancellationToken);
             var (family, actionTime) = ReadCancellation(declaration);
-            if (family is null)
-                return [];
 
             var live =
                 await ReadDependency(
@@ -50,7 +49,13 @@ public sealed class CancellationEmailProducer(
                     ? await ResolveScheme(live.CompaniesHouseNumber, cancellationToken)
                     : live.Id;
             if (accountId is null)
+            {
+                logger.LogInformation(
+                    "Cancellation produced no notifications ({ReasonCode})",
+                    "unresolved-compliance-scheme"
+                );
                 return [];
+            }
 
             var organisation = await ReadDependency(
                 () => accounts.ReadOrganisationWithPersons(accountId.Value, cancellationToken),
@@ -61,7 +66,10 @@ public sealed class CancellationEmailProducer(
                 organisation?.Persons ?? []
             );
             if (recipients.Length == 0)
+            {
+                logger.LogInformation("Cancellation produced no notifications ({ReasonCode})", "no-eligible-recipient");
                 return [];
+            }
 
             var predecessor = submitted.Create(declaration);
             var welsh = live.BusinessCountry == "GB-WLS";
@@ -105,7 +113,7 @@ public sealed class CancellationEmailProducer(
         }
     }
 
-    private static (string? Family, DateTimeOffset ActionTime) ReadCancellation(Declaration declaration)
+    private static (string Family, DateTimeOffset ActionTime) ReadCancellation(Declaration declaration)
     {
         var audit =
             declaration.Audit?.FirstOrDefault(entry => entry.Action == "Cancelled")
@@ -123,7 +131,7 @@ public sealed class CancellationEmailProducer(
             "Producer can meet recycling obligations" or "Compliance scheme can meet recycling obligations" =>
                 "can-meet-recycling-obligations",
             "Producer requested to cancel" or "Compliance scheme requested to cancel" => "producer-requested",
-            _ => null,
+            _ => throw new SubmissionProcessingException("unknown-cancellation-reason"),
         };
 
         return (family, actionTime);

@@ -5,6 +5,7 @@ using Defra.WasteObligations.Consumer.Services.AccountBackend;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Services.WasteOrganisations;
 using Defra.WasteObligations.Consumer.Submission;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using LiveOrganisation = Defra.WasteObligations.Consumer.Services.WasteOrganisations.Organisation;
@@ -135,12 +136,13 @@ public sealed class CancellationEmailProducerTests
     [InlineData("Producer requested to cancel ")]
     [InlineData("producer requested to cancel")]
     [InlineData("Unknown reason")]
-    public async Task WhenReasonIsUnknown_ShouldReturnEmptyWithoutLiveReadsOrPredecessor(string reason)
+    public async Task WhenReasonIsUnknown_ShouldFailWithoutLiveReadsOrPredecessor(string reason)
     {
         var fixture = new Fixture(reason);
         fixture.Declaration = fixture.Declaration with { Audit = [fixture.Declaration.Audit![1]] };
 
-        Assert.Empty(await fixture.Create());
+        var exception = await Assert.ThrowsAsync<SubmissionProcessingException>(fixture.Create);
+        Assert.Equal("unknown-cancellation-reason", exception.Reason);
 
         await fixture.Live.DidNotReceive().Read(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
         await fixture
@@ -294,6 +296,7 @@ public sealed class CancellationEmailProducerTests
         ]);
 
         Assert.Empty(await fixture.Create());
+        fixture.AssertNoSendLog("no-eligible-recipient");
     }
 
     [Fact]
@@ -433,6 +436,7 @@ public sealed class CancellationEmailProducerTests
         else
         {
             Assert.Empty(commands);
+            fixture.AssertNoSendLog("unresolved-compliance-scheme");
             await fixture
                 .Accounts.DidNotReceive()
                 .ReadOrganisationWithPersons(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
@@ -512,6 +516,9 @@ public sealed class CancellationEmailProducerTests
         public Declaration Declaration { get; set; }
         public OrganisationWithPersons? Persons { get; set; } = new([Submitter()]);
         private readonly CancellationEmailProducer _producer;
+        private readonly ILogger<CancellationEmailProducer> _logger = Substitute.For<
+            ILogger<CancellationEmailProducer>
+        >();
 
         public Fixture(string reason = "Producer requested to cancel", string country = "GB-ENG")
         {
@@ -546,7 +553,30 @@ public sealed class CancellationEmailProducerTests
                 Submitted,
                 Live,
                 Accounts,
-                Options.Create(new NotificationDefinitionsOptions())
+                Options.Create(new NotificationDefinitionsOptions()),
+                _logger
+            );
+        }
+
+        public void AssertNoSendLog(string reason)
+        {
+            var call = Assert.Single(_logger.ReceivedCalls().Where(call => call.GetMethodInfo().Name == "Log"));
+            var arguments = call.GetArguments();
+            Assert.Equal(LogLevel.Information, arguments[0]);
+            Assert.Null(arguments[3]);
+            var state = Assert.IsAssignableFrom<IEnumerable<KeyValuePair<string, object>>>(arguments[2]);
+            Assert.Collection(
+                state,
+                entry =>
+                {
+                    Assert.Equal("ReasonCode", entry.Key);
+                    Assert.Equal(reason, entry.Value);
+                },
+                entry =>
+                {
+                    Assert.Equal("{OriginalFormat}", entry.Key);
+                    Assert.Equal("Cancellation produced no notifications ({ReasonCode})", entry.Value);
+                }
             );
         }
 

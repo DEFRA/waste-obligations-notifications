@@ -65,7 +65,8 @@ public sealed class CancellationPublicationDeadlineTests
             submitted,
             live,
             accounts,
-            Options.Create(new NotificationDefinitionsOptions())
+            Options.Create(new NotificationDefinitionsOptions()),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<CancellationEmailProducer>.Instance
         );
         var publisher = Substitute.For<INotificationCommandPublisher>();
         var latePredecessor = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

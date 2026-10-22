@@ -1,3 +1,4 @@
+using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.IntegrationTests.Helpers;
 using Defra.WasteObligations.Consumer.Services.AccountBackend;
 
@@ -100,15 +101,12 @@ public sealed class CancellationEmailSendTests : IntegrationTestBase
 
     [Theory]
     [InlineData("no-persons")]
-    [InlineData("unknown-reason")]
     [InlineData("outside-transition")]
     public async Task WhenNoCancellationIsDue_ShouldAcknowledgeWithoutAnyPublication(string scenario)
     {
         await using var fixture = await CancellationEmailFixture.Create();
         if (scenario == "no-persons")
             fixture.State.Persons = [];
-        if (scenario == "unknown-reason")
-            fixture.State.Reason = "Not a known reason";
 
         await fixture.SendAnalytics(before: scenario == "outside-transition" ? "Draft" : "Submitted");
         await WaitForAsync(async () =>
@@ -120,6 +118,44 @@ public sealed class CancellationEmailSendTests : IntegrationTestBase
         Assert.Empty(fixture.Sqs.Confirmed);
         if (scenario != "no-persons")
             Assert.Equal(0, fixture.State.LiveReads);
+    }
+
+    [Fact]
+    public async Task WhenCancellationReasonIsUnknown_ShouldRetainAndRetryWithoutAnyPublication()
+    {
+        await using var fixture = await CancellationEmailFixture.Create();
+        fixture.State.Reason = "Not a known reason";
+
+        await fixture.SendAnalytics();
+        await WaitForAsync(() =>
+        {
+            Assert.Equal(1, Volatile.Read(ref fixture.State.DeclarationReads));
+            Assert.Equal(0, fixture.Sqs.AnalyticsDeletions);
+            Assert.Empty(fixture.Sqs.Confirmed);
+
+            return Task.CompletedTask;
+        });
+
+        await fixture.RetryAnalytics();
+        await WaitForAsync(async () =>
+        {
+            Assert.Equal(2, Volatile.Read(ref fixture.State.DeclarationReads));
+            Assert.Equal(0, fixture.Sqs.AnalyticsDeletions);
+            Assert.Equal(0, fixture.Sqs.PublicationAttempts);
+            Assert.Empty(fixture.Sqs.Confirmed);
+            var queue = await fixture.Sqs.GetQueueAttributesAsync(
+                new GetQueueAttributesRequest
+                {
+                    QueueUrl = fixture.Sqs.AnalyticsUrl,
+                    AttributeNames = ["ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible"],
+                },
+                TestContext.Current.CancellationToken
+            );
+            Assert.Equal("0", queue.Attributes["ApproximateNumberOfMessages"]);
+            Assert.Equal("1", queue.Attributes["ApproximateNumberOfMessagesNotVisible"]);
+        });
+
+        Assert.Equal(0, fixture.State.LiveReads);
     }
 
     [Theory]

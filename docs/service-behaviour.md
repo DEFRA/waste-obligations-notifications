@@ -45,6 +45,9 @@ for exact cases rather than maintaining a second mapping table here.
 Cancellation uses an authorised declaration read plus live organisation/Account
 reads. Actual cancellation intentions are preceded by confirmed publication of
 the original Submitted intention on every attempt. Empty results publish neither.
+Unrecognised cancellation reasons leave the analytics message for retry and dead-lettering.
+No eligible recipient or unresolved compliance scheme remains an acknowledged no-send
+outcome, logged with a fixed reason code and no recipient data.
 Retries re-evaluate live contacts; terminal evidence and immutable conflicts remain
 the replay boundary. No recipient snapshot or producer ledger is introduced.
 Publication precedence does not establish inbox order: recipient lanes, recovery

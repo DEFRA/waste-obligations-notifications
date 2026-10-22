@@ -706,7 +706,8 @@ public sealed class SubmittedEmailConsumerTests
                         _producer,
                         Substitute.For<IWasteOrganisationsClient>(),
                         Substitute.For<IAccountBackendClient>(),
-                        Options.Create(new NotificationDefinitionsOptions())
+                        Options.Create(new NotificationDefinitionsOptions()),
+                        Microsoft.Extensions.Logging.Abstractions.NullLogger<CancellationEmailProducer>.Instance
                     ),
                 ],
                 _publisher,
