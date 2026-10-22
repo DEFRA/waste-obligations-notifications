@@ -35,8 +35,8 @@ public sealed class NotificationProducerRoutingTests
                         Arg.Any<Guid>(),
                         Arg.Any<string>(),
                         Arg.Any<int>(),
-                        Arg.Any<CancellationToken>(),
-                        Arg.Any<Declaration?>()
+                        Arg.Any<Declaration?>(),
+                        Arg.Any<CancellationToken>()
                     )
                     .Returns(Task.FromResult<IReadOnlyList<NotificationCommand>>([]));
                 return producer;
@@ -112,8 +112,8 @@ public sealed class NotificationProducerRoutingTests
                     Arg.Any<Guid>(),
                     "65f1f6570bb08052a8a27b01",
                     1,
-                    Arg.Any<CancellationToken>(),
-                    Arg.Any<Declaration?>()
+                    Arg.Any<Declaration?>(),
+                    Arg.Any<CancellationToken>()
                 );
     }
 }

@@ -12,7 +12,7 @@ public interface IAnalyticsNotificationProducer
         Guid organisationId,
         string declarationId,
         int eventVersion,
-        CancellationToken cancellationToken,
-        Declaration? declarationSnapshot
+        Declaration? declarationSnapshot,
+        CancellationToken cancellationToken
     );
 }

@@ -131,8 +131,8 @@ public sealed class AnalyticsEventConsumer(
                             organisationId,
                             id[5..].ToLowerInvariant(),
                             version,
-                            token,
-                            analyticsEvent.DeclarationSnapshot
+                            analyticsEvent.DeclarationSnapshot,
+                            token
                         ),
                     options.Value.ReadTimeoutSeconds,
                     stoppingToken

@@ -19,8 +19,8 @@ public sealed class SubmittedEmailProducer(
         Guid organisationId,
         string declarationId,
         int eventVersion,
-        CancellationToken cancellationToken,
-        Declaration? declarationSnapshot
+        Declaration? declarationSnapshot,
+        CancellationToken cancellationToken
     ) => [await Create(organisationId, declarationId, eventVersion, cancellationToken, declarationSnapshot)];
 
     private const string InvalidDeclarationData = "invalid-declaration-data";

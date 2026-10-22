@@ -28,8 +28,8 @@ public sealed class CancellationEmailProducer(
         Guid organisationId,
         string declarationId,
         int eventVersion,
-        CancellationToken cancellationToken,
-        Declaration? declarationSnapshot
+        Declaration? declarationSnapshot,
+        CancellationToken cancellationToken
     )
     {
         try

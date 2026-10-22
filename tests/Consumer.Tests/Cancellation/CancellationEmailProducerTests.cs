@@ -611,6 +611,6 @@ public sealed class CancellationEmailProducerTests
             new(SubmitterId, " First ", " Last ", "SUBMITTER@example.test", "Other");
 
         public Task<IReadOnlyList<Defra.WasteObligations.Consumer.Commands.NotificationCommand>> Create() =>
-            _producer.Create(OrganisationId, DeclarationId, 2, TestContext.Current.CancellationToken, null);
+            _producer.Create(OrganisationId, DeclarationId, 2, null, TestContext.Current.CancellationToken);
     }
 }
