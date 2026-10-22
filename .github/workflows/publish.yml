@@ -47,7 +47,7 @@ jobs:
         run: docker compose down -v --remove-orphans
       - name: Upload Notify preview report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: notify-preview-report
           path: TestResults/NotifyPreviews
@@ -77,6 +77,6 @@ jobs:
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Build and Publish
-        uses: DEFRA/cdp-build-action/build@dfb527d1bca7591fbbfd32ac007557745e888cf2 # main
+        uses: DEFRA/cdp-build-action/build@54ced5c5344c8b9620561a1628fe8f3d858e9871 # main
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
