@@ -3,7 +3,9 @@
 GET {{host}}/health
 Authorization: Bearer {{$auth.token("service")}}
 
-### Authenticated readiness
+### Basic-auth readiness (Bearer-only request expects service 401)
+# The gateway requires Bearer, but this endpoint requires service Basic authentication.
+# Use /health above for deployed readiness; use health.docker.http for local Basic readiness.
 # @no-log
 GET {{host}}/health/authorized
 Authorization: Bearer {{$auth.token("service")}}

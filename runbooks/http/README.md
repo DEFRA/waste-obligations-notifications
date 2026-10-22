@@ -20,7 +20,10 @@ For deployed environments:
    All deployed health requests carry the token to pass the private gateway’s Cognito
    authentication, including endpoints that are anonymous within the service.
 
-- [Health](health.http): anonymous readiness and extended checks, plus authenticated readiness.
+- [Health](health.http): readiness and extended checks through the gateway. The
+  `/health/authorized` example is diagnostic: Bearer passes Cognito but the service
+  requires Basic and returns 401. Use `/health` for deployed readiness and
+  [local health](health.docker.http) for the Basic-auth readiness request.
 - [Command DLQ](command-dlq.http): run readiness, then inspect before redrive, discard or accepted-command resend.
 
 Executable response examples are recorded in the Verify `*.verified.json` snapshots in

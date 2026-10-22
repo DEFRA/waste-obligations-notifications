@@ -132,6 +132,28 @@ public sealed class CancellationEmailProducerTests
             .ReadDeclaration(Fixture.OrganisationId, Fixture.DeclarationId, Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task WhenOnlyCancellationTimeChanges_ShouldUseDistinctDurableIdentity()
+    {
+        var fixture = new Fixture();
+        var original = (await fixture.Create())[1];
+
+        Assert.Equal(
+            "cdec:65f1f6570bb08052a8a27b01:cancelled:v1:c7567b8761d74234c689a1fa651d27736456262add7e749cad744dcde588b3fa",
+            original.IdempotencyKey
+        );
+
+        var audit = fixture.Declaration.Audit!.ToArray();
+        audit[1] = audit[1] with { Timestamp = "2026-10-02T12:00:00.123Z" };
+        fixture.Declaration = fixture.Declaration with { Audit = audit };
+
+        var later = (await fixture.Create())[1];
+
+        Assert.Equal(original.EmailAddress, later.EmailAddress);
+        Assert.Equal(original.Personalisation.GetRawText(), later.Personalisation.GetRawText());
+        Assert.NotEqual(original.IdempotencyKey, later.IdempotencyKey);
+    }
+
     [Theory]
     [InlineData("Producer requested to cancel ")]
     [InlineData("producer requested to cancel")]
