@@ -136,9 +136,11 @@ Action-to-outcome latency uses the original action timestamp and ends at confirm
 Notify acceptance or recorded suppression, including when cutover is unset.
 The outcome dimension distinguishes those endpoints. It includes upstream delays
 and retries; acceptance remains a sample even if storing acceptance subsequently
-fails. It measures acceptance, not inbox delivery, and clocks across services must
-be aligned. Suppression remains terminal: enabling sending later does not extend
-its sample. See the [consumer](../src/Consumer/Delivery/NotificationCommandConsumer.cs)
+fails. If redelivery results in another confirmed send, it records another sample
+from the same original action timestamp. It measures acceptance, not inbox
+delivery, and clocks across services must be aligned. Suppression remains
+terminal: enabling sending later does not extend its sample.
+See the [consumer](../src/Consumer/Delivery/NotificationCommandConsumer.cs)
 and [latency tests](../tests/Consumer.Tests/Delivery/NotificationCommandConsumerTests.cs)
 for sampling boundaries.
 
