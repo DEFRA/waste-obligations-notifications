@@ -83,21 +83,22 @@ public static class MetricsExporter
 
     private static bool IsCommandDimension(string name, string? value) =>
         name == MetricTags.NotificationType && NotificationCommandDeliveryOptions.IsDiagnosticLabel(value)
-        || name == MetricTags.Consumer && value is "analytics" or "delivery"
-        || name == MetricTags.Source && value == "analytics"
+        || name == MetricTags.Consumer
+            && value is NotificationJourneyValues.Consumer.Analytics or NotificationJourneyValues.Consumer.Delivery
+        || name == MetricTags.Source && value == NotificationJourneyValues.Source.Analytics
         || name == MetricTags.Stage
             && value
-                is "receive"
-                    or "parse"
-                    or "validate-event"
-                    or "read-declaration"
-                    or "publish-command"
-                    or "acknowledge"
-                    or "suppression"
-                    or "claim"
-                    or "send"
-                    or "record-acceptance"
-                    or "processing-budget"
+                is NotificationJourneyValues.Stage.Receive
+                    or NotificationJourneyValues.Stage.Parse
+                    or NotificationJourneyValues.Stage.ValidateEvent
+                    or NotificationJourneyValues.Stage.ReadDeclaration
+                    or NotificationJourneyValues.Stage.PublishCommand
+                    or NotificationJourneyValues.Stage.Acknowledge
+                    or NotificationJourneyValues.Stage.Suppression
+                    or NotificationJourneyValues.Stage.Claim
+                    or NotificationJourneyValues.Stage.Send
+                    or NotificationJourneyValues.Stage.RecordAcceptance
+                    or NotificationJourneyValues.Stage.ProcessingBudget
         || name == MetricTags.Outcome
             && value
                 is NotificationDeliveryClassifications.DeliveryAccepted
@@ -109,7 +110,7 @@ public static class MetricsExporter
                     or NotificationDeliveryClassifications.ActiveClaim
                     or "unavailable"
                     or "failure"
-                    or "ignored"
-                    or "no-notifications"
-                    or "commands-published";
+                    or NotificationJourneyValues.Outcome.Ignored
+                    or NotificationJourneyValues.Outcome.NoNotifications
+                    or NotificationJourneyValues.Outcome.CommandsPublished;
 }

@@ -12,7 +12,7 @@ public sealed class NotificationJourneyMetrics : INotificationJourneyMetrics
     private readonly Counter<long> _published;
     private readonly Counter<long> _failures;
     private readonly Counter<long> _polls;
-    private readonly Histogram<int> _cutover;
+    private readonly Gauge<int> _cutover;
 
     public NotificationJourneyMetrics(IMeterFactory meterFactory)
     {
@@ -47,7 +47,7 @@ public sealed class NotificationJourneyMetrics : INotificationJourneyMetrics
             nameof(Unit.COUNT),
             "Successful consumer receive operations, including empty receives"
         );
-        _cutover = meter.CreateHistogram<int>(
+        _cutover = meter.CreateGauge<int>(
             MetricNames.NotificationDeliveryCutoverConfigured,
             nameof(Unit.NONE),
             "Delivery policy observed on a successful poll: zero for unset cutover, one for configured cutover"

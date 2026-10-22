@@ -33,10 +33,12 @@ public sealed class NotificationCommandConsumerTests : IDisposable
 
     [Theory]
     [InlineData("accepted", "delivery-accepted", 125.25)]
+    [InlineData("accepted-metric-failed", "delivery-accepted", 125.25)]
     [InlineData("acceptance-store-failed", "delivery-accepted", 125.25)]
     [InlineData("notify-failed", null, null)]
     [InlineData("duplicate", null, null)]
     [InlineData("suppressed", "delivery-suppressed", 127.5)]
+    [InlineData("suppressed-metric-failed", "delivery-suppressed", 127.5)]
     [InlineData("before-cutover", "delivery-suppressed", 127.5)]
     [InlineData("suppressed-duplicate", null, null)]
     [InlineData("suppressed-failed", null, null)]
@@ -65,13 +67,17 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         };
         listener.SetMeasurementEventCallback<double>(
             (instrument, value, tags, _) =>
+            {
                 measurements.Add(
                     (
                         instrument.Name,
                         value,
                         tags.ToArray().SingleOrDefault(tag => tag.Key == MetricTags.Outcome).Value as string
                     )
-                )
+                );
+                if (scenario.EndsWith("metric-failed", StringComparison.Ordinal))
+                    throw new InvalidOperationException("private telemetry detail");
+            }
         );
         listener.Start();
 
@@ -79,8 +85,17 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         var actionTime = scenario.EndsWith("future-action", StringComparison.Ordinal)
             ? "2026-10-02T10:00:00Z"
             : "2026-10-01T10:00:00Z";
+        var receivedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var receive = MessageThenWait(CreateMessage(CommandBody(actionTime)));
+        var receives = 0;
         sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
-            .Returns(MessageThenWait(CreateMessage(CommandBody(actionTime))));
+            .Returns(call =>
+            {
+                if (Interlocked.Increment(ref receives) > 1)
+                    receivedAgain.TrySetResult();
+
+                return receive(call);
+            });
         var store = Substitute.For<INotificationDeliveryRecordStore>();
         store
             .RecordSuppression(
@@ -148,20 +163,29 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         using var subject = CreateSubject(sqs, store, logger, cutover: cutover, notify: notify, timeProvider: clock);
 
         await subject.StartAsync(TestContext.Current.CancellationToken);
-        await logger
-            .WaitForMessage(
-                scenario
-                    is "acceptance-store-failed"
-                        or "notify-failed"
-                        or "suppressed-failed"
-                        or "suppressed-conflict"
-                        or "suppressed-active-claim"
-                    ? "Notification command consumption failed"
-                    : "Notification command outcome",
-                TestContext.Current.CancellationToken
-            )
-            .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await receivedAgain.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        if (scenario.EndsWith("metric-failed", StringComparison.Ordinal))
+        {
+            await sqs.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+            if (scenario == "accepted-metric-failed")
+            {
+                await store
+                    .Received(1)
+                    .RecordAcceptance(
+                        Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                        Arg.Any<string>(),
+                        Arg.Any<NotifyAcceptance>(),
+                        Arg.Any<CancellationToken>()
+                    );
+            }
+            Assert.DoesNotContain(
+                logger.Messages,
+                message => message.Contains("private telemetry detail", StringComparison.Ordinal)
+            );
+            Assert.Empty(logger.Exceptions);
+        }
 
         var outcomeMeasurements = measurements
             .Where(value => value.Name == MetricNames.NotificationCommandOutcomeLatency)

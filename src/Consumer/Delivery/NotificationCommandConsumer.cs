@@ -34,18 +34,18 @@ public sealed class NotificationCommandConsumer(
             string? messageId = null;
             string? notificationType = null;
             string? reference = null;
-            var stage = "receive";
+            var stage = NotificationJourneyValues.Stage.Receive;
             try
             {
                 // SQS may make a message invisible before its receive response reaches this host.
                 var receiveStartedAt = Stopwatch.GetTimestamp();
                 var response = await ReceiveCommands(stoppingToken);
-                journeyMetrics.RecordPoll("delivery");
+                journeyMetrics.RecordPoll(NotificationJourneyValues.Consumer.Delivery);
                 journeyMetrics.RecordCutover(cutover.HasValue);
                 foreach (var message in response.Messages ?? [])
                 {
                     messageId = message.MessageId;
-                    stage = "parse";
+                    stage = NotificationJourneyValues.Stage.Parse;
                     var command = ReadCommand(message);
                     notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
                     reference = digest.CreateNotifyReference(command.IdempotencyKey);
@@ -67,7 +67,7 @@ public sealed class NotificationCommandConsumer(
             }
             catch (Exception exception)
             {
-                journeyMetrics.RecordFailure("delivery", stage);
+                journeyMetrics.RecordFailure(NotificationJourneyValues.Consumer.Delivery, stage);
                 // Dependency exceptions may contain payload or recipient data. Log a bounded category only.
                 LogFailure(exception, messageId, notificationType, reference);
                 await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
@@ -121,7 +121,7 @@ public sealed class NotificationCommandConsumer(
         var outcome = NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue();
         if (cutover is null || command.ActionOccurredAtUtc < cutover)
         {
-            setStage("suppression");
+            setStage(NotificationJourneyValues.Stage.Suppression);
             var result = await RunBounded(
                 token => store.RecordSuppression(command, token),
                 options.Value.ClaimTimeoutSeconds,
@@ -143,11 +143,11 @@ public sealed class NotificationCommandConsumer(
             }
 
             if (result == SuppressionClaimResult.Recorded)
-            {
-                var elapsedSeconds = (suppressedAt - command.ActionOccurredAtUtc).TotalSeconds;
-                if (elapsedSeconds >= 0)
-                    metrics.RecordOutcomeLatency(notificationType, outcome, elapsedSeconds);
-            }
+                RecordOutcomeLatency(
+                    notificationType,
+                    outcome,
+                    (suppressedAt - command.ActionOccurredAtUtc).TotalSeconds
+                );
         }
         else
             outcome = await ProcessPostCutover(
@@ -163,7 +163,7 @@ public sealed class NotificationCommandConsumer(
         metrics.RecordOutcome(notificationType, outcome);
         LogOutcome(message, command, reference, notificationType, outcome, cutover);
         stoppingToken.ThrowIfCancellationRequested();
-        setStage("acknowledge");
+        setStage(NotificationJourneyValues.Stage.Acknowledge);
         await RunBounded(
             token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
             options.Value.DeleteTimeoutSeconds,
@@ -211,7 +211,7 @@ public sealed class NotificationCommandConsumer(
         CancellationToken stoppingToken
     )
     {
-        setStage("processing-budget");
+        setStage(NotificationJourneyValues.Stage.ProcessingBudget);
         EnsureRemaining(
             receiveStartedAt,
             options.Value.VisibilityTimeoutSeconds,
@@ -220,7 +220,7 @@ public sealed class NotificationCommandConsumer(
         var claimStartedAt = Stopwatch.GetTimestamp();
         var attemptOwner = Guid.NewGuid().ToString("N");
         DeliveryClaimResult claim;
-        setStage("claim");
+        setStage(NotificationJourneyValues.Stage.Claim);
         try
         {
             claim = await RunBounded(
@@ -252,7 +252,7 @@ public sealed class NotificationCommandConsumer(
                     _ => NotificationCommandFailureReason.StoreError,
                 }
             );
-        setStage("processing-budget");
+        setStage(NotificationJourneyValues.Stage.ProcessingBudget);
         EnsureRemaining(
             receiveStartedAt,
             options.Value.VisibilityTimeoutSeconds,
@@ -262,7 +262,7 @@ public sealed class NotificationCommandConsumer(
         var sendStartedAt = Stopwatch.GetTimestamp();
         NotifyAcceptance acceptance;
         DateTimeOffset acceptedAt;
-        setStage("send");
+        setStage(NotificationJourneyValues.Stage.Send);
         try
         {
             acceptance = await RunBounded(
@@ -286,19 +286,15 @@ public sealed class NotificationCommandConsumer(
             metrics.RecordSendDuration(notificationType, Stopwatch.GetElapsedTime(sendStartedAt).TotalMilliseconds);
         }
 
-        var elapsedSeconds = (acceptedAt - command.ActionOccurredAtUtc).TotalSeconds;
-        if (elapsedSeconds >= 0)
-        {
-            metrics.RecordOutcomeLatency(
-                notificationType,
-                NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue(),
-                elapsedSeconds
-            );
-        }
+        RecordOutcomeLatency(
+            notificationType,
+            NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue(),
+            (acceptedAt - command.ActionOccurredAtUtc).TotalSeconds
+        );
 
         // A confirmed send still needs durable evidence after timeout, lease expiry or shutdown.
         // Mongo's owner and pending-outcome checks fence a replaced or terminal claim.
-        setStage("record-acceptance");
+        setStage(NotificationJourneyValues.Stage.RecordAcceptance);
         var recorded = await RunBounded(
             token => store.RecordAcceptance(command, attemptOwner, acceptance, token),
             options.Value.AcceptanceTimeoutSeconds,
@@ -310,6 +306,25 @@ public sealed class NotificationCommandConsumer(
 
         return NotificationDeliveryOutcome.DeliveryAccepted.ToStorageValue();
     }
+
+    private void RecordOutcomeLatency(string notificationType, string outcome, double elapsedSeconds)
+    {
+        if (elapsedSeconds < 0)
+            return;
+
+        try
+        {
+            metrics.RecordOutcomeLatency(notificationType, outcome, elapsedSeconds);
+        }
+        catch (Exception exception)
+        {
+            // Telemetry must not prevent recording a confirmed acceptance or acknowledging suppression.
+            LogLatencyMetricFailure(exception);
+        }
+    }
+
+    private void LogLatencyMetricFailure(Exception exception) =>
+        logger.LogError("Notification outcome latency metric failed ({ExceptionType}).", exception.GetType().Name);
 
     private async Task<ReceiveMessageResponse> ReceiveCommands(CancellationToken stoppingToken) =>
         await RunBounded(

@@ -142,7 +142,8 @@ delivery, and clocks across services must be aligned. Suppression remains
 terminal: enabling sending later does not extend its sample.
 See the [consumer](../src/Consumer/Delivery/NotificationCommandConsumer.cs)
 and [latency tests](../tests/Consumer.Tests/Delivery/NotificationCommandConsumerTests.cs)
-for sampling boundaries.
+for sampling boundaries. Outcome-latency telemetry failures are logged without
+blocking durable acceptance recording or acknowledgement of suppression.
 
 [Journey metrics](../src/Consumer/Utils/Metrics/NotificationJourneyMetrics.cs)
 connect analytics processing with the shared command delivery path. Analytics

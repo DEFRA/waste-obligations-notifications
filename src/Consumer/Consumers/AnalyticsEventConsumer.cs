@@ -83,15 +83,18 @@ public sealed class AnalyticsEventConsumer(
                 stoppingToken
             );
 
-            metrics.RecordPoll("analytics");
+            metrics.RecordPoll(NotificationJourneyValues.Consumer.Analytics);
 
             return response;
         }
         catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
         {
-            metrics.RecordFailure("analytics", "receive");
+            metrics.RecordFailure(
+                NotificationJourneyValues.Consumer.Analytics,
+                NotificationJourneyValues.Stage.Receive
+            );
             LogFailure(exception);
-            LogRetry(exception, "receive", false, null, null, null);
+            LogRetry(exception, NotificationJourneyValues.Stage.Receive, false, null, null, null);
             throw;
         }
     }
@@ -101,10 +104,10 @@ public sealed class AnalyticsEventConsumer(
         string? eventId = null;
         string? entityId = null;
         string? messageId = null;
-        var stage = "parse";
+        var stage = NotificationJourneyValues.Stage.Parse;
         var published = false;
         var startedAt = Stopwatch.GetTimestamp();
-        var outcome = "ignored";
+        var outcome = NotificationJourneyValues.Outcome.Ignored;
         var commandCount = 0;
         metrics.RecordAnalyticsReceived();
         try
@@ -123,7 +126,7 @@ public sealed class AnalyticsEventConsumer(
             {
                 // The enclosing catch reads this stage when event validation throws.
 #pragma warning disable S1854 // Sonar does not account for the helper's exceptional path.
-                stage = "validate-event";
+                stage = NotificationJourneyValues.Stage.ValidateEvent;
 #pragma warning restore S1854
                 var (version, organisationId) = ValidateEvent(analyticsEvent, declarationEntityId);
 
@@ -137,7 +140,7 @@ public sealed class AnalyticsEventConsumer(
                 );
                 // The enclosing catch reads this stage when the awaited read throws, before the next assignment.
 #pragma warning disable S1854 // Sonar does not account for this exceptional path through the awaited call.
-                stage = "read-declaration";
+                stage = NotificationJourneyValues.Stage.ReadDeclaration;
 #pragma warning restore S1854
                 var commands = await RunBounded<IReadOnlyList<NotificationCommand>>(
                     token =>
@@ -152,14 +155,17 @@ public sealed class AnalyticsEventConsumer(
                     stoppingToken
                 );
                 commandCount = commands.Count;
-                outcome = commandCount == 0 ? "no-notifications" : "commands-published";
+                outcome =
+                    commandCount == 0
+                        ? NotificationJourneyValues.Outcome.NoNotifications
+                        : NotificationJourneyValues.Outcome.CommandsPublished;
 
                 EnsureRemaining(receivedAt, options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
-                stage = "publish-command";
+                stage = NotificationJourneyValues.Stage.PublishCommand;
                 await PublishCommands(commands, eventId, entityId, () => published = true, stoppingToken);
             }
 
-            stage = "acknowledge";
+            stage = NotificationJourneyValues.Stage.Acknowledge;
             EnsureRemaining(receivedAt, options.Value.DeleteTimeoutSeconds);
             await RunBounded(
                 token => sqsClient.DeleteMessageAsync(options.Value.QueueUrl, message.ReceiptHandle, token),
@@ -182,7 +188,7 @@ public sealed class AnalyticsEventConsumer(
         }
         catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
         {
-            metrics.RecordFailure("analytics", stage);
+            metrics.RecordFailure(NotificationJourneyValues.Consumer.Analytics, stage);
             LogFailure(exception);
             LogRetry(exception, stage, published, messageId, eventId, entityId);
             throw;
@@ -226,7 +232,7 @@ public sealed class AnalyticsEventConsumer(
                     EnsurePublicationDeadline(startedAt, token);
 
                     await publisher.Publish(command, token);
-                    metrics.RecordCommandPublished("analytics");
+                    metrics.RecordCommandPublished(NotificationJourneyValues.Source.Analytics);
 
                     EnsurePublicationDeadline(startedAt, token);
                     publicationConfirmed();
@@ -276,14 +282,16 @@ public sealed class AnalyticsEventConsumer(
         {
             SubmissionProcessingException failure => failure.Reason,
             TimeoutException or OperationCanceledException or TimeoutRejectedException => "dependency-timeout",
-            _ when stage == "publish-command" => "unconfirmed-publication",
-            _ when stage is "parse" or "validate-event" => "invalid-event-data",
+            _ when stage == NotificationJourneyValues.Stage.PublishCommand => "unconfirmed-publication",
+            _ when stage is NotificationJourneyValues.Stage.Parse or NotificationJourneyValues.Stage.ValidateEvent =>
+                "invalid-event-data",
             _ => "dependency-failure",
         };
         var acknowledgementStatus = (stage, published) switch
         {
-            ("acknowledge", true) => "command publication confirmed; acknowledgement uncertain; possible queue retry",
-            ("acknowledge", false) => "acknowledgement uncertain; possible queue retry",
+            (NotificationJourneyValues.Stage.Acknowledge, true) =>
+                "command publication confirmed; acknowledgement uncertain; possible queue retry",
+            (NotificationJourneyValues.Stage.Acknowledge, false) => "acknowledgement uncertain; possible queue retry",
             _ => "not acknowledged; left for queue retry/recovery",
         };
         logger.LogWarning(
