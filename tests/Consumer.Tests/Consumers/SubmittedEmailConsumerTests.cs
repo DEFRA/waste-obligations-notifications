@@ -316,6 +316,16 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Equal(Assert.Single(existing.Publications).MessageBody, Assert.Single(deleted.Publications).MessageBody);
         Assert.Equal(1, deleted.Deletions);
         Assert.Single(deleted.Reads);
+        Assert.Single(
+            deleted.Logs.Entries,
+            entry =>
+                entry.Level == LogLevel.Warning
+                && entry.Text.Contains("declaration-snapshot-fallback", StringComparison.Ordinal)
+        );
+        Assert.DoesNotContain(
+            existing.Logs.Entries,
+            entry => entry.Text.Contains("declaration-snapshot-fallback", StringComparison.Ordinal)
+        );
         deleted.AssertSafeLogs();
     }
 
@@ -743,7 +753,8 @@ public sealed class SubmittedEmailConsumerTests
                     _http,
                     Options.Create(new WasteObligationsOptions { Username = "test-client", Password = "test-secret" })
                 ),
-                submission
+                submission,
+                Logs
             );
             var delivery = Options.Create(
                 new NotificationCommandDeliveryOptions
@@ -870,7 +881,7 @@ public sealed class SubmittedEmailConsumerTests
         ) => send(request, cancellationToken);
     }
 
-    private sealed class Logs : ILogger<AnalyticsEventConsumer>
+    private sealed class Logs : ILogger<AnalyticsEventConsumer>, ILogger<SubmittedEmailProducer>
     {
         public ConcurrentQueue<(LogLevel Level, string Text, Exception? Exception)> Entries { get; } = new();
 

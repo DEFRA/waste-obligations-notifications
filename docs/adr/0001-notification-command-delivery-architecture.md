@@ -73,7 +73,10 @@ for exact selection, mapping and empty-result behaviour.
 
 Event snapshots keep recorded notification intentions independent of a declaration’s
 continued existence, without introducing archival storage or historical API
-endpoints. The [shared reader](../../src/Consumer/Submission/SubmittedEmailProducer.cs)
+endpoints. We use a declaration API 404 as the missing-record signal, accepting that
+it cannot distinguish deletion from routing or configuration errors: the validated
+analytics snapshot is trusted evidence of the recorded action. The
+[shared reader](../../src/Consumer/Submission/SubmittedEmailProducer.cs)
 and [deletion/replay scenarios](../../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs)
 define the implemented boundary.
 

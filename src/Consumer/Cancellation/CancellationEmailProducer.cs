@@ -29,7 +29,7 @@ public sealed class CancellationEmailProducer(
         string declarationId,
         int eventVersion,
         CancellationToken cancellationToken,
-        Declaration? declarationSnapshot = null
+        Declaration? declarationSnapshot
     )
     {
         try

@@ -13,6 +13,6 @@ public interface IAnalyticsNotificationProducer
         string declarationId,
         int eventVersion,
         CancellationToken cancellationToken,
-        Declaration? declarationSnapshot = null
+        Declaration? declarationSnapshot
     );
 }

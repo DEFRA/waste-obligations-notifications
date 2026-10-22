@@ -22,6 +22,7 @@ administration supports inspection and recovery without changing business data.
 | Submitted intention and original audit | [SubmittedEmailProducer](../src/Consumer/Submission/SubmittedEmailProducer.cs), [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/SubmittedEmailSendTests.cs) |
 | Notification definitions and routing | [definition options](../src/Consumer/Notifications/NotificationDefinitionsOptions.cs), [registration](../src/Consumer/Notifications/ServiceCollectionExtensions.cs) |
 | Declaration reads and deleted-record fallback | [Waste Obligations client](../src/Consumer/Services/WasteObligations), [shared reader and validation](../src/Consumer/Submission/SubmittedEmailProducer.cs), [submission regressions](../tests/Consumer.Tests/Consumers/SubmittedEmailConsumerTests.cs), [cancellation and replay scenarios](../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs) |
+| Cancellation organisation and Account enrichment | [organisation client](../src/Consumer/Services/WasteOrganisations), [Account client](../src/Consumer/Services/AccountBackend), [cancellation producer](../src/Consumer/Cancellation/CancellationEmailProducer.cs) |
 | Analytics receive/enrichment/publication budget | [options](../src/Consumer/Consumers/AnalyticsEventConsumerOptions.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs) |
 
 Required publication must be confirmed before acknowledging its source. A valid

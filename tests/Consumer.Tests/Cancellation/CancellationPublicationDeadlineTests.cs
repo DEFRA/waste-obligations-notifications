@@ -60,7 +60,11 @@ public sealed class CancellationPublicationDeadlineTests
                     new OrganisationPerson(null, "First", "Last", "submitter@example.test", "Approved Person"),
                 ])
             );
-        var submitted = new SubmittedEmailProducer(reader, Options.Create(new NotificationDefinitionsOptions()));
+        var submitted = new SubmittedEmailProducer(
+            reader,
+            Options.Create(new NotificationDefinitionsOptions()),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<SubmittedEmailProducer>.Instance
+        );
         var cancellation = new CancellationEmailProducer(
             submitted,
             live,

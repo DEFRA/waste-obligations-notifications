@@ -9,7 +9,8 @@ namespace Defra.WasteObligations.Consumer.Submission;
 
 public sealed class SubmittedEmailProducer(
     IWasteObligationsClient reader,
-    IOptions<NotificationDefinitionsOptions> options
+    IOptions<NotificationDefinitionsOptions> options,
+    ILogger<SubmittedEmailProducer> logger
 ) : IAnalyticsNotificationProducer
 {
     public bool CanHandle(AnalyticsEvent analyticsEvent) => analyticsEvent.IsSubmission;
@@ -35,6 +36,8 @@ public sealed class SubmittedEmailProducer(
         try
         {
             var declaration = await reader.ReadDeclaration(organisationId, declarationId, cancellationToken);
+
+            var usingSnapshot = declaration is null;
             if (declaration is null)
             {
                 declaration = declarationSnapshot ?? throw new SubmissionProcessingException("declaration-not-found");
@@ -52,6 +55,12 @@ public sealed class SubmittedEmailProducer(
 
             if (declaration.Version < eventVersion)
                 throw new SubmissionProcessingException("older-declaration-version");
+
+            if (usingSnapshot)
+                logger.LogWarning(
+                    "Declaration read returned HTTP 404; selecting analytics event snapshot ({Reason})",
+                    "declaration-snapshot-fallback"
+                );
 
             return declaration;
         }
