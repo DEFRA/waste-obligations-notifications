@@ -771,8 +771,23 @@ public sealed class NotificationCommandSendTests : IDisposable
                 Assert.True(measurement.Value >= 0);
             }
         );
+        var acceptanceLatencies = events
+            .Where(measurement => measurement.Name == MetricNames.NotificationCommandNotifyAcceptanceLatency)
+            .ToArray();
+        Assert.Equal(acceptedSends, acceptanceLatencies.Length);
         Assert.All(
-            events.Where(measurement => !measurement.Name.EndsWith("Duration", StringComparison.Ordinal)),
+            acceptanceLatencies,
+            measurement =>
+            {
+                Assert.Equal("SECONDS", measurement.Unit);
+                Assert.True(measurement.Value >= 0);
+            }
+        );
+        Assert.All(
+            events.Where(measurement =>
+                !measurement.Name.EndsWith("Duration", StringComparison.Ordinal)
+                && measurement.Name != MetricNames.NotificationCommandNotifyAcceptanceLatency
+            ),
             measurement => Assert.Equal("COUNT", measurement.Unit)
         );
         Assert.All(
@@ -992,7 +1007,8 @@ public sealed class NotificationCommandSendTests : IDisposable
             metrics ?? _metricServices.GetRequiredService<INotificationCommandMetrics>(),
             logger,
             notify,
-            digest
+            digest,
+            TimeProvider.System
         );
     }
 

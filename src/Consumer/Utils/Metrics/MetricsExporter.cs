@@ -71,6 +71,7 @@ public static class MetricsExporter
                 or MetricNames.NotificationCommandNotifySendAccepted
                 or MetricNames.NotificationCommandNotifySendFailure
                 or MetricNames.NotificationCommandNotifySendDuration
+                or MetricNames.NotificationCommandNotifyAcceptanceLatency
                 or MetricNames.NotificationCommandDuplicateSuppressed;
 
     private static bool IsCommandDimension(string name, string? value) =>

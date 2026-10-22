@@ -132,6 +132,14 @@ unconfirmed attempt is not proof of rejection. Do not reconstruct historical
 failure causes from current evidence. [Administration request-log redaction](../src/Consumer/Utils/Logging/AdminRequestLogRedactor.cs)
 keeps query values out of diagnostic metadata without changing request binding.
 
+Action-to-acceptance latency uses the command's original action timestamp and the
+service clock when Notify acceptance is confirmed. It includes upstream delays
+and retries, and remains a sample even if storing acceptance subsequently fails.
+It measures acceptance, not inbox delivery; clocks across services must be aligned.
+See the [consumer](../src/Consumer/Delivery/NotificationCommandConsumer.cs) and
+[latency tests](../tests/Consumer.Tests/Delivery/NotificationCommandConsumerTests.cs)
+for sampling boundaries.
+
 ## Deployment ownership
 
 CDP owns queues/redrive, Mongo, credentials/ACLs, Notify access, metrics routing,

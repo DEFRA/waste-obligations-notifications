@@ -15,7 +15,8 @@ public sealed class NotificationCommandConsumer(
     INotificationCommandMetrics metrics,
     ILogger<NotificationCommandConsumer> logger,
     INotifyEmailClient notifyClient,
-    INotificationCommandDigest digest
+    INotificationCommandDigest digest,
+    TimeProvider timeProvider
 ) : StartupBackgroundService(startup)
 {
     protected override async Task ExecuteAfterStartup(CancellationToken stoppingToken)
@@ -237,7 +238,12 @@ public sealed class NotificationCommandConsumer(
                 preserveCompletedResult: true,
                 failureReason: NotificationCommandFailureReason.NotifyIndeterminate
             );
+            var acceptedAt = timeProvider.GetUtcNow();
+
             metrics.RecordSendAccepted(notificationType);
+            var elapsedSeconds = (acceptedAt - command.ActionOccurredAtUtc).TotalSeconds;
+            if (elapsedSeconds >= 0)
+                metrics.RecordAcceptanceLatency(notificationType, elapsedSeconds);
         }
         catch
         {

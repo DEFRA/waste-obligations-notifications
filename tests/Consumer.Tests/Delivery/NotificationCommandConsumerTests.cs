@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -29,6 +30,101 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         .BuildServiceProvider();
 
     public void Dispose() => _metricServices.Dispose();
+
+    [Theory]
+    [InlineData("accepted", 125.25)]
+    [InlineData("acceptance-store-failed", 125.25)]
+    [InlineData("notify-failed", null)]
+    [InlineData("duplicate", null)]
+    [InlineData("suppressed", null)]
+    [InlineData("future-action", null)]
+    public async Task Start_ShouldMeasureActionToConfirmedNotifyAcceptance(string scenario, double? expectedSeconds)
+    {
+        var clock = Substitute.For<TimeProvider>();
+        var startedAt = new DateTimeOffset(2026, 10, 1, 10, 2, 0, TimeSpan.Zero);
+        clock.GetUtcNow().Returns(startedAt);
+        var measurements = new List<double>();
+        var meter = _metricServices
+            .GetRequiredService<IMeterFactory>()
+            .Create(global::Defra.WasteObligations.Consumer.Utils.Metrics.Metrics.MeterName);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, owner) =>
+        {
+            if (instrument.Meter == meter && instrument.Name == MetricNames.NotificationCommandNotifyAcceptanceLatency)
+                owner.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, value, _, _) => measurements.Add(value));
+        listener.Start();
+
+        var sqs = Substitute.For<IAmazonSQS>();
+        var actionTime = scenario == "future-action" ? "2026-10-02T10:00:00Z" : "2026-10-01T10:00:00Z";
+        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(MessageThenWait(CreateMessage(CommandBody(actionTime))));
+        var store = Substitute.For<INotificationDeliveryRecordStore>();
+        store
+            .Claim(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(scenario == "duplicate" ? DeliveryClaimResult.TerminalDuplicate : DeliveryClaimResult.Claimed);
+        store
+            .RecordAcceptance(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<NotifyAcceptance>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
+            {
+                clock.GetUtcNow().Returns(startedAt.AddMinutes(1));
+
+                return scenario != "acceptance-store-failed";
+            });
+        var notify = Substitute.For<INotifyEmailClient>();
+        notify
+            .Send(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
+            {
+                clock.GetUtcNow().Returns(startedAt.AddSeconds(5.25));
+
+                return scenario == "notify-failed"
+                    ? Task.FromException<NotifyAcceptance>(new InvalidOperationException())
+                    : Task.FromResult(
+                        new NotifyAcceptance("01234567-89ab-cdef-0123-456789abcdef", "reference", "template-1", 1)
+                    );
+            });
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        using var subject = CreateSubject(
+            sqs,
+            store,
+            logger,
+            cutover: scenario == "suppressed" ? null : "2026-09-29T00:00:00Z",
+            notify: notify,
+            timeProvider: clock
+        );
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await logger
+            .WaitForMessage(
+                scenario is "acceptance-store-failed" or "notify-failed"
+                    ? "Notification command consumption failed"
+                    : "Notification command outcome",
+                TestContext.Current.CancellationToken
+            )
+            .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        if (expectedSeconds is { } expected)
+            Assert.Equal(expected, Assert.Single(measurements));
+        else
+            Assert.Empty(measurements);
+    }
 
     [Theory]
     [InlineData("2026-09-28T10:00:00")]
@@ -653,7 +749,8 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         int pollIntervalSeconds = 1,
         int receiveTimeoutSeconds = 30,
         string? cutover = "2026-09-29T00:00:00Z",
-        INotifyEmailClient? notify = null
+        INotifyEmailClient? notify = null,
+        TimeProvider? timeProvider = null
     ) =>
         new(
             sqsClient,
@@ -684,7 +781,8 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                         RecipientLaneSecret = "test-lane-secret",
                     }
                 )
-            )
+            ),
+            timeProvider ?? TimeProvider.System
         );
 
     private static ApplicationStartup CompletedReadiness()
