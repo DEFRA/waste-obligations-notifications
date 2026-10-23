@@ -13,7 +13,8 @@ public sealed record AnalyticsEvent(
     Guid? OrganisationId,
     string? BeforeStatus = null,
     string? AfterStatus = null,
-    Declaration? DeclarationSnapshot = null
+    Declaration? DeclarationSnapshot = null,
+    string? CorrelationId = null
 )
 {
     private const string SchemaPrefix = "compliance_declaration_v";
@@ -53,7 +54,8 @@ public sealed record AnalyticsEvent(
                 : null,
             Guid.TryParse(organisationId, out var id) ? id : null,
             String(Object(root, "before"), "status"),
-            String(Object(root, "after"), "status")
+            String(Object(root, "after"), "status"),
+            CorrelationId: ReadCorrelationId(root)
         );
 
         return analyticsEvent.IsSubmission || analyticsEvent.IsCancellation
@@ -62,6 +64,17 @@ public sealed record AnalyticsEvent(
                 DeclarationSnapshot = ReadDeclarationSnapshot(root),
             }
             : analyticsEvent;
+    }
+
+    private static string? ReadCorrelationId(JsonElement root)
+    {
+        var value = String(root, "correlationId");
+        if (value is null)
+            return null;
+
+        return Guid.TryParseExact(value, "D", out _) || value.Length == 32 && value.All(char.IsAsciiHexDigit)
+            ? value
+            : null;
     }
 
     private static Declaration? ReadDeclarationSnapshot(JsonElement root)

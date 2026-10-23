@@ -151,6 +151,20 @@ outcomes require confirmed source acknowledgement; publication counts include
 confirmed partial publications and replays. Counts describe attempts, not a
 conversion funnel: one event can produce zero or many commands.
 
+Analytics failure logs include their fixed reason, stage and acknowledgement state in
+one warning entry. Consumption failures in both consumers leave retry/recovery to SQS
+and do not establish a terminal failure. AWS moves exhausted messages to the DLQ
+outside these handlers; monitor the separate queue/DLQ metrics for that boundary.
+Recognised UUID or 32-character hexadecimal `correlationId` values
+from analytics events populate ECS `trace.id` for that processing attempt, including
+failure logs; missing or unrecognised values do not prevent processing. The trace
+scope ends before the next message or poll and does not change the command contract.
+
+Analytics failure metrics include a bounded `FailureReason` dimension. Historical
+stage-only metrics remain valid totals but cannot be assigned a reason retrospectively.
+Dashboard queries for totals and stages must include both dimension sets; reason
+breakdowns cover only attempts recorded with the new dimension.
+
 Use safe EventId/EntityId values in log messages and NotifyReference to investigate a case,
 then consult retained delivery evidence. Successful polling shows consumer
 activity, including empty receives; it does not prove dependency health.

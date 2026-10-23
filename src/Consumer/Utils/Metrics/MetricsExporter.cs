@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using Amazon.CloudWatch.EMF.Logger;
 using Amazon.CloudWatch.EMF.Model;
+using Defra.WasteObligations.Consumer.Consumers;
 using Defra.WasteObligations.Consumer.Delivery;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -86,6 +87,7 @@ public static class MetricsExporter
         || name == MetricTags.Consumer
             && value is NotificationJourneyValues.Consumer.Analytics or NotificationJourneyValues.Consumer.Delivery
         || name == MetricTags.Source && value == NotificationJourneyValues.Source.Analytics
+        || name == MetricTags.FailureReason && AnalyticsFailureReason.IsKnown(value)
         || name == MetricTags.Stage
             && value
                 is NotificationJourneyValues.Stage.Receive

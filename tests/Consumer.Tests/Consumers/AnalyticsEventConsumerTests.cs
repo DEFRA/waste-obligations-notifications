@@ -203,7 +203,7 @@ public class AnalyticsEventConsumerTests
     }
 
     [Fact]
-    public async Task Start_WhenMessageContentEncodingIsUnsupported_ShouldLogErrorAndNotDeleteMessage()
+    public async Task Start_WhenMessageContentEncodingIsUnsupported_ShouldWarnAndRetainMessageForRetry()
     {
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
@@ -216,13 +216,15 @@ public class AnalyticsEventConsumerTests
         await logger.WaitForMessage("Analytics event consumption failed", TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
+        Assert.Equal(LogLevel.Warning, Assert.Single(logger.Levels));
+
         await sqsClient
             .DidNotReceive()
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task Start_WhenReceivingMessageFails_ShouldLogError()
+    public async Task Start_WhenReceivingMessageFails_ShouldWarnWithoutError()
     {
         var sqsClient = Substitute.For<IAmazonSQS>();
         sqsClient
@@ -234,6 +236,8 @@ public class AnalyticsEventConsumerTests
         await subject.StartAsync(TestContext.Current.CancellationToken);
         await logger.WaitForMessage("Analytics event consumption failed", TestContext.Current.CancellationToken);
         await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(LogLevel.Warning, Assert.Single(logger.Levels));
 
         Assert.Contains(
             logger.Messages,
@@ -404,11 +408,13 @@ public class AnalyticsEventConsumerTests
     private sealed class RecordingLogger<T> : ILogger<T>
     {
         private readonly List<string> _messages = [];
+        private readonly List<LogLevel> _levels = [];
         private readonly List<Exception> _exceptions = [];
 
         public IReadOnlyList<Exception> Exceptions => _exceptions;
 
         public IReadOnlyList<string> Messages => _messages;
+        public IReadOnlyList<LogLevel> Levels => _levels;
 
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
@@ -426,6 +432,7 @@ public class AnalyticsEventConsumerTests
             lock (_messages)
             {
                 _messages.Add(formatter(state, exception));
+                _levels.Add(logLevel);
                 if (exception is not null)
                     _exceptions.Add(exception);
             }

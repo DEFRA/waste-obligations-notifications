@@ -148,7 +148,16 @@ public sealed class MetricsExporterTests
             ["AnalyticsEventProcessingDuration"] = (2.5, "Seconds", []),
             ["NotificationCommandPublished"] = (1, "Count", new() { ["Source"] = "analytics" }),
             ["NotificationProcessingFailure"] = root.TryGetProperty("Consumer", out _)
-                ? (1, "Count", new() { ["Consumer"] = "analytics", ["Stage"] = "parse" })
+                ? (
+                    1,
+                    "Count",
+                    new()
+                    {
+                        ["Consumer"] = "analytics",
+                        ["Stage"] = "parse",
+                        ["FailureReason"] = "invalid-event-data",
+                    }
+                )
                 : (9, "Count", []),
             ["NotificationConsumerPoll"] = (1, "Count", new() { ["Consumer"] = "delivery" }),
             ["NotificationDeliveryCutoverConfigured"] = (0, "None", []),
@@ -272,7 +281,7 @@ public sealed class MetricsExporterTests
         journey.RecordAnalyticsOutcome("no-notifications");
         journey.RecordAnalyticsDuration(2.5);
         journey.RecordCommandPublished("analytics");
-        journey.RecordFailure("analytics", "parse");
+        journey.RecordFailure("analytics", "parse", "invalid-event-data");
         journey.RecordPoll("delivery");
         journey.RecordCutover(false);
         foreach (
@@ -296,6 +305,7 @@ public sealed class MetricsExporterTests
                 9,
                 new KeyValuePair<string, object?>("Consumer", PrivateValue),
                 new KeyValuePair<string, object?>("Stage", PrivateValue),
+                new KeyValuePair<string, object?>("FailureReason", PrivateValue),
                 new KeyValuePair<string, object?>("Source", PrivateValue),
                 new KeyValuePair<string, object?>("EventId", PrivateValue)
             );

@@ -27,6 +27,7 @@ public sealed class AnalyticsJourneyMetricsTests
     [InlineData("no-notifications", 1, 0, "no-notifications", null)]
     [InlineData("invalid", 1, 0, null, "parse")]
     [InlineData("enrichment-failed", 1, 0, null, "read-declaration")]
+    [InlineData("unknown-cancellation-reason", 1, 0, null, "read-declaration")]
     [InlineData("publication-failed", 1, 1, null, "publish-command")]
     [InlineData("acknowledgement-failed", 1, 2, null, "acknowledge")]
     [InlineData("receive-failed", 0, 0, null, "receive")]
@@ -102,6 +103,12 @@ public sealed class AnalyticsJourneyMetricsTests
         IReadOnlyList<NotificationCommand> commands =
             scenario == "no-notifications" ? [] : [Command("first"), Command("second")];
         producer.CanHandle(Arg.Any<AnalyticsEvent>()).Returns(scenario != "ignored");
+        Exception preparationFailure =
+            scenario == "unknown-cancellation-reason"
+                ? new Defra.WasteObligations.Consumer.Submission.SubmissionProcessingException(
+                    "unknown-cancellation-reason"
+                )
+                : new InvalidOperationException("private declaration response");
         producer
             .Create(
                 Arg.Any<Guid>(),
@@ -111,10 +118,8 @@ public sealed class AnalyticsJourneyMetricsTests
                 Arg.Any<CancellationToken>()
             )
             .Returns(_ =>
-                scenario == "enrichment-failed"
-                    ? Task.FromException<IReadOnlyList<NotificationCommand>>(
-                        new InvalidOperationException("private declaration response")
-                    )
+                scenario is "enrichment-failed" or "unknown-cancellation-reason"
+                    ? Task.FromException<IReadOnlyList<NotificationCommand>>(preparationFailure)
                     : Task.FromResult(commands)
             );
         var publisher = Substitute.For<INotificationCommandPublisher>();
@@ -189,6 +194,17 @@ public sealed class AnalyticsJourneyMetricsTests
         else
         {
             var failure = Assert.Single(failures);
+            var expectedReason = scenario switch
+            {
+                "invalid" => "invalid-event-data",
+                "publication-failed" => "unconfirmed-publication",
+                "unknown-cancellation-reason" => "unknown-cancellation-reason",
+                _ => "dependency-failure",
+            };
+            Assert.Contains(
+                failure.Tags,
+                tag => tag.Key == MetricTags.FailureReason && Equals(tag.Value, expectedReason)
+            );
             Assert.Contains(failure.Tags, tag => tag.Key == MetricTags.Consumer && Equals(tag.Value, "analytics"));
             Assert.Contains(
                 failure.Tags,
@@ -213,6 +229,7 @@ public sealed class AnalyticsJourneyMetricsTests
                         is MetricTags.Service
                             or MetricTags.Consumer
                             or MetricTags.Stage
+                            or MetricTags.FailureReason
                             or MetricTags.Source
                             or MetricTags.Outcome
                 )
