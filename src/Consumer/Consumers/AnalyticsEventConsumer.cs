@@ -10,7 +10,7 @@ using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Submission;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.Options;
-using Polly.Timeout;
+using Serilog.Context;
 
 namespace Defra.WasteObligations.Consumer.Consumers;
 
@@ -89,12 +89,7 @@ public sealed class AnalyticsEventConsumer(
         }
         catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
         {
-            metrics.RecordFailure(
-                NotificationJourneyValues.Consumer.Analytics,
-                NotificationJourneyValues.Stage.Receive
-            );
-            LogFailure(exception);
-            LogRetry(exception, NotificationJourneyValues.Stage.Receive, false, null, null, null);
+            RecordFailure(exception, NotificationJourneyValues.Stage.Receive, false, null, null, null);
             throw;
         }
     }
@@ -104,6 +99,7 @@ public sealed class AnalyticsEventConsumer(
         string? eventId = null;
         string? entityId = null;
         string? messageId = null;
+        IDisposable? traceScope = null;
         var stage = NotificationJourneyValues.Stage.Parse;
         var published = false;
         var startedAt = Stopwatch.GetTimestamp();
@@ -114,6 +110,7 @@ public sealed class AnalyticsEventConsumer(
         {
             messageId = SafeTransportCorrelation(message.MessageId);
             var analyticsEvent = AnalyticsEvent.Parse(ReadBody(message));
+            traceScope = LogContext.PushProperty("TraceId", analyticsEvent.CorrelationId);
             eventId = SafeEventId(analyticsEvent.EventId) ?? OpaqueCorrelation(analyticsEvent.EventId);
             var declarationEntityId = SafeEntityId(analyticsEvent.EntityId);
             entityId = declarationEntityId ?? OpaqueCorrelation(analyticsEvent.EntityId);
@@ -185,13 +182,12 @@ public sealed class AnalyticsEventConsumer(
         }
         catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
         {
-            metrics.RecordFailure(NotificationJourneyValues.Consumer.Analytics, stage);
-            LogFailure(exception, eventId, entityId);
-            LogRetry(exception, stage, published, messageId, eventId, entityId);
+            RecordFailure(exception, stage, published, messageId, eventId, entityId);
             throw;
         }
         finally
         {
+            traceScope?.Dispose();
             metrics.RecordAnalyticsDuration(Stopwatch.GetElapsedTime(startedAt).TotalSeconds);
         }
     }
@@ -260,18 +256,7 @@ public sealed class AnalyticsEventConsumer(
             throw new TimeoutException("Analytics publication budget exhausted.");
     }
 
-    private void LogFailure(Exception exception, string? eventId = null, string? entityId = null)
-    {
-        // Dependency exception text can contain personal data.
-        logger.LogError(
-            "Analytics event consumption failed ({ExceptionType}) for event {EventId}, entity {EntityId}",
-            exception.GetType().Name,
-            eventId,
-            entityId
-        );
-    }
-
-    private void LogRetry(
+    private void RecordFailure(
         Exception exception,
         string stage,
         bool published,
@@ -280,15 +265,9 @@ public sealed class AnalyticsEventConsumer(
         string? entityId
     )
     {
-        var reason = exception switch
-        {
-            SubmissionProcessingException failure => failure.Reason,
-            TimeoutException or OperationCanceledException or TimeoutRejectedException => "dependency-timeout",
-            _ when stage == NotificationJourneyValues.Stage.PublishCommand => "unconfirmed-publication",
-            _ when stage is NotificationJourneyValues.Stage.Parse or NotificationJourneyValues.Stage.ValidateEvent =>
-                "invalid-event-data",
-            _ => "dependency-failure",
-        };
+        var reason = AnalyticsFailureReason.Classify(exception, stage);
+        metrics.RecordFailure(NotificationJourneyValues.Consumer.Analytics, stage, reason);
+
         var acknowledgementStatus = (stage, published) switch
         {
             (NotificationJourneyValues.Stage.Acknowledge, true) =>
@@ -296,13 +275,15 @@ public sealed class AnalyticsEventConsumer(
             (NotificationJourneyValues.Stage.Acknowledge, false) => "acknowledgement uncertain; possible queue retry",
             _ => "not acknowledged; left for queue retry/recovery",
         };
-        logger.LogWarning(
-            "Analytics processing at {Stage} failed ({FailureReason}) for SQS message {MessageId}, event {EventId}, entity {EntityId}: {AcknowledgementStatus}",
+        // Dependency exception text can contain personal data. Keep one self-contained, safe failure log.
+        logger.LogError(
+            "Analytics event consumption failed ({ExceptionType}) for event {EventId}, entity {EntityId} at {Stage} ({FailureReason}) for SQS message {MessageId}: {AcknowledgementStatus}",
+            exception.GetType().Name,
+            eventId,
+            entityId,
             stage,
             reason,
             messageId,
-            eventId,
-            entityId,
             acknowledgementStatus
         );
     }

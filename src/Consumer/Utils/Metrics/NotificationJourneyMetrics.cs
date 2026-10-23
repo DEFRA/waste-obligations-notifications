@@ -75,11 +75,14 @@ public sealed class NotificationJourneyMetrics : INotificationJourneyMetrics
         _published.Add(1, tags);
     }
 
-    public void RecordFailure(string consumer, string stage)
+    public void RecordFailure(string consumer, string stage, string? failureReason = null)
     {
         var tags = ServiceTags();
         tags.Add(MetricTags.Consumer, consumer);
         tags.Add(MetricTags.Stage, stage);
+
+        if (failureReason is not null)
+            tags.Add(MetricTags.FailureReason, failureReason);
 
         _failures.Add(1, tags);
     }

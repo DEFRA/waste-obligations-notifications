@@ -494,7 +494,7 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Contains(
             fixture.Logs.Entries,
             entry =>
-                entry.Level == LogLevel.Warning
+                entry.Level == LogLevel.Error
                 && entry.Text.Contains(reason, StringComparison.Ordinal)
                 && entry.Text.Contains("not acknowledged", StringComparison.Ordinal)
         );
@@ -514,7 +514,7 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Single(fixture.Reads);
         Assert.Empty(fixture.Publications);
         Assert.Equal(0, fixture.Deletions);
-        Assert.Contains(fixture.Logs.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Contains(fixture.Logs.Entries, entry => entry.Level == LogLevel.Error);
         fixture.AssertSafeLogs();
     }
 
@@ -550,7 +550,7 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Contains(
             fixture.Logs.Entries,
             entry =>
-                entry.Level == LogLevel.Warning && entry.Text.Contains("dependency-timeout", StringComparison.Ordinal)
+                entry.Level == LogLevel.Error && entry.Text.Contains("dependency-timeout", StringComparison.Ordinal)
         );
         fixture.AssertSafeLogs();
     }
@@ -578,7 +578,7 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Contains(
             fixture.Logs.Entries,
             entry =>
-                entry.Level == LogLevel.Warning
+                entry.Level == LogLevel.Error
                 && entry.Text.Contains(
                     acknowledgement
                         ? "command publication confirmed; acknowledgement uncertain"
@@ -628,7 +628,7 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Contains(
             fixture.Logs.Entries,
             entry =>
-                entry.Level == LogLevel.Warning && entry.Text.Contains("invalid-event-data", StringComparison.Ordinal)
+                entry.Level == LogLevel.Error && entry.Text.Contains("invalid-event-data", StringComparison.Ordinal)
         );
     }
 
@@ -679,7 +679,7 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Contains(
             fixture.Logs.Entries,
             entry =>
-                entry.Level == LogLevel.Warning
+                entry.Level == LogLevel.Error
                 && entry.Text.Contains("invalid-event-data", StringComparison.Ordinal)
                 && entry.Text.Contains("not acknowledged", StringComparison.Ordinal)
         );

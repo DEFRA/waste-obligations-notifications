@@ -7,5 +7,6 @@ public static class MetricTags
     public const string Outcome = nameof(Outcome);
     public const string Consumer = nameof(Consumer);
     public const string Stage = nameof(Stage);
+    public const string FailureReason = nameof(FailureReason);
     public const string Source = nameof(Source);
 }
