@@ -91,7 +91,9 @@ public sealed class NullCutoverDeliveryTests : IntegrationTestBase
                     services.GetRequiredService<INotificationCommandMetrics>(),
                     NullLogger<NotificationCommandConsumer>.Instance,
                     notify,
-                    digest
+                    digest,
+                    TimeProvider.System,
+                    services.GetRequiredService<INotificationJourneyMetrics>()
                 );
                 await consumer.StartAsync(token);
                 await sqs.SendMessageAsync(

@@ -132,6 +132,31 @@ unconfirmed attempt is not proof of rejection. Do not reconstruct historical
 failure causes from current evidence. [Administration request-log redaction](../src/Consumer/Utils/Logging/AdminRequestLogRedactor.cs)
 keeps query values out of diagnostic metadata without changing request binding.
 
+Action-to-outcome latency uses the original action timestamp and ends at confirmed
+Notify acceptance or recorded suppression, including when cutover is unset.
+The outcome dimension distinguishes those endpoints. It includes upstream delays
+and retries; acceptance remains a sample even if storing acceptance subsequently
+fails. If redelivery results in another confirmed send, it records another sample
+from the same original action timestamp. It measures acceptance, not inbox
+delivery, and clocks across services must be aligned. Suppression remains
+terminal: enabling sending later does not extend its sample.
+See the [consumer](../src/Consumer/Delivery/NotificationCommandConsumer.cs)
+and [latency tests](../tests/Consumer.Tests/Delivery/NotificationCommandConsumerTests.cs)
+for sampling boundaries. Outcome-latency telemetry failures are logged without
+blocking durable acceptance recording or acknowledgement of suppression.
+
+[Journey metrics](../src/Consumer/Utils/Metrics/NotificationJourneyMetrics.cs)
+connect analytics processing with the shared command delivery path. Analytics
+outcomes require confirmed source acknowledgement; publication counts include
+confirmed partial publications and replays. Counts describe attempts, not a
+conversion funnel: one event can produce zero or many commands.
+
+Use safe EventId/EntityId values in log messages and NotifyReference to investigate a case,
+then consult retained delivery evidence. Successful polling shows consumer
+activity, including empty receives; it does not prove dependency health.
+Check queue age and dead-letter messages alongside processing failures. Empty
+latency panels cannot establish service health.
+
 ## Deployment ownership
 
 CDP owns queues/redrive, Mongo, credentials/ACLs, Notify access, metrics routing,

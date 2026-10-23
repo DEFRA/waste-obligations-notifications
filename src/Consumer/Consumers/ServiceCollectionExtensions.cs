@@ -2,6 +2,7 @@ using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
 using Defra.WasteObligations.Consumer.Startup;
+using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Defra.WasteObligations.Consumer.Consumers;
@@ -14,6 +15,7 @@ public static class ServiceCollectionExtensions
     )
     {
         services.TryAddSingleton<ApplicationStartup>();
+        services.AddNotificationJourneyMetrics();
 
         services
             .AddOptions<AnalyticsEventConsumerOptions>()

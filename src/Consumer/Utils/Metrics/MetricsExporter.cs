@@ -71,10 +71,34 @@ public static class MetricsExporter
                 or MetricNames.NotificationCommandNotifySendAccepted
                 or MetricNames.NotificationCommandNotifySendFailure
                 or MetricNames.NotificationCommandNotifySendDuration
-                or MetricNames.NotificationCommandDuplicateSuppressed;
+                or MetricNames.NotificationCommandOutcomeLatency
+                or MetricNames.NotificationCommandDuplicateSuppressed
+                or MetricNames.AnalyticsEventReceived
+                or MetricNames.AnalyticsEventOutcome
+                or MetricNames.AnalyticsEventProcessingDuration
+                or MetricNames.NotificationCommandPublished
+                or MetricNames.NotificationProcessingFailure
+                or MetricNames.NotificationConsumerPoll
+                or MetricNames.NotificationDeliveryCutoverConfigured;
 
     private static bool IsCommandDimension(string name, string? value) =>
         name == MetricTags.NotificationType && NotificationCommandDeliveryOptions.IsDiagnosticLabel(value)
+        || name == MetricTags.Consumer
+            && value is NotificationJourneyValues.Consumer.Analytics or NotificationJourneyValues.Consumer.Delivery
+        || name == MetricTags.Source && value == NotificationJourneyValues.Source.Analytics
+        || name == MetricTags.Stage
+            && value
+                is NotificationJourneyValues.Stage.Receive
+                    or NotificationJourneyValues.Stage.Parse
+                    or NotificationJourneyValues.Stage.ValidateEvent
+                    or NotificationJourneyValues.Stage.ReadDeclaration
+                    or NotificationJourneyValues.Stage.PublishCommand
+                    or NotificationJourneyValues.Stage.Acknowledge
+                    or NotificationJourneyValues.Stage.Suppression
+                    or NotificationJourneyValues.Stage.Claim
+                    or NotificationJourneyValues.Stage.Send
+                    or NotificationJourneyValues.Stage.RecordAcceptance
+                    or NotificationJourneyValues.Stage.ProcessingBudget
         || name == MetricTags.Outcome
             && value
                 is NotificationDeliveryClassifications.DeliveryAccepted
@@ -85,5 +109,8 @@ public static class MetricsExporter
                     or "conflict"
                     or NotificationDeliveryClassifications.ActiveClaim
                     or "unavailable"
-                    or "failure";
+                    or "failure"
+                    or NotificationJourneyValues.Outcome.Ignored
+                    or NotificationJourneyValues.Outcome.NoNotifications
+                    or NotificationJourneyValues.Outcome.CommandsPublished;
 }

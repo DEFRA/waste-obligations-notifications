@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -29,6 +30,175 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         .BuildServiceProvider();
 
     public void Dispose() => _metricServices.Dispose();
+
+    [Theory]
+    [InlineData("accepted", "delivery-accepted", 125.25)]
+    [InlineData("accepted-metric-failed", "delivery-accepted", 125.25)]
+    [InlineData("acceptance-store-failed", "delivery-accepted", 125.25)]
+    [InlineData("notify-failed", null, null)]
+    [InlineData("duplicate", null, null)]
+    [InlineData("suppressed", "delivery-suppressed", 127.5)]
+    [InlineData("suppressed-metric-failed", "delivery-suppressed", 127.5)]
+    [InlineData("before-cutover", "delivery-suppressed", 127.5)]
+    [InlineData("suppressed-duplicate", null, null)]
+    [InlineData("suppressed-failed", null, null)]
+    [InlineData("suppressed-conflict", null, null)]
+    [InlineData("suppressed-active-claim", null, null)]
+    [InlineData("suppressed-future-action", null, null)]
+    [InlineData("future-action", null, null)]
+    public async Task Start_ShouldMeasureActionToSuppressionOrConfirmedNotifyAcceptance(
+        string scenario,
+        string? expectedOutcome,
+        double? expectedOutcomeSeconds
+    )
+    {
+        var clock = Substitute.For<TimeProvider>();
+        var startedAt = new DateTimeOffset(2026, 10, 1, 10, 2, 0, TimeSpan.Zero);
+        clock.GetUtcNow().Returns(startedAt);
+        var measurements = new List<(string Name, double Value, string? Outcome)>();
+        var meter = _metricServices
+            .GetRequiredService<IMeterFactory>()
+            .Create(global::Defra.WasteObligations.Consumer.Utils.Metrics.Metrics.MeterName);
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, owner) =>
+        {
+            if (instrument.Meter == meter && instrument.Name == MetricNames.NotificationCommandOutcomeLatency)
+                owner.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>(
+            (instrument, value, tags, _) =>
+            {
+                measurements.Add(
+                    (
+                        instrument.Name,
+                        value,
+                        tags.ToArray().SingleOrDefault(tag => tag.Key == MetricTags.Outcome).Value as string
+                    )
+                );
+                if (scenario.EndsWith("metric-failed", StringComparison.Ordinal))
+                    throw new InvalidOperationException("private telemetry detail");
+            }
+        );
+        listener.Start();
+
+        var sqs = Substitute.For<IAmazonSQS>();
+        var actionTime = scenario.EndsWith("future-action", StringComparison.Ordinal)
+            ? "2026-10-02T10:00:00Z"
+            : "2026-10-01T10:00:00Z";
+        var receivedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var receive = MessageThenWait(CreateMessage(CommandBody(actionTime)));
+        var receives = 0;
+        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                if (Interlocked.Increment(ref receives) > 1)
+                    receivedAgain.TrySetResult();
+
+                return receive(call);
+            });
+        var store = Substitute.For<INotificationDeliveryRecordStore>();
+        store
+            .RecordSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
+            {
+                clock.GetUtcNow().Returns(startedAt.AddSeconds(7.5));
+
+                return scenario switch
+                {
+                    "suppressed-duplicate" => Task.FromResult(SuppressionClaimResult.TerminalDuplicate),
+                    "suppressed-conflict" => Task.FromResult(SuppressionClaimResult.Conflict),
+                    "suppressed-active-claim" => Task.FromResult(SuppressionClaimResult.ActiveClaim),
+                    "suppressed-failed" => Task.FromException<SuppressionClaimResult>(new InvalidOperationException()),
+                    _ => Task.FromResult(SuppressionClaimResult.Recorded),
+                };
+            });
+        store
+            .Claim(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(scenario == "duplicate" ? DeliveryClaimResult.TerminalDuplicate : DeliveryClaimResult.Claimed);
+        store
+            .RecordAcceptance(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<NotifyAcceptance>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
+            {
+                clock.GetUtcNow().Returns(startedAt.AddMinutes(1));
+
+                return scenario != "acceptance-store-failed";
+            });
+        var notify = Substitute.For<INotifyEmailClient>();
+        notify
+            .Send(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
+            {
+                clock.GetUtcNow().Returns(startedAt.AddSeconds(5.25));
+
+                return scenario == "notify-failed"
+                    ? Task.FromException<NotifyAcceptance>(new InvalidOperationException())
+                    : Task.FromResult(
+                        new NotifyAcceptance("01234567-89ab-cdef-0123-456789abcdef", "reference", "template-1", 1)
+                    );
+            });
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        var cutover = scenario switch
+        {
+            _ when scenario.StartsWith("suppressed", StringComparison.Ordinal) => null,
+            "before-cutover" => "2026-10-02T00:00:00Z",
+            _ => "2026-09-29T00:00:00Z",
+        };
+        using var subject = CreateSubject(sqs, store, logger, cutover: cutover, notify: notify, timeProvider: clock);
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        await receivedAgain.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await subject.StopAsync(TestContext.Current.CancellationToken);
+
+        if (scenario.EndsWith("metric-failed", StringComparison.Ordinal))
+        {
+            await sqs.Received(1).DeleteMessageAsync(QueueUrl, ReceiptHandle, Arg.Any<CancellationToken>());
+            if (scenario == "accepted-metric-failed")
+            {
+                await store
+                    .Received(1)
+                    .RecordAcceptance(
+                        Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                        Arg.Any<string>(),
+                        Arg.Any<NotifyAcceptance>(),
+                        Arg.Any<CancellationToken>()
+                    );
+            }
+            Assert.DoesNotContain(
+                logger.Messages,
+                message => message.Contains("private telemetry detail", StringComparison.Ordinal)
+            );
+            Assert.Empty(logger.Exceptions);
+        }
+
+        var outcomeMeasurements = measurements
+            .Where(value => value.Name == MetricNames.NotificationCommandOutcomeLatency)
+            .ToArray();
+        if (expectedOutcomeSeconds is { } expectedLatency)
+        {
+            var measurement = Assert.Single(outcomeMeasurements);
+            Assert.Equal(expectedLatency, measurement.Value);
+            Assert.Equal(expectedOutcome, measurement.Outcome);
+        }
+        else
+            Assert.Empty(outcomeMeasurements);
+    }
 
     [Theory]
     [InlineData("2026-09-28T10:00:00")]
@@ -653,7 +823,8 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         int pollIntervalSeconds = 1,
         int receiveTimeoutSeconds = 30,
         string? cutover = "2026-09-29T00:00:00Z",
-        INotifyEmailClient? notify = null
+        INotifyEmailClient? notify = null,
+        TimeProvider? timeProvider = null
     ) =>
         new(
             sqsClient,
@@ -684,7 +855,9 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                         RecipientLaneSecret = "test-lane-secret",
                     }
                 )
-            )
+            ),
+            timeProvider ?? TimeProvider.System,
+            _metricServices.GetRequiredService<INotificationJourneyMetrics>()
         );
 
     private static ApplicationStartup CompletedReadiness()

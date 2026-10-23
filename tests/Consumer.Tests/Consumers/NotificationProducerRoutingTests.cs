@@ -96,7 +96,8 @@ public sealed class NotificationProducerRoutingTests
             startup,
             producers,
             publisher,
-            digest
+            digest,
+            Substitute.For<Defra.WasteObligations.Consumer.Utils.Metrics.INotificationJourneyMetrics>()
         );
 
         await consumer.StartAsync(TestContext.Current.CancellationToken);

@@ -586,6 +586,13 @@ public sealed class SubmittedEmailConsumerTests
                     StringComparison.Ordinal
                 )
         );
+        Assert.DoesNotContain(
+            fixture.Logs.Entries,
+            entry => entry.Text.StartsWith("Consumed analytics event", StringComparison.Ordinal)
+        );
+        var failure = Assert.Single(fixture.Logs.Entries, entry => entry.Level == LogLevel.Error);
+        Assert.Contains("event 01JZ8RXBMTY2K15SJB3PCFN3D5", failure.Text, StringComparison.Ordinal);
+        Assert.Contains($"entity cdec_{DeclarationId}", failure.Text, StringComparison.Ordinal);
         fixture.AssertSafeLogs();
     }
 
@@ -843,7 +850,8 @@ public sealed class SubmittedEmailConsumerTests
                     ),
                 ],
                 _publisher,
-                Digest
+                Digest,
+                Substitute.For<Defra.WasteObligations.Consumer.Utils.Metrics.INotificationJourneyMetrics>()
             );
             await consumer.StartAsync(TestContext.Current.CancellationToken);
             await complete.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
