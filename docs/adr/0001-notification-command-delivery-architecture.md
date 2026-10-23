@@ -71,6 +71,15 @@ alternate send mechanism; live contacts are re-evaluated on retry. See
 [service entry points](../service-behaviour.md#cancellation-production) and tests
 for exact selection, mapping and empty-result behaviour.
 
+Event snapshots keep recorded notification intentions independent of a declaration’s
+continued existence, without introducing archival storage or historical API
+endpoints. We use a declaration API 404 as the missing-record signal, accepting that
+it cannot distinguish deletion from routing or configuration errors: the validated
+analytics snapshot is trusted evidence of the recorded action. The
+[shared reader](../../src/Consumer/Submission/SubmittedEmailProducer.cs)
+and [deletion/replay scenarios](../../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs)
+define the implemented boundary.
+
 This shared prefix establishes first-publication precedence on every host, without
 a global sequencer or ordering across declarations. Publication confirmation does
 not inspect Mongo immutable conflicts or prove Notify acceptance. Different

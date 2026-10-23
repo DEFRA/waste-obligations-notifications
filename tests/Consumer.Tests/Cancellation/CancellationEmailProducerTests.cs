@@ -571,7 +571,11 @@ public sealed class CancellationEmailProducerTests
             Live.Read(OrganisationId, Arg.Any<CancellationToken>())
                 .Returns(new LiveOrganisation(OrganisationId, country, "AB123456"));
             Accounts.ReadOrganisationWithPersons(OrganisationId, Arg.Any<CancellationToken>()).Returns(_ => Persons);
-            Submitted = new SubmittedEmailProducer(Reader, Options.Create(new NotificationDefinitionsOptions()));
+            Submitted = new SubmittedEmailProducer(
+                Reader,
+                Options.Create(new NotificationDefinitionsOptions()),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<SubmittedEmailProducer>.Instance
+            );
             _producer = new CancellationEmailProducer(
                 Submitted,
                 Live,
@@ -607,6 +611,6 @@ public sealed class CancellationEmailProducerTests
             new(SubmitterId, " First ", " Last ", "SUBMITTER@example.test", "Other");
 
         public Task<IReadOnlyList<Defra.WasteObligations.Consumer.Commands.NotificationCommand>> Create() =>
-            _producer.Create(OrganisationId, DeclarationId, 2, TestContext.Current.CancellationToken);
+            _producer.Create(OrganisationId, DeclarationId, 2, null, TestContext.Current.CancellationToken);
     }
 }

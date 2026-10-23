@@ -100,6 +100,77 @@ public sealed class CancellationEmailSendTests : IntegrationTestBase
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenDeclarationIsDeleted_ShouldPreserveSubmissionPredecessorAndSuppressReplay(
+        bool submissionFirst
+    )
+    {
+        await using var fixture = await CancellationEmailFixture.Create();
+        if (submissionFirst)
+        {
+            await fixture.SendAnalytics(
+                after: "Submitted",
+                eventType: "submission.created",
+                includeDeclarationSnapshot: true,
+                version: 1
+            );
+            await WaitForAsync(async () => Assert.Single(await fixture.NotifyRequests()));
+        }
+        fixture.State.ReadStatus = 404;
+
+        await fixture.SendAnalytics(includeDeclarationSnapshot: true);
+        await WaitForAsync(async () =>
+        {
+            Assert.Equal(submissionFirst ? 2 : 1, fixture.Sqs.AnalyticsDeletions);
+            Assert.Equal(3, (await fixture.NotifyRequests()).Length);
+            await fixture.AssertAcceptedRecords(3);
+            await fixture.AssertQueuesEmpty();
+        });
+
+        var commands = fixture.Sqs.Confirmed.ToArray();
+        var prefix = submissionFirst ? 1 : 0;
+        Assert.StartsWith("declaration-submitted-", commands[prefix].NotificationType);
+        Assert.All(
+            commands.Skip(prefix + 1),
+            command => Assert.StartsWith("declaration-cancelled-", command.NotificationType)
+        );
+        if (submissionFirst)
+            Assert.Equal(
+                System.Text.Json.JsonSerializer.Serialize(commands[0]),
+                System.Text.Json.JsonSerializer.Serialize(commands[1])
+            );
+
+        var deletions = fixture.Sqs.CommandDeletions;
+        await fixture.SendPublishedReplay(commands[prefix]);
+        await WaitForAsync(async () =>
+        {
+            Assert.Equal(deletions + 1, fixture.Sqs.CommandDeletions);
+            await fixture.AssertQueuesEmpty();
+        });
+        Assert.Equal(3, (await fixture.NotifyRequests()).Length);
+
+        await fixture.SendAnalytics(
+            after: "Submitted",
+            eventType: "submission.created",
+            includeDeclarationSnapshot: true,
+            version: 1
+        );
+        await WaitForAsync(async () =>
+        {
+            Assert.Equal(submissionFirst ? 3 : 2, fixture.Sqs.AnalyticsDeletions);
+            await fixture.AssertQueuesEmpty();
+        });
+
+        Assert.Equal(
+            System.Text.Json.JsonSerializer.Serialize(commands[prefix]),
+            System.Text.Json.JsonSerializer.Serialize(fixture.Sqs.Confirmed.Last())
+        );
+        Assert.Equal(3, (await fixture.NotifyRequests()).Length);
+        await fixture.AssertAcceptedRecords(3);
+    }
+
+    [Theory]
     [InlineData("no-persons")]
     [InlineData("outside-transition")]
     public async Task WhenNoCancellationIsDue_ShouldAcknowledgeWithoutAnyPublication(string scenario)

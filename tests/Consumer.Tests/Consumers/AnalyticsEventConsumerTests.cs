@@ -263,12 +263,14 @@ public class AnalyticsEventConsumerTests
             [
                 new SubmittedEmailProducer(
                     Substitute.For<IWasteObligationsClient>(),
-                    Options.Create(new NotificationDefinitionsOptions())
+                    Options.Create(new NotificationDefinitionsOptions()),
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<SubmittedEmailProducer>.Instance
                 ),
                 new CancellationEmailProducer(
                     new SubmittedEmailProducer(
                         Substitute.For<IWasteObligationsClient>(),
-                        Options.Create(new NotificationDefinitionsOptions())
+                        Options.Create(new NotificationDefinitionsOptions()),
+                        Microsoft.Extensions.Logging.Abstractions.NullLogger<SubmittedEmailProducer>.Instance
                     ),
                     Substitute.For<IWasteOrganisationsClient>(),
                     Substitute.For<IAccountBackendClient>(),

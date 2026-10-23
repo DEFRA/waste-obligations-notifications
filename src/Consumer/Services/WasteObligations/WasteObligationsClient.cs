@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Defra.WasteObligations.Consumer.Services.Http;
 using Microsoft.Extensions.Options;
 
@@ -21,7 +22,8 @@ public sealed class WasteObligationsClient(HttpClient client, IOptions<WasteObli
 
         response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadFromJsonAsync<Declaration>(cancellationToken);
+        return await response.Content.ReadFromJsonAsync<Declaration>(cancellationToken)
+            ?? throw new JsonException("Declaration response is missing.");
     }
 
     public async Task CheckHealth(CancellationToken cancellationToken)

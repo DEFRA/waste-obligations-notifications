@@ -126,7 +126,14 @@ public sealed class AnalyticsEventConsumer(
                 stage = "read-declaration";
 #pragma warning restore S1854
                 var commands = await RunBounded<IReadOnlyList<NotificationCommand>>(
-                    token => producer.Create(organisationId, id[5..].ToLowerInvariant(), version, token),
+                    token =>
+                        producer.Create(
+                            organisationId,
+                            id[5..].ToLowerInvariant(),
+                            version,
+                            analyticsEvent.DeclarationSnapshot,
+                            token
+                        ),
                     options.Value.ReadTimeoutSeconds,
                     stoppingToken
                 );

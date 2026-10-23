@@ -1,5 +1,6 @@
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Consumers;
+using Defra.WasteObligations.Consumer.Services.WasteObligations;
 
 namespace Defra.WasteObligations.Consumer.Notifications;
 
@@ -11,6 +12,7 @@ public interface IAnalyticsNotificationProducer
         Guid organisationId,
         string declarationId,
         int eventVersion,
+        Declaration? declarationSnapshot,
         CancellationToken cancellationToken
     );
 }

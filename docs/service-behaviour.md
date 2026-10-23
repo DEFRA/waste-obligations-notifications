@@ -21,7 +21,8 @@ administration supports inspection and recovery without changing business data.
 | Analytics parsing and scope | [AnalyticsEvent](../src/Consumer/Consumers/AnalyticsEvent.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs), [scope tests](../tests/Consumer.Tests/Cancellation/AnalyticsEventCancellationScopeTests.cs) |
 | Submitted intention and original audit | [SubmittedEmailProducer](../src/Consumer/Submission/SubmittedEmailProducer.cs), [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/SubmittedEmailSendTests.cs) |
 | Notification definitions and routing | [definition options](../src/Consumer/Notifications/NotificationDefinitionsOptions.cs), [registration](../src/Consumer/Notifications/ServiceCollectionExtensions.cs) |
-| Declaration boundary | [Waste Obligations client](../src/Consumer/Services/WasteObligations), [DTOs and version validation](../src/Consumer/Submission/SubmittedEmailProducer.cs) |
+| Declaration reads and deleted-record fallback | [Waste Obligations client](../src/Consumer/Services/WasteObligations), [shared reader and validation](../src/Consumer/Submission/SubmittedEmailProducer.cs), [submission regressions](../tests/Consumer.Tests/Consumers/SubmittedEmailConsumerTests.cs), [cancellation and replay scenarios](../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs) |
+| Cancellation organisation and Account enrichment | [organisation client](../src/Consumer/Services/WasteOrganisations), [Account client](../src/Consumer/Services/AccountBackend), [cancellation producer](../src/Consumer/Cancellation/CancellationEmailProducer.cs) |
 | Analytics receive/enrichment/publication budget | [options](../src/Consumer/Consumers/AnalyticsEventConsumerOptions.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs) |
 
 Required publication must be confirmed before acknowledging its source. A valid
@@ -42,9 +43,8 @@ owns bilingual wording and personalisation. Review
 and [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs)
 for exact cases rather than maintaining a second mapping table here.
 
-Cancellation uses an authorised declaration read plus live organisation/Account
-reads. Actual cancellation intentions are preceded by confirmed publication of
-the original Submitted intention on every attempt. Empty results publish neither.
+Actual cancellation intentions are preceded by confirmed publication of the
+original Submitted intention on every attempt. Empty results publish neither.
 Unrecognised cancellation reasons leave the analytics message for retry and dead-lettering.
 No eligible recipient or unresolved compliance scheme remains an acknowledged no-send
 outcome, logged with a fixed reason code and no recipient data.

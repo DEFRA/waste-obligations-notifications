@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Cancellation;
@@ -299,6 +300,136 @@ public sealed class SubmittedEmailConsumerTests
         Assert.Equal(new DateTimeOffset(2026, 9, 20, 11, 12, 13, TimeSpan.Zero), command.ActionOccurredAtUtc);
         Assert.Equal(1, fixture.Deletions);
         fixture.AssertSafeLogs();
+    }
+
+    [Fact]
+    public async Task WhenDeclarationIsDeleted_ShouldPublishSameSubmissionFromEventSnapshot()
+    {
+        using var existing = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
+        await existing.Run([Event("01JZ8RXBMTY2K15SJB3PCFN3D5")]);
+        using var deleted = new Fixture((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
+        var analyticsEvent = JsonNode.Parse(Event("01JZ8RXBMTY2K15SJB3PCFN3D5"))!;
+        analyticsEvent["after"] = JsonNode.Parse(Declaration());
+
+        await deleted.Run([analyticsEvent.ToJsonString()]);
+
+        Assert.Equal(Assert.Single(existing.Publications).MessageBody, Assert.Single(deleted.Publications).MessageBody);
+        Assert.Equal(1, deleted.Deletions);
+        Assert.Single(deleted.Reads);
+        Assert.Single(
+            deleted.Logs.Entries,
+            entry =>
+                entry.Level == LogLevel.Warning
+                && entry.Text.Contains("declaration-snapshot-fallback", StringComparison.Ordinal)
+        );
+        Assert.DoesNotContain(
+            existing.Logs.Entries,
+            entry => entry.Text.Contains("declaration-snapshot-fallback", StringComparison.Ordinal)
+        );
+        deleted.AssertSafeLogs();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenLiveDeclarationExists_ShouldRemainAuthoritative(bool malformedSnapshot)
+    {
+        var snapshot = JsonNode.Parse(Declaration())!;
+        snapshot["audit"]![0]!["user"]!["email"] = "snapshot@example.test";
+        if (malformedSnapshot)
+            snapshot["version"] = "invalid";
+        var analyticsEvent = JsonNode.Parse(Event("01JZ8RXBMTY2K15SJB3PCFN3D5"))!;
+        analyticsEvent["after"] = snapshot;
+        using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
+
+        await fixture.Run([analyticsEvent.ToJsonString()]);
+
+        var command = JsonSerializer.Deserialize<NotificationCommand>(
+            Assert.Single(fixture.Publications).MessageBody,
+            s_webOptions
+        )!;
+        Assert.Equal("original-private@example.test", command.EmailAddress);
+        Assert.Equal(1, fixture.Deletions);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{")]
+    public async Task WhenSuccessfulReadIsMalformed_ShouldNotUseSnapshot(string response)
+    {
+        var analyticsEvent = JsonNode.Parse(Event("01JZ8RXBMTY2K15SJB3PCFN3D5"))!;
+        analyticsEvent["after"] = JsonNode.Parse(Declaration());
+        using var fixture = new Fixture((_, _) => Task.FromResult(Response(response)));
+
+        await fixture.Run([analyticsEvent.ToJsonString()]);
+
+        Assert.Empty(fixture.Publications);
+        Assert.Equal(0, fixture.Deletions);
+    }
+
+    [Theory]
+    [InlineData("identity")]
+    [InlineData("organisation")]
+    [InlineData("older-version")]
+    [InlineData("newer-version")]
+    [InlineData("malformed-version")]
+    [InlineData("audit")]
+    [InlineData("user")]
+    [InlineData("timestamp")]
+    public async Task WhenDeletedDeclarationSnapshotIsUnusable_ShouldRetainWithoutPublication(string fault)
+    {
+        var snapshot = JsonNode.Parse(Declaration())!;
+        switch (fault)
+        {
+            case "identity":
+                snapshot["id"] = "65f1f6570bb08052a8a27b02";
+                break;
+            case "organisation":
+                snapshot["organisation"]!["id"] = "not-a-guid";
+                break;
+            case "older-version":
+                snapshot["version"] = 0;
+                break;
+            case "newer-version":
+                snapshot["version"] = 2;
+                break;
+            case "malformed-version":
+                snapshot["version"] = "one";
+                break;
+            case "audit":
+                snapshot["audit"] = new JsonArray();
+                break;
+            case "user":
+                snapshot["audit"]![0]!["user"]!["email"] = "";
+                break;
+            case "timestamp":
+                snapshot["audit"]![0]!["timestamp"] = "not-a-timestamp";
+                break;
+        }
+        var analyticsEvent = JsonNode.Parse(Event("01JZ8RXBMTY2K15SJB3PCFN3D5"))!;
+        analyticsEvent["after"] = snapshot;
+        using var fixture = new Fixture((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
+
+        await fixture.Run([analyticsEvent.ToJsonString()]);
+
+        Assert.Empty(fixture.Publications);
+        Assert.Equal(0, fixture.Deletions);
+        fixture.AssertSafeLogs();
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task WhenReadFailsWithUsableSnapshot_ShouldNotFallBack(HttpStatusCode status)
+    {
+        var analyticsEvent = JsonNode.Parse(Event("01JZ8RXBMTY2K15SJB3PCFN3D5"))!;
+        analyticsEvent["after"] = JsonNode.Parse(Declaration());
+        using var fixture = new Fixture((_, _) => Task.FromResult(new HttpResponseMessage(status)));
+
+        await fixture.Run([analyticsEvent.ToJsonString()]);
+
+        Assert.Empty(fixture.Publications);
+        Assert.Equal(0, fixture.Deletions);
     }
 
     [Theory]
@@ -622,7 +753,8 @@ public sealed class SubmittedEmailConsumerTests
                     _http,
                     Options.Create(new WasteObligationsOptions { Username = "test-client", Password = "test-secret" })
                 ),
-                submission
+                submission,
+                Logs
             );
             var delivery = Options.Create(
                 new NotificationCommandDeliveryOptions
@@ -749,7 +881,7 @@ public sealed class SubmittedEmailConsumerTests
         ) => send(request, cancellationToken);
     }
 
-    private sealed class Logs : ILogger<AnalyticsEventConsumer>
+    private sealed class Logs : ILogger<AnalyticsEventConsumer>, ILogger<SubmittedEmailProducer>
     {
         public ConcurrentQueue<(LogLevel Level, string Text, Exception? Exception)> Entries { get; } = new();
 

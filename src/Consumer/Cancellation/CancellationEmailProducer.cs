@@ -28,12 +28,19 @@ public sealed class CancellationEmailProducer(
         Guid organisationId,
         string declarationId,
         int eventVersion,
+        Declaration? declarationSnapshot,
         CancellationToken cancellationToken
     )
     {
         try
         {
-            var declaration = await submitted.Read(organisationId, declarationId, eventVersion, cancellationToken);
+            var declaration = await submitted.Read(
+                organisationId,
+                declarationId,
+                eventVersion,
+                cancellationToken,
+                declarationSnapshot
+            );
             var (family, actionTime) = ReadCancellation(declaration);
 
             var live =
