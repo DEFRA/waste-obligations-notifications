@@ -276,7 +276,7 @@ public sealed class AnalyticsEventConsumer(
             _ => "not acknowledged; left for queue retry/recovery",
         };
         // Dependency exception text can contain personal data. Keep one self-contained, safe failure log.
-        logger.LogError(
+        logger.LogWarning(
             "Analytics event consumption failed ({ExceptionType}) for event {EventId}, entity {EntityId} at {Stage} ({FailureReason}) for SQS message {MessageId}: {AcknowledgementStatus}",
             exception.GetType().Name,
             eventId,

@@ -77,10 +77,10 @@ public sealed class NotificationCommandConsumer(
 
     private void LogFailure(Exception exception, string? messageId, string? notificationType, string? reference)
     {
-        if (!logger.IsEnabled(LogLevel.Error))
+        if (!logger.IsEnabled(LogLevel.Warning))
             return;
         var failure = exception as NotificationCommandProcessingException;
-        logger.LogError(
+        logger.LogWarning(
             "Notification command consumption failed for {NotificationType} from SQS message {MessageId} with Notify reference {NotifyReference}: {FailureReason} ({ExceptionType})",
             notificationType,
             messageId,

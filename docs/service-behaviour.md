@@ -152,7 +152,10 @@ confirmed partial publications and replays. Counts describe attempts, not a
 conversion funnel: one event can produce zero or many commands.
 
 Analytics failure logs include their fixed reason, stage and acknowledgement state in
-one error entry. Recognised UUID or 32-character hexadecimal `correlationId` values
+one warning entry. Consumption failures in both consumers leave retry/recovery to SQS
+and do not establish a terminal failure. AWS moves exhausted messages to the DLQ
+outside these handlers; monitor the separate queue/DLQ metrics for that boundary.
+Recognised UUID or 32-character hexadecimal `correlationId` values
 from analytics events populate ECS `trace.id` for that processing attempt, including
 failure logs; missing or unrecognised values do not prevent processing. The trace
 scope ends before the next message or poll and does not change the command contract.

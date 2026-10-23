@@ -26,7 +26,7 @@ public sealed class AnalyticsTraceCorrelationTests
     [InlineData("null", null)]
     [InlineData("42", null)]
     [InlineData("\"private-recipient@example.invalid\"", null)]
-    public async Task WhenCorrelatedEventFails_ShouldWriteEcsTraceAndClearItBeforeNextMessage(
+    public async Task WhenCorrelatedEventWillRetry_ShouldWarnWithEcsTraceAndClearItBeforeNextMessage(
         string correlationJson,
         string? expectedTrace
     )
@@ -100,12 +100,12 @@ public sealed class AnalyticsTraceCorrelationTests
             await consumer.StopAsync(TestContext.Current.CancellationToken);
         }
 
-        var failure = Assert.Single(capture.Events, entry => entry.Level == LogEventLevel.Error);
+        var failure = Assert.Single(capture.Events, entry => entry.Level == LogEventLevel.Warning);
         Assert.Null(failure.Exception);
         Assert.Equal("dependency-failure", ((ScalarValue)failure.Properties["FailureReason"]).Value);
         Assert.Equal("acknowledge", ((ScalarValue)failure.Properties["Stage"]).Value);
         Assert.Contains("acknowledgement uncertain", failure.RenderMessage(), StringComparison.Ordinal);
-        Assert.DoesNotContain(capture.Events, entry => entry.Level == LogEventLevel.Warning);
+        Assert.DoesNotContain(capture.Events, entry => entry.Level >= LogEventLevel.Error);
         AssertTrace(failure, expectedTrace);
         var success = Assert.Single(
             capture.Events,
