@@ -93,7 +93,7 @@ services:
       start_period: 5s
 
   submission-wiremock:
-    image: sheyenrath/wiremock.net:latest@sha256:3d31cf7a0b5ad8062c9ae1ba36e2355f4b034102bd980217d5003da5effd0e10
+    image: sheyenrath/wiremock.net:latest@sha256:6d2fe73bbd9cf2273e9e463f46b306bfebb941e1a8420615b921a0951f6d6c41
     ports:
       - '8087:80'
       - '8088:8085'
