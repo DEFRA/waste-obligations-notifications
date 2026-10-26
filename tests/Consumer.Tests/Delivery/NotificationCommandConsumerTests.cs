@@ -436,7 +436,7 @@ public sealed class NotificationCommandConsumerTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Start_WhenReceiveOrProcessingFails_ShouldBackOffBeforeReceivingAgain(bool receiveFails)
+    public async Task Start_WhenReceiveOrProcessingFails_ShouldWarnAndBackOffBeforeRetry(bool receiveFails)
     {
         var receivedAgain = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sqsClient = Substitute.For<IAmazonSQS>();
@@ -472,6 +472,7 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         await subject.StopAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(logger.Messages);
+        Assert.Equal(LogLevel.Warning, Assert.Single(logger.Levels));
         await sqsClient
             .DidNotReceive()
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -954,9 +955,11 @@ public sealed class NotificationCommandConsumerTests : IDisposable
     private sealed class RecordingLogger<T> : ILogger<T>
     {
         private readonly List<string> _messages = [];
+        private readonly List<LogLevel> _levels = [];
         private readonly List<Exception> _exceptions = [];
 
         public IReadOnlyList<string> Messages => _messages;
+        public IReadOnlyList<LogLevel> Levels => _levels;
         public IReadOnlyList<Exception> Exceptions => _exceptions;
 
         public IDisposable? BeginScope<TState>(TState state)
@@ -975,6 +978,7 @@ public sealed class NotificationCommandConsumerTests : IDisposable
             lock (_messages)
             {
                 _messages.Add(formatter(state, exception));
+                _levels.Add(logLevel);
                 if (exception is not null)
                     _exceptions.Add(exception);
             }

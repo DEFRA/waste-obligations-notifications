@@ -184,7 +184,7 @@ public sealed class NotificationCommandSendTests : IDisposable
         var logger = new RecordingLogger();
         using var consumer = Consumer(sqs, store, notify, logger);
 
-        await RunUntilFailure(consumer, logger);
+        await RunUntilRetryWarning(consumer, logger);
 
         var reason = claim switch
         {
@@ -206,7 +206,7 @@ public sealed class NotificationCommandSendTests : IDisposable
     [InlineData("send")]
     [InlineData("persistence")]
     [InlineData("ownership")]
-    public async Task WhenSendOrAcceptanceFails_ShouldLeaveMessageAndSanitizeDependencyErrors(string failure)
+    public async Task WhenSendOrAcceptanceFails_ShouldWarnAndLeaveMessageWithSafeDependencyDetails(string failure)
     {
         var sqs = Sqs();
         var store = Store();
@@ -236,7 +236,7 @@ public sealed class NotificationCommandSendTests : IDisposable
         var logger = new RecordingLogger();
         using var consumer = Consumer(sqs, store, notify, logger);
 
-        await RunUntilFailure(consumer, logger);
+        await RunUntilRetryWarning(consumer, logger);
 
         var reason = failure switch
         {
@@ -264,7 +264,7 @@ public sealed class NotificationCommandSendTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WhenStoreOrUnexpectedCodeFails_ShouldLogFixedReasonAndOriginalTypeWithoutPrivateDetails(
+    public async Task WhenStoreOrUnexpectedCodeFails_ShouldWarnWithFixedReasonAndOriginalTypeWithoutPrivateDetails(
         bool storeError
     )
     {
@@ -283,7 +283,7 @@ public sealed class NotificationCommandSendTests : IDisposable
         var logger = new RecordingLogger();
         using var consumer = Consumer(sqs, store, notify, logger, metrics: metrics);
 
-        await RunUntilFailure(consumer, logger);
+        await RunUntilRetryWarning(consumer, logger);
 
         Assert.Contains(
             logger.Messages,
@@ -399,7 +399,7 @@ public sealed class NotificationCommandSendTests : IDisposable
         await consumer.StartAsync(TestContext.Current.CancellationToken);
         await sending.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         if (!shutdown)
-            await logger.Failed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            await logger.RetryWarning.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await consumer.StopAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(
@@ -421,7 +421,7 @@ public sealed class NotificationCommandSendTests : IDisposable
         if (!shutdown)
             Assert.True(duration.Value >= 900);
         Assert.True(cancelled);
-        Assert.Equal(!shutdown, logger.Failed.Task.IsCompleted);
+        Assert.Equal(!shutdown, logger.RetryWarning.Task.IsCompleted);
         await store
             .DidNotReceive()
             .RecordAcceptance(
@@ -475,7 +475,7 @@ public sealed class NotificationCommandSendTests : IDisposable
             }
         );
 
-        await RunUntilFailure(consumer, logger);
+        await RunUntilRetryWarning(consumer, logger);
 
         await notify
             .DidNotReceive()
@@ -562,7 +562,7 @@ public sealed class NotificationCommandSendTests : IDisposable
                 token
             );
             release.TrySetResult();
-            await logger.Failed.Task.WaitAsync(handshakeTimeout, token);
+            await logger.RetryWarning.Task.WaitAsync(handshakeTimeout, token);
         }
         finally
         {
@@ -653,7 +653,7 @@ public sealed class NotificationCommandSendTests : IDisposable
             }
         );
 
-        await RunUntilFailure(consumer, logger);
+        await RunUntilRetryWarning(consumer, logger);
 
         await notify.Received(1).Send(Arg.Any<NotificationCommand>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
         await sqs.DidNotReceive()
@@ -727,7 +727,7 @@ public sealed class NotificationCommandSendTests : IDisposable
         await consumer.StartAsync(TestContext.Current.CancellationToken);
         await (
             condition is "send-failed" or "acceptance-failed" or "active-claim" or "claim-failed"
-                ? logger.Failed.Task
+                ? logger.RetryWarning.Task
                 : deleted.Task
         ).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await consumer.StopAsync(TestContext.Current.CancellationToken);
@@ -880,7 +880,7 @@ public sealed class NotificationCommandSendTests : IDisposable
         using var consumer = Consumer(sqs, store, notify, logger, metrics: measurements.Instrumentation);
 
         await consumer.StartAsync(TestContext.Current.CancellationToken);
-        await (sendFails ? logger.Failed.Task : deleted.Task).WaitAsync(
+        await (sendFails ? logger.RetryWarning.Task : deleted.Task).WaitAsync(
             TimeSpan.FromSeconds(5),
             TestContext.Current.CancellationToken
         );
@@ -1064,11 +1064,13 @@ public sealed class NotificationCommandSendTests : IDisposable
 
     private sealed record Measurement(string Name, double Value, string? Unit, KeyValuePair<string, object?>[] Tags);
 
-    private static async Task RunUntilFailure(NotificationCommandConsumer consumer, RecordingLogger logger)
+    private static async Task RunUntilRetryWarning(NotificationCommandConsumer consumer, RecordingLogger logger)
     {
         await consumer.StartAsync(TestContext.Current.CancellationToken);
-        await logger.Failed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await logger.RetryWarning.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await consumer.StopAsync(TestContext.Current.CancellationToken);
+        Assert.Contains(LogLevel.Warning, logger.Levels);
+        Assert.DoesNotContain(logger.Levels, level => level >= LogLevel.Error);
     }
 
     private NotificationCommandConsumer Consumer(
@@ -1206,8 +1208,9 @@ public sealed class NotificationCommandSendTests : IDisposable
     private sealed class RecordingLogger : ILogger<NotificationCommandConsumer>
     {
         public List<string> Messages { get; } = [];
+        public List<LogLevel> Levels { get; } = [];
         public List<Exception> Exceptions { get; } = [];
-        public TaskCompletionSource Failed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource RetryWarning { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => null;
@@ -1223,10 +1226,11 @@ public sealed class NotificationCommandSendTests : IDisposable
         )
         {
             Messages.Add(formatter(state, exception));
+            Levels.Add(logLevel);
             if (exception is not null)
                 Exceptions.Add(exception);
-            if (logLevel == LogLevel.Error)
-                Failed.TrySetResult();
+            if (logLevel == LogLevel.Warning)
+                RetryWarning.TrySetResult();
         }
     }
 }

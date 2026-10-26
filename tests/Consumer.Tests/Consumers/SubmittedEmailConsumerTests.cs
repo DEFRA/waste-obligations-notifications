@@ -504,7 +504,7 @@ public sealed class SubmittedEmailConsumerTests
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.InternalServerError)]
-    public async Task WhenDeclarationServiceRejectsRead_ShouldRetainEventWithoutPublishing(HttpStatusCode status)
+    public async Task WhenDeclarationServiceRejectsRead_ShouldWarnAndRetainEventWithoutPublishing(HttpStatusCode status)
     {
         using var fixture = new Fixture(
             (_, _) => Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(UnsafeDependency) })
@@ -522,7 +522,7 @@ public sealed class SubmittedEmailConsumerTests
     [InlineData("timeout")]
     [InlineData("cancelled")]
     [InlineData("polly-timeout")]
-    public async Task WhenReadTimesOutOrDependencyCancels_ShouldBackOffAndPublishNextUsableEvent(string failure)
+    public async Task WhenReadTimesOutOrDependencyCancels_ShouldWarnBackOffAndPublishNextUsableEvent(string failure)
     {
         var count = 0;
         using var fixture = new Fixture(
@@ -558,7 +558,9 @@ public sealed class SubmittedEmailConsumerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WhenPublicationOrAcknowledgementIsUnconfirmed_ShouldReportAccurateRetryState(bool acknowledgement)
+    public async Task WhenPublicationOrAcknowledgementIsUnconfirmed_ShouldWarnWithAccurateRetryState(
+        bool acknowledgement
+    )
     {
         using var fixture = new Fixture(
             (_, _) => Task.FromResult(Response(Declaration())),
@@ -590,7 +592,7 @@ public sealed class SubmittedEmailConsumerTests
             fixture.Logs.Entries,
             entry => entry.Text.StartsWith("Consumed analytics event", StringComparison.Ordinal)
         );
-        var failure = Assert.Single(fixture.Logs.Entries, entry => entry.Level == LogLevel.Error);
+        var failure = Assert.Single(fixture.Logs.Entries, entry => entry.Level == LogLevel.Warning);
         Assert.Contains("event 01JZ8RXBMTY2K15SJB3PCFN3D5", failure.Text, StringComparison.Ordinal);
         Assert.Contains($"entity cdec_{DeclarationId}", failure.Text, StringComparison.Ordinal);
         fixture.AssertSafeLogs();
@@ -610,7 +612,7 @@ public sealed class SubmittedEmailConsumerTests
     }
 
     [Fact]
-    public async Task WhenIdentifiersContainPrivateWords_ShouldRetainEventWithoutLoggingThem()
+    public async Task WhenIdentifiersContainPrivateWords_ShouldWarnAndRetainEventWithoutLoggingThem()
     {
         const string privateIdentifier = "DISTINCTIVEPRIVATENAMEABCDE";
         using var fixture = new Fixture((_, _) => Task.FromResult(Response(Declaration())));
@@ -640,7 +642,7 @@ public sealed class SubmittedEmailConsumerTests
     [InlineData("schema", true)]
     [InlineData("version", true)]
     [InlineData("organisation", true)]
-    public async Task WhenMatchingAnalyticsEventIsInvalid_ShouldRetainWithoutReadingOrPublishing(
+    public async Task WhenMatchingAnalyticsEventIsInvalid_ShouldWarnAndRetainWithoutReadingOrPublishing(
         string fault,
         bool cancellation
     )
