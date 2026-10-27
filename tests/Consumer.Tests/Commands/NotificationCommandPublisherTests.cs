@@ -217,7 +217,20 @@ public class NotificationCommandPublisherTests
             + "}";
         var command = NotificationCommandMessageReader.Read(new Message { Body = incoming });
 
-        await publisher.Publish(command, TestContext.Current.CancellationToken);
+        Assert.Equal(expectedTrace, command.CorrelationId);
+        using var rawCorrelation = JsonDocument.Parse(correlationJson);
+        var suppliedCorrelation =
+            rawCorrelation.RootElement.ValueKind == JsonValueKind.String
+                ? rawCorrelation.RootElement.GetString()
+                : null;
+
+        await publisher.Publish(
+            original with
+            {
+                CorrelationId = suppliedCorrelation,
+            },
+            TestContext.Current.CancellationToken
+        );
         await publisher.Publish(original, TestContext.Current.CancellationToken);
 
         var requests = sqs.ReceivedCalls()

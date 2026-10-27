@@ -16,5 +16,5 @@ public sealed class TraceCorrelationJsonConverter : JsonConverter<string>
     }
 
     public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) =>
-        writer.WriteStringValue(TraceCorrelation.Read(value));
+        writer.WriteStringValue(value);
 }

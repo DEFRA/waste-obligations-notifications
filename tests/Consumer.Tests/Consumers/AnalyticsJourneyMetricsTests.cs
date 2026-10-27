@@ -252,7 +252,8 @@ public sealed class AnalyticsJourneyMetricsTests
             "declaration-submitted",
             "recipient@example.invalid",
             "01234567-89ab-cdef-0123-456789abcdef",
-            JsonSerializer.SerializeToElement(new { value = "private personalisation" })
+            JsonSerializer.SerializeToElement(new { value = "private personalisation" }),
+            CorrelationId: "59a48ed1-c28b-4126-bbc5-46b0461798b8"
         );
 
     private static string EventBody() =>

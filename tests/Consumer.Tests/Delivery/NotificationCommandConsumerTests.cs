@@ -822,6 +822,56 @@ public sealed class NotificationCommandConsumerTests : IDisposable
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task Start_WhenCutoverMetricThrows_ShouldReportReceiveFailureWithoutProcessingMessage()
+    {
+        var sqs = Substitute.For<IAmazonSQS>();
+        var retried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var receive = MessageThenWait(CreateMessage(CommandBody("2026-09-28T10:00:00Z")));
+        var receives = 0;
+        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                if (Interlocked.Increment(ref receives) == 2)
+                    retried.TrySetResult();
+
+                return receive(call);
+            });
+        var journeyMetrics = Substitute.For<INotificationJourneyMetrics>();
+        journeyMetrics
+            .When(metrics => metrics.RecordCutover(true))
+            .Do(_ => throw new InvalidOperationException("private metric detail"));
+        var store = Substitute.For<INotificationDeliveryRecordStore>();
+        var logger = new RecordingLogger<NotificationCommandConsumer>();
+        using var subject = CreateSubject(sqs, store, logger, journeyMetrics: journeyMetrics);
+
+        await subject.StartAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            await retried.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            await subject.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        journeyMetrics
+            .Received(1)
+            .RecordFailure(NotificationJourneyValues.Consumer.Delivery, NotificationJourneyValues.Stage.Receive);
+        Assert.Single(
+            logger.Messages,
+            message => message.Contains("Notification command consumption failed", StringComparison.Ordinal)
+        );
+        Assert.DoesNotContain(
+            logger.Messages,
+            message => message.Contains("private metric detail", StringComparison.Ordinal)
+        );
+        Assert.Equal(LogLevel.Warning, Assert.Single(logger.Levels));
+        Assert.Empty(store.ReceivedCalls());
+        await sqs.DidNotReceive()
+            .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
     [Theory]
     [InlineData("accepted")]
     [InlineData("duplicate")]
@@ -966,7 +1016,8 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         int receiveTimeoutSeconds = 30,
         string? cutover = "2026-09-29T00:00:00Z",
         INotifyEmailClient? notify = null,
-        TimeProvider? timeProvider = null
+        TimeProvider? timeProvider = null,
+        INotificationJourneyMetrics? journeyMetrics = null
     ) =>
         new(
             sqsClient,
@@ -999,7 +1050,7 @@ public sealed class NotificationCommandConsumerTests : IDisposable
                 )
             ),
             timeProvider ?? TimeProvider.System,
-            _metricServices.GetRequiredService<INotificationJourneyMetrics>()
+            journeyMetrics ?? _metricServices.GetRequiredService<INotificationJourneyMetrics>()
         );
 
     private static ApplicationStartup CompletedReadiness()

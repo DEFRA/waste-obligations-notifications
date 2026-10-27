@@ -36,9 +36,8 @@ public sealed class NotificationCommandConsumer(
             {
                 // SQS may make the message invisible before the receive response reaches this host.
                 var receiveStartedAt = Stopwatch.GetTimestamp();
-                var response = await ReceiveCommands(stoppingToken);
-                journeyMetrics.RecordCutover(cutover.HasValue);
-                foreach (var message in response.Messages ?? [])
+                var messages = await ReceiveCommands(cutover.HasValue, stoppingToken);
+                foreach (var message in messages)
                     await ProcessMessage(message, cutover, receiveStartedAt, stoppingToken);
             }
             catch (Exception) when (stoppingToken.IsCancellationRequested)
@@ -345,7 +344,7 @@ public sealed class NotificationCommandConsumer(
     private void LogLatencyMetricFailure(Exception exception) =>
         logger.LogError("Notification outcome latency metric failed ({ExceptionType}).", exception.GetType().Name);
 
-    private async Task<ReceiveMessageResponse> ReceiveCommands(CancellationToken stoppingToken)
+    private async Task<Message[]> ReceiveCommands(bool cutoverConfigured, CancellationToken stoppingToken)
     {
         try
         {
@@ -368,8 +367,9 @@ public sealed class NotificationCommandConsumer(
                 failureReason: NotificationCommandFailureReason.QueueError
             );
             journeyMetrics.RecordPoll(NotificationJourneyValues.Consumer.Delivery);
+            journeyMetrics.RecordCutover(cutoverConfigured);
 
-            return response;
+            return (response.Messages ?? []).ToArray();
         }
         catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
         {
