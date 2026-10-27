@@ -11,7 +11,8 @@ public static class DownstreamHttpExtensions
     public static IHttpClientBuilder ConfigureDownstream<TOptions>(
         this IHttpClientBuilder builder,
         string name,
-        bool useAccountProxy = false
+        bool useProxy,
+        bool retainedClient = true
     )
         where TOptions : DownstreamOptions
     {
@@ -34,7 +35,7 @@ public static class DownstreamHttpExtensions
                 client.Timeout = Timeout.InfiniteTimeSpan;
             }
         );
-        builder.ConfigurePrimaryHttpMessageHandler(() => CreateHandler(useAccountProxy));
+        builder.ConfigurePrimaryHttpMessageHandler(() => DownstreamHttpHandler.Create(useProxy, retainedClient));
         builder.RemoveAllLoggers();
         builder.AddResilienceHandler(
             name,
@@ -50,23 +51,5 @@ public static class DownstreamHttpExtensions
         );
 
         return builder;
-    }
-
-    private static SocketsHttpHandler CreateHandler(bool useAccountProxy)
-    {
-        var handler = new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-        };
-        if (useAccountProxy)
-        {
-            var proxy = Environment.GetEnvironmentVariable("HTTP_PROXY");
-            handler.UseProxy = proxy is not null;
-            if (proxy is not null)
-                handler.Proxy = new WebProxy(new UriBuilder(proxy).Uri) { BypassProxyOnLocal = true };
-        }
-
-        return handler;
     }
 }

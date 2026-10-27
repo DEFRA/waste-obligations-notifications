@@ -1,4 +1,5 @@
 using Defra.WasteObligations.Consumer.Consumers;
+using Defra.WasteObligations.Consumer.Services.Http;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -40,9 +41,7 @@ public static class ServiceCollectionExtensions
                     client.Timeout = Timeout.InfiniteTimeSpan;
                 }
             )
-            .ConfigurePrimaryHttpMessageHandler(() =>
-                new SocketsHttpHandler { AllowAutoRedirect = false, PooledConnectionLifetime = TimeSpan.FromMinutes(2) }
-            )
+            .ConfigurePrimaryHttpMessageHandler(() => DownstreamHttpHandler.Create(useProxy: false))
             // Default HTTP failure logs attach raw exception messages, which can contain private data.
             // Keep the consumer's fixed failure reasons and safe correlation instead.
             .RemoveAllLoggers()

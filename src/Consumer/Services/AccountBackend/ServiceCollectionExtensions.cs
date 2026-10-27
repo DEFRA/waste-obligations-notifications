@@ -31,10 +31,14 @@ public static class ServiceCollectionExtensions
             .ValidateOnStart();
         services
             .AddHttpClient(AccountTokenProvider.HttpClientName)
-            .ConfigureDownstream<AccountOAuthOptions>(AccountTokenProvider.HttpClientName, useAccountProxy: true);
+            .ConfigureDownstream<AccountOAuthOptions>(
+                AccountTokenProvider.HttpClientName,
+                useProxy: true,
+                retainedClient: false
+            );
         services
             .AddHttpClient<IAccountBackendClient, AccountBackendClient>()
-            .ConfigureDownstream<AccountBackendOptions>(AccountBackendOptions.SectionName, useAccountProxy: true);
+            .ConfigureDownstream<AccountBackendOptions>(AccountBackendOptions.SectionName, useProxy: true);
         services
             .AddHealthChecks()
             .AddCheck<AccountBackendHealthCheck>(
