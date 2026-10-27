@@ -5,6 +5,7 @@ using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.Options;
+using Serilog.Context;
 
 namespace Defra.WasteObligations.Consumer.Delivery;
 
@@ -31,47 +32,64 @@ public sealed class NotificationCommandConsumer(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            string? messageId = null;
-            string? notificationType = null;
-            string? reference = null;
-            var stage = NotificationJourneyValues.Stage.Receive;
             try
             {
-                // SQS may make a message invisible before its receive response reaches this host.
+                // SQS may make the message invisible before the receive response reaches this host.
                 var receiveStartedAt = Stopwatch.GetTimestamp();
-                var response = await ReceiveCommands(stoppingToken);
-                journeyMetrics.RecordPoll(NotificationJourneyValues.Consumer.Delivery);
-                journeyMetrics.RecordCutover(cutover.HasValue);
-                foreach (var message in response.Messages ?? [])
-                {
-                    messageId = message.MessageId;
-                    stage = NotificationJourneyValues.Stage.Parse;
-                    var command = ReadCommand(message);
-                    notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
-                    reference = digest.CreateNotifyReference(command.IdempotencyKey);
-                    await Process(
-                        message,
-                        command,
-                        reference,
-                        cutover,
-                        receiveStartedAt,
-                        nextStage => stage = nextStage,
-                        stoppingToken
-                    );
-                }
+                var messages = await ReceiveCommands(cutover.HasValue, stoppingToken);
+                foreach (var message in messages)
+                    await ProcessMessage(message, cutover, receiveStartedAt, stoppingToken);
             }
             catch (Exception) when (stoppingToken.IsCancellationRequested)
             {
-                // Dependency failures after cancellation must not reach host exception logging.
+                // Dependency failures during cancellation must not reach host exception logging.
                 return;
             }
-            catch (Exception exception)
+            catch (Exception)
             {
-                journeyMetrics.RecordFailure(NotificationJourneyValues.Consumer.Delivery, stage);
-                // Dependency exceptions may contain payload or recipient data. Log a bounded category only.
-                LogFailure(exception, messageId, notificationType, reference);
                 await Task.Delay(TimeSpan.FromSeconds(options.Value.PollIntervalSeconds), stoppingToken);
             }
+        }
+    }
+
+    private async Task ProcessMessage(
+        Message message,
+        DateTimeOffset? cutover,
+        long receiveStartedAt,
+        CancellationToken stoppingToken
+    )
+    {
+        IDisposable? traceScope = null;
+        string? notificationType = null;
+        string? reference = null;
+        var stage = NotificationJourneyValues.Stage.Parse;
+        try
+        {
+            var command = ReadCommand(message);
+            traceScope = LogContext.PushProperty("TraceId", command.CorrelationId);
+            notificationType = options.Value.GetDiagnosticNotificationType(command.NotificationType);
+            reference = digest.CreateNotifyReference(command.IdempotencyKey);
+
+            await Process(
+                message,
+                command,
+                reference,
+                cutover,
+                receiveStartedAt,
+                nextStage => stage = nextStage,
+                stoppingToken
+            );
+        }
+        catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+        {
+            journeyMetrics.RecordFailure(NotificationJourneyValues.Consumer.Delivery, stage);
+            // Dependency exceptions may contain payload or recipient data. Log a bounded category only.
+            LogFailure(exception, message.MessageId, notificationType, reference);
+            throw;
+        }
+        finally
+        {
+            traceScope?.Dispose();
         }
     }
 
@@ -326,25 +344,43 @@ public sealed class NotificationCommandConsumer(
     private void LogLatencyMetricFailure(Exception exception) =>
         logger.LogError("Notification outcome latency metric failed ({ExceptionType}).", exception.GetType().Name);
 
-    private async Task<ReceiveMessageResponse> ReceiveCommands(CancellationToken stoppingToken) =>
-        await RunBounded(
-            token =>
-                sqsClient.ReceiveMessageAsync(
-                    new ReceiveMessageRequest
-                    {
-                        QueueUrl = options.Value.QueueUrl,
-                        // Larger receives require a reviewed visibility/claim budget.
-                        MaxNumberOfMessages = 1,
-                        MessageAttributeNames = ["All"],
-                        WaitTimeSeconds = options.Value.WaitTimeSeconds,
-                        VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
-                    },
-                    token
-                ),
-            options.Value.ReceiveTimeoutSeconds,
-            stoppingToken,
-            failureReason: NotificationCommandFailureReason.QueueError
-        );
+    private async Task<Message[]> ReceiveCommands(bool cutoverConfigured, CancellationToken stoppingToken)
+    {
+        try
+        {
+            var response = await RunBounded(
+                token =>
+                    sqsClient.ReceiveMessageAsync(
+                        new ReceiveMessageRequest
+                        {
+                            QueueUrl = options.Value.QueueUrl,
+                            // Larger receives require a reviewed visibility/claim budget.
+                            MaxNumberOfMessages = 1,
+                            MessageAttributeNames = ["All"],
+                            WaitTimeSeconds = options.Value.WaitTimeSeconds,
+                            VisibilityTimeout = options.Value.VisibilityTimeoutSeconds,
+                        },
+                        token
+                    ),
+                options.Value.ReceiveTimeoutSeconds,
+                stoppingToken,
+                failureReason: NotificationCommandFailureReason.QueueError
+            );
+            journeyMetrics.RecordPoll(NotificationJourneyValues.Consumer.Delivery);
+            journeyMetrics.RecordCutover(cutoverConfigured);
+
+            return (response.Messages ?? []).ToArray();
+        }
+        catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+        {
+            journeyMetrics.RecordFailure(
+                NotificationJourneyValues.Consumer.Delivery,
+                NotificationJourneyValues.Stage.Receive
+            );
+            LogFailure(exception, null, null, null);
+            throw;
+        }
+    }
 
     private static async Task<T> RunBounded<T>(
         Func<CancellationToken, Task<T>> operation,

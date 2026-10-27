@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Utils.Logging;
 
 namespace Defra.WasteObligations.Consumer.Commands;
 
@@ -13,7 +14,10 @@ public sealed record NotificationCommand(
     string EmailAddress,
     string TemplateId,
     JsonElement Personalisation,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResendOfNotificationKey = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResendOfNotificationKey = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [property: JsonConverter(typeof(TraceCorrelationJsonConverter))]
+        string? CorrelationId = null
 )
 {
     public const int CurrentSchemaVersion = 1;

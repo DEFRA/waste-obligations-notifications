@@ -156,7 +156,14 @@ public sealed class AnalyticsEventConsumer(
 
                 EnsureRemaining(receivedAt, options.Value.PublishTimeoutSeconds + options.Value.DeleteTimeoutSeconds);
                 stage = NotificationJourneyValues.Stage.PublishCommand;
-                await PublishCommands(commands, eventId, entityId, () => published = true, stoppingToken);
+                await PublishCommands(
+                    commands,
+                    eventId,
+                    entityId,
+                    analyticsEvent.CorrelationId,
+                    () => published = true,
+                    stoppingToken
+                );
             }
 
             stage = NotificationJourneyValues.Stage.Acknowledge;
@@ -213,6 +220,7 @@ public sealed class AnalyticsEventConsumer(
         IReadOnlyList<NotificationCommand> commands,
         string? eventId,
         string? entityId,
+        string? correlationId,
         Action publicationConfirmed,
         CancellationToken stoppingToken
     ) =>
@@ -224,7 +232,7 @@ public sealed class AnalyticsEventConsumer(
                 {
                     EnsurePublicationDeadline(startedAt, token);
 
-                    await publisher.Publish(command, token);
+                    await publisher.Publish(command with { CorrelationId = correlationId }, token);
                     metrics.RecordCommandPublished(NotificationJourneyValues.Source.Analytics);
 
                     EnsurePublicationDeadline(startedAt, token);

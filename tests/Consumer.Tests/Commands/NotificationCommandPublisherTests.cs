@@ -192,6 +192,64 @@ public class NotificationCommandPublisherTests
         Assert.Equal("recipient@example.com", body.RootElement.GetProperty("emailAddress").GetString());
     }
 
+    [Theory]
+    [InlineData("\"4bf92f3577b34da6a3ce929d0e0e4736\"", "4bf92f3577b34da6a3ce929d0e0e4736")]
+    [InlineData("\"59a48ed1-c28b-4126-bbc5-46b0461798b8\"", "59a48ed1-c28b-4126-bbc5-46b0461798b8")]
+    [InlineData("null", null)]
+    [InlineData("\"private-recipient@example.invalid\"", null)]
+    [InlineData("42", null)]
+    [InlineData("{}", null)]
+    public async Task Publish_WhenCorrelationIsSupplied_ShouldRoundTripOnlySafeTraceMetadata(
+        string correlationJson,
+        string? expectedTrace
+    )
+    {
+        var sqs = Substitute.For<IAmazonSQS>();
+        sqs.SendMessageAsync(Arg.Any<SendMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new SendMessageResponse { HttpStatusCode = HttpStatusCode.OK });
+        var digest = new NotificationCommandDigest(Options.Create(CreateOptions()));
+        var publisher = new NotificationCommandPublisher(sqs, Options.Create(CreateOptions()), digest);
+        var original = CreateCommand();
+        var incoming =
+            JsonSerializer.Serialize(original, JsonSerializerOptions.Web)[..^1]
+            + ",\"correlationId\":"
+            + correlationJson
+            + "}";
+        var command = NotificationCommandMessageReader.Read(new Message { Body = incoming });
+
+        Assert.Equal(expectedTrace, command.CorrelationId);
+        using var rawCorrelation = JsonDocument.Parse(correlationJson);
+        var suppliedCorrelation =
+            rawCorrelation.RootElement.ValueKind == JsonValueKind.String
+                ? rawCorrelation.RootElement.GetString()
+                : null;
+
+        await publisher.Publish(
+            original with
+            {
+                CorrelationId = suppliedCorrelation,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await publisher.Publish(original, TestContext.Current.CancellationToken);
+
+        var requests = sqs.ReceivedCalls()
+            .Select(call => call.GetArguments().OfType<SendMessageRequest>().Single())
+            .ToArray();
+        var first = requests[0];
+        var roundTrip = NotificationCommandMessageReader.Read(new Message { Body = first.MessageBody });
+        Assert.Equal(expectedTrace, roundTrip.CorrelationId);
+        Assert.Null(
+            NotificationCommandMessageReader.Read(new Message { Body = requests[1].MessageBody }).CorrelationId
+        );
+        Assert.Equal(digest.CreateImmutableFieldsDigest(original), digest.CreateImmutableFieldsDigest(roundTrip));
+        Assert.Equal(first.MessageDeduplicationId, requests[1].MessageDeduplicationId);
+        Assert.Equal(first.MessageGroupId, requests[1].MessageGroupId);
+        Assert.DoesNotContain("private-recipient", first.MessageBody, StringComparison.Ordinal);
+        if (expectedTrace is null)
+            Assert.Equal(first.MessageBody, requests[1].MessageBody);
+    }
+
     private static NotificationCommand CreateCommand() =>
         new(
             NotificationCommand.CurrentSchemaVersion,

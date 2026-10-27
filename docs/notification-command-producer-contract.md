@@ -68,6 +68,19 @@ secret. SQS's short deduplication window does not replace durable delivery
 identity. See [digest-key lifetime](../README.md#digest-key-lifetime) and the
 [cutover decision](adr/0002-email-delivery-cutover-boundary.md).
 
+## Trace correlation
+
+Publishers may supply the optional JSON field `correlationId`
+with the originating trace ID. Consumers accept the same GUID or 32-character
+hexadecimal format as analytics events and ignore missing or invalid correlation
+metadata. It supplies ECS `trace.id` for command outcome and failure logs and is
+not part of delivery identity or persisted evidence. Existing messages need no
+change. The analytics consumer sets this field from the originating event,
+replacing any correlation supplied by its command builder, so all commands from
+that event share its trace. See [validation](../src/Consumer/Utils/Logging/TraceCorrelation.cs),
+[JSON parsing](../src/Consumer/Utils/Logging/TraceCorrelationJsonConverter.cs)
+and [consumer correlation tests](../tests/Consumer.Tests/Delivery/NotificationCommandConsumerTests.cs).
+
 ## Explicit replacement metadata
 
 Original commands omit `resendOfNotificationKey`. Explicit accepted-command
