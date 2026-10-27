@@ -34,7 +34,7 @@ public static class ServiceCollectionExtensions
             .ConfigureDownstream<AccountOAuthOptions>(
                 AccountTokenProvider.HttpClientName,
                 useProxy: true,
-                retainedClient: false
+                renewPooledConnections: false
             );
         services
             .AddHttpClient<IAccountBackendClient, AccountBackendClient>()

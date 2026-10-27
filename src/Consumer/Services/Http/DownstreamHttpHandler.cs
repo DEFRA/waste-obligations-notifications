@@ -4,12 +4,12 @@ namespace Defra.WasteObligations.Consumer.Services.Http;
 
 public static class DownstreamHttpHandler
 {
-    public static HttpMessageHandler Create(bool useProxy, bool retainedClient = true)
+    public static HttpMessageHandler Create(bool useProxy, bool renewPooledConnections = true)
     {
         var proxy = useProxy ? Environment.GetEnvironmentVariable("HTTP_PROXY") : null;
         var webProxy = proxy is null ? null : new WebProxy(new UriBuilder(proxy).Uri) { BypassProxyOnLocal = true };
 
-        if (!retainedClient)
+        if (!renewPooledConnections)
             return new HttpClientHandler
             {
                 AllowAutoRedirect = false,

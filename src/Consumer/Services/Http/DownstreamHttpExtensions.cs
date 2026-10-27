@@ -12,7 +12,7 @@ public static class DownstreamHttpExtensions
         this IHttpClientBuilder builder,
         string name,
         bool useProxy,
-        bool retainedClient = true
+        bool renewPooledConnections = true
     )
         where TOptions : DownstreamOptions
     {
@@ -35,7 +35,9 @@ public static class DownstreamHttpExtensions
                 client.Timeout = Timeout.InfiniteTimeSpan;
             }
         );
-        builder.ConfigurePrimaryHttpMessageHandler(() => DownstreamHttpHandler.Create(useProxy, retainedClient));
+        builder.ConfigurePrimaryHttpMessageHandler(() =>
+            DownstreamHttpHandler.Create(useProxy, renewPooledConnections)
+        );
         builder.RemoveAllLoggers();
         builder.AddResilienceHandler(
             name,
