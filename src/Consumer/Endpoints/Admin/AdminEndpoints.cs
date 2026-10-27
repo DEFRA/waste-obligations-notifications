@@ -19,5 +19,6 @@ public static class AdminEndpoints
         );
         group.MapCommandDlqEndpoints();
         group.MapDeliveryRecordSearchEndpoints();
+        group.MapNotSubmittedReminderEndpoints();
     }
 }

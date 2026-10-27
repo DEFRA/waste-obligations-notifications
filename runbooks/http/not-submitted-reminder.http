@@ -1,0 +1,6 @@
+### Request a not-submitted reminder scan
+# Returns 202 and runs the idempotent scan in the background.
+# Returns 409 with the skip reason when disabled, outside the send window or before cutover.
+# @no-log
+POST {{host}}/admin/not-submitted-reminder/scan
+Authorization: Bearer {{$auth.token("service")}}

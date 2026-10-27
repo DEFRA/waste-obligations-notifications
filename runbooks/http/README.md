@@ -25,6 +25,8 @@ For deployed environments:
   requires Basic and returns 401. Use `/health` for deployed readiness and
   [local health](health.docker.http) for the Basic-auth readiness request.
 - [Command DLQ](command-dlq.http): run readiness, then inspect before redrive, discard or accepted-command resend.
+- [Not submitted reminder](not-submitted-reminder.http): request a background reminder scan
+  within the send window. Repeating it is safe because commands are idempotent.
 
 Executable response examples are recorded in the Verify `*.verified.json` snapshots in
 [`tests/Consumer.Tests/Administration`](../../tests/Consumer.Tests/Administration).
