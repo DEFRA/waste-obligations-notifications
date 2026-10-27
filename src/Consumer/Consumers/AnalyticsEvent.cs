@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Defra.WasteObligations.Consumer.Services.WasteObligations;
+using Defra.WasteObligations.Consumer.Utils.Logging;
 
 namespace Defra.WasteObligations.Consumer.Consumers;
 
@@ -66,16 +67,7 @@ public sealed record AnalyticsEvent(
             : analyticsEvent;
     }
 
-    private static string? ReadCorrelationId(JsonElement root)
-    {
-        var value = String(root, "correlationId");
-        if (value is null)
-            return null;
-
-        return Guid.TryParseExact(value, "D", out _) || value.Length == 32 && value.All(char.IsAsciiHexDigit)
-            ? value
-            : null;
-    }
+    private static string? ReadCorrelationId(JsonElement root) => TraceCorrelation.Read(String(root, "correlationId"));
 
     private static Declaration? ReadDeclarationSnapshot(JsonElement root)
     {

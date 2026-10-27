@@ -2,6 +2,7 @@ using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Delivery;
+using Defra.WasteObligations.Consumer.Utils.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Commands;
@@ -17,7 +18,12 @@ public sealed class NotificationCommandPublisher(
     public async Task Publish(NotificationCommand command, CancellationToken cancellationToken)
     {
         command.Validate();
-        var normalisedCommand = command.NormaliseRecipient();
+
+        var normalisedCommand = command.NormaliseRecipient() with
+        {
+            CorrelationId = TraceCorrelation.Read(command.CorrelationId),
+        };
+
         var response = await sqsClient.SendMessageAsync(
             new SendMessageRequest
             {

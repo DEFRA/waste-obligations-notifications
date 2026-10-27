@@ -174,6 +174,14 @@ public sealed class AnalyticsJourneyMetricsTests
                 .Where(measurement => measurement.Name == MetricNames.NotificationCommandPublished)
                 .Sum(measurement => measurement.Value)
         );
+        Assert.All(
+            publisher.ReceivedCalls(),
+            call =>
+                Assert.Equal(
+                    "4bf92f3577b34da6a3ce929d0e0e4736",
+                    ((NotificationCommand)call.GetArguments()[0]!).CorrelationId
+                )
+        );
         var outcomes = measurements
             .Where(measurement => measurement.Name == MetricNames.AnalyticsEventOutcome)
             .ToArray();
@@ -249,6 +257,6 @@ public sealed class AnalyticsJourneyMetricsTests
 
     private static string EventBody() =>
         """
-            { "eventId": "01JZ8RXBMTY2K15SJB3PCFN3D5", "entityId": "cdec_65f1f6570bb08052a8a27b01", "entity": "compliance_declaration", "eventType": "submission.created", "schemaVersion": "compliance_declaration_v1.0", "version": 1, "after": { "organisation": { "id": "01234567-89ab-cdef-0123-456789abcdef" } } }
+            { "correlationId":"4bf92f3577b34da6a3ce929d0e0e4736","eventId": "01JZ8RXBMTY2K15SJB3PCFN3D5", "entityId": "cdec_65f1f6570bb08052a8a27b01", "entity": "compliance_declaration", "eventType": "submission.created", "schemaVersion": "compliance_declaration_v1.0", "version": 1, "after": { "organisation": { "id": "01234567-89ab-cdef-0123-456789abcdef" } } }
             """;
 }

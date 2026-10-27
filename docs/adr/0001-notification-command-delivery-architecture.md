@@ -26,6 +26,12 @@ service-owned SQS FIFO queue. Upstream producers use a shared command publisher
 to assign the command's idempotency key as the SQS deduplication ID and a
 non-reversible recipient lane as the message-group ID.
 
+Trace correlation travels as an optional JSON field, following analytics events.
+A command retains its originating trace without coupling diagnostic context to
+the immutable email intention. Messages without correlation remain valid; the
+[producer contract](../notification-command-producer-contract.md#trace-correlation)
+defines the transport convention.
+
 The delivery service will use MongoDB notification records with a unique
 notification-key index and a per-notification lease. The record provides durable
 duplicate suppression and coordinates competing hosts. The handler makes one

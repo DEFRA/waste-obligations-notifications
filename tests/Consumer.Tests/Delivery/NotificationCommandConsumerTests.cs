@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.IO.Compression;
@@ -9,12 +10,17 @@ using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
+using Elastic.CommonSchema.Serilog;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.Core;
+using Serilog.Core;
+using Serilog.Events;
+using Serilog.Extensions.Logging;
+using LoggerConfiguration = Serilog.LoggerConfiguration;
 
 namespace Defra.WasteObligations.Consumer.Tests.Delivery;
 
@@ -814,6 +820,141 @@ public sealed class NotificationCommandConsumerTests : IDisposable
         await sqsClient
             .DidNotReceive()
             .DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("accepted")]
+    [InlineData("duplicate")]
+    [InlineData("suppressed")]
+    public async Task WhenCorrelatedCommandIsHandled_ShouldTraceOutcomeAndFailureWithoutLeakingToNextMessage(
+        string scenario
+    )
+    {
+        const string traceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+        var capture = new TraceCapture();
+        using var serilog = new LoggerConfiguration().Enrich.FromLogContext().WriteTo.Sink(capture).CreateLogger();
+        using var logs = new SerilogLoggerFactory(serilog, dispose: false);
+        var sqs = Substitute.For<IAmazonSQS>();
+        var first = CreateMessage(
+            CommandBody("2026-10-01T10:00:00Z").TrimEnd()[..^1] + ",\"correlationId\":\"" + traceId + "\"}"
+        );
+        var receives = 0;
+        sqs.ReceiveMessageAsync(Arg.Any<ReceiveMessageRequest>(), Arg.Any<CancellationToken>())
+            .Returns(async call =>
+            {
+                var attempt = Interlocked.Increment(ref receives);
+                if (attempt <= 2)
+                    return new ReceiveMessageResponse
+                    {
+                        Messages = [attempt == 1 ? first : CreateMessage(CommandBody("2026-10-01T10:00:00Z"))],
+                    };
+
+                capture.Completed.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.Arg<CancellationToken>());
+
+                return new ReceiveMessageResponse();
+            });
+        var deletes = 0;
+        sqs.DeleteMessageAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+                ++deletes == 1
+                    ? Task.FromException<DeleteMessageResponse>(
+                        new InvalidOperationException("private-recipient@example.invalid")
+                    )
+                    : Task.FromResult(new DeleteMessageResponse())
+            );
+        var store = Substitute.For<INotificationDeliveryRecordStore>();
+        store
+            .RecordSuppression(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(SuppressionClaimResult.Recorded);
+        store
+            .Claim(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(scenario == "duplicate" ? DeliveryClaimResult.TerminalDuplicate : DeliveryClaimResult.Claimed);
+        store
+            .RecordAcceptance(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<NotifyAcceptance>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(true);
+        var notify = Substitute.For<INotifyEmailClient>();
+        notify
+            .Send(
+                Arg.Any<global::Defra.WasteObligations.Consumer.Commands.NotificationCommand>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(call => new NotifyAcceptance(
+                "01234567-89ab-cdef-0123-456789abcdef",
+                call.Arg<string>(),
+                "template-1",
+                1
+            ));
+        using var consumer = CreateSubject(
+            sqs,
+            store,
+            logs.CreateLogger<NotificationCommandConsumer>(),
+            cutover: scenario == "suppressed" ? null : "2026-09-29T00:00:00Z",
+            notify: notify
+        );
+
+        await consumer.StartAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            await capture.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            await consumer.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        var outcomes = capture
+            .Events.Where(entry =>
+                entry.MessageTemplate.Text.StartsWith("Notification command outcome", StringComparison.Ordinal)
+            )
+            .ToArray();
+        Assert.Equal(2, outcomes.Length);
+        Assert.Equal(
+            scenario switch
+            {
+                "accepted" => "delivery-accepted",
+                "duplicate" => "terminal-duplicate",
+                _ => "delivery-suppressed",
+            },
+            ((ScalarValue)outcomes[0].Properties["Outcome"]).Value
+        );
+        AssertEcsTrace(outcomes[0], traceId);
+        AssertEcsTrace(Assert.Single(capture.Events, entry => entry.Level == LogEventLevel.Warning), traceId);
+        AssertEcsTrace(outcomes[1], null);
+        Assert.DoesNotContain(
+            capture.Events,
+            entry => entry.RenderMessage().Contains("private-recipient", StringComparison.Ordinal)
+        );
+    }
+
+    private static void AssertEcsTrace(LogEvent entry, string? expected)
+    {
+        using var writer = new StringWriter();
+        new EcsTextFormatter().Format(entry, writer);
+        using var json = JsonDocument.Parse(writer.ToString());
+        Assert.Equal(expected, json.RootElement.TryGetProperty("trace.id", out var trace) ? trace.GetString() : null);
+    }
+
+    private sealed class TraceCapture : ILogEventSink
+    {
+        public ConcurrentQueue<LogEvent> Events { get; } = new();
+        public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Emit(LogEvent logEvent) => Events.Enqueue(logEvent);
     }
 
     private NotificationCommandConsumer CreateSubject(
