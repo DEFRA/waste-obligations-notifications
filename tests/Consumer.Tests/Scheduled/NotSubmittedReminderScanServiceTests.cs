@@ -214,13 +214,7 @@ public sealed class NotSubmittedReminderScanServiceTests
         var second = Guid.Parse("22222222-2222-2222-2222-222222222222");
         var obligations = Substitute.For<IWasteObligationsClient>();
         obligations
-            .SearchUnsubmittedOrganisations(
-                2026,
-                "DirectProducer",
-                Arg.Any<int>(),
-                1,
-                Arg.Any<CancellationToken>()
-            )
+            .SearchUnsubmittedOrganisations(2026, "DirectProducer", Arg.Any<int>(), 1, Arg.Any<CancellationToken>())
             .Returns(
                 CreatePage([CreateRow(first)], total: 2, page: 1, pageSize: 1),
                 CreatePage([CreateRow(second)], total: 2, page: 2, pageSize: 1)

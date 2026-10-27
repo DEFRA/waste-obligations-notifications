@@ -33,9 +33,8 @@ public sealed class NotSubmittedReminderWorkerTests
         scanService
             .RunFullScan(Arg.Any<CancellationToken>())
             .Returns(
-                callInfo => Task.FromException<NotSubmittedReminderScanResult>(
-                    new InvalidOperationException("scan failed")
-                ),
+                callInfo =>
+                    Task.FromException<NotSubmittedReminderScanResult>(new InvalidOperationException("scan failed")),
                 callInfo => Task.FromResult(new NotSubmittedReminderScanResult(0, 0, 0, null))
             );
 
