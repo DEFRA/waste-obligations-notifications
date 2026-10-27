@@ -23,6 +23,7 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
 {
     private const string Route = "/admin/not-submitted-reminder/scan";
     private const string Secret = "local-test-admin:secret";
+    private static readonly string[] ExpectedRecipientEmails = ["approved@example.test", "delegated@example.test"];
 
     [Fact]
     public async Task WhenAdminRequestsScanInSendWindow_ShouldAcceptAndWakeWorkerToPublishReminders()
@@ -61,10 +62,7 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
                     command.IdempotencyKey
                 )
         );
-        Assert.Equal(
-            new[] { "approved@example.test", "delegated@example.test" },
-            host.Sqs.Confirmed.Select(command => command.EmailAddress).Order()
-        );
+        Assert.Equal(ExpectedRecipientEmails, host.Sqs.Confirmed.Select(command => command.EmailAddress).Order());
     }
 
     [Fact]

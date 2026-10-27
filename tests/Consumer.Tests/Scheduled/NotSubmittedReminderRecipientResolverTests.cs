@@ -17,8 +17,8 @@ public sealed class NotSubmittedReminderRecipientResolverTests
 
         var recipients = NotSubmittedReminderRecipientResolver.Resolve(persons);
 
-        Assert.Single(recipients);
-        Assert.Equal("same@example.test", recipients[0].Email);
+        var recipient = Assert.Single(recipients);
+        Assert.Equal("same@example.test", recipient.Email);
     }
 
     [Fact]

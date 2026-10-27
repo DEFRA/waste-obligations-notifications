@@ -8,6 +8,12 @@ public sealed class NotSubmittedReminderSendTests : IntegrationTestBase
 {
     private const string EnglishTemplate = "54acaa9f-93c4-4052-bd0d-f5bc9e122ce6";
     private const string WelshTemplate = "156214dd-3735-4ed0-bb8d-c955facc7dd0";
+    private static readonly string[] ExpectedPartialFailureEmails =
+    [
+        "first@example.test",
+        "first@example.test",
+        "second@example.test",
+    ];
 
     [Fact]
     public async Task WhenScanRunsTwice_ShouldSendOnceToEachDistinctRecipient()
@@ -75,10 +81,7 @@ public sealed class NotSubmittedReminderSendTests : IntegrationTestBase
 
         Assert.Equal(new NotSubmittedReminderScanResult(2, 1, 1, null), first);
         Assert.Equal(new NotSubmittedReminderScanResult(2, 2, 0, null), second);
-        Assert.Equal(
-            new[] { "first@example.test", "first@example.test", "second@example.test" },
-            fixture.ConfirmedCommands().Select(command => command.EmailAddress)
-        );
+        Assert.Equal(ExpectedPartialFailureEmails, fixture.ConfirmedCommands().Select(command => command.EmailAddress));
     }
 
     [Fact]
