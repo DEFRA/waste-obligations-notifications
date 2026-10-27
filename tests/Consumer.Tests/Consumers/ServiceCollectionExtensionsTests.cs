@@ -72,7 +72,7 @@ public class ServiceCollectionExtensionsTests
             template,
             options.GetTemplate(NotificationDefinitionsOptions.DeclarationSubmitted, "DirectEnglishTemplateId")
         );
-        Assert.Equal(2, options.Definitions.Count);
+        Assert.Equal(3, options.Definitions.Count);
         Assert.Equal(4, options.Definitions[NotificationDefinitionsOptions.DeclarationSubmitted].Templates.Count);
     }
 
