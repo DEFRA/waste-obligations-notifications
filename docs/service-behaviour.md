@@ -9,7 +9,9 @@ response shapes; ADRs retain why those decisions were made. Use
 ## Current scope
 
 Analytics produces commands for compliance-declaration submission and cancellation;
-other valid analytics events retain their existing acknowledgement behaviour.
+a scheduled producer can publish CSoC Email 1 reminder commands for unsubmitted
+direct producers when enabled. Other valid analytics events retain their existing
+acknowledgement behaviour.
 Analytics does not send email or persist event data. Source-independent command
 delivery owns cutover, durable evidence and Notify requests. Authenticated
 administration supports inspection and recovery without changing business data.
@@ -24,6 +26,7 @@ administration supports inspection and recovery without changing business data.
 | Declaration reads and deleted-record fallback | [Waste Obligations client](../src/Consumer/Services/WasteObligations), [shared reader and validation](../src/Consumer/Submission/SubmittedEmailProducer.cs), [submission regressions](../tests/Consumer.Tests/Consumers/SubmittedEmailConsumerTests.cs), [cancellation and replay scenarios](../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs) |
 | Cancellation organisation and Account enrichment | [organisation client](../src/Consumer/Services/WasteOrganisations), [Account client](../src/Consumer/Services/AccountBackend), [cancellation producer](../src/Consumer/Cancellation/CancellationEmailProducer.cs) |
 | Analytics receive/enrichment/publication budget | [options](../src/Consumer/Consumers/AnalyticsEventConsumerOptions.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs) |
+| Not submitted reminder producer | [scan service](../src/Consumer/Scheduled/NotSubmittedReminderScanService.cs), [worker](../src/Consumer/Scheduled/NotSubmittedReminderWorker.cs), [admin trigger](../src/Consumer/Endpoints/Admin/NotSubmittedReminderEndpoints.cs), [unit tests](../tests/Consumer.Tests/Scheduled/) |
 
 Required publication must be confirmed before acknowledging its source. A valid
 no-email outcome can acknowledge without publication; validation/dependency or
