@@ -7,7 +7,9 @@ public static class DownstreamHttpHandler
     public static HttpMessageHandler Create(bool useProxy, bool renewPooledConnections = true)
     {
         var proxy = useProxy ? Environment.GetEnvironmentVariable("HTTP_PROXY") : null;
-        var webProxy = proxy is null ? null : new WebProxy(new UriBuilder(proxy).Uri) { BypassProxyOnLocal = true };
+        var webProxy = string.IsNullOrWhiteSpace(proxy)
+            ? null
+            : new WebProxy(new UriBuilder(proxy).Uri) { BypassProxyOnLocal = true };
 
         if (!renewPooledConnections)
             return new HttpClientHandler

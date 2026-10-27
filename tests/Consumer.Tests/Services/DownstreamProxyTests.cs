@@ -64,14 +64,17 @@ public sealed class DownstreamProxyTests
         }
     }
 
-    [Fact]
-    public void WhenProxyIsAbsent_ShouldDisableItForNotify()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public void WhenProxyIsBlank_ShouldDisableItForNotify(string? proxyAddress)
     {
         var original = Environment.GetEnvironmentVariable("HTTP_PROXY");
         var originalHttps = Environment.GetEnvironmentVariable("HTTPS_PROXY");
         try
         {
-            Environment.SetEnvironmentVariable("HTTP_PROXY", null);
+            Environment.SetEnvironmentVariable("HTTP_PROXY", proxyAddress);
             Environment.SetEnvironmentVariable("HTTPS_PROXY", "http://127.0.0.1:18888");
             var configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(
