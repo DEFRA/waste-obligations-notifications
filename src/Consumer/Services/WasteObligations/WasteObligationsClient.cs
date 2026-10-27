@@ -26,6 +26,24 @@ public sealed class WasteObligationsClient(HttpClient client, IOptions<WasteObli
             ?? throw new JsonException("Declaration response is missing.");
     }
 
+    public async Task<UnsubmittedOrganisationsPage> SearchUnsubmittedOrganisations(
+        int obligationYear,
+        string registrationType,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken
+    )
+    {
+        var query =
+            $"compliance-declarations/unsubmitted?obligationYear={obligationYear}&registrationType={Uri.EscapeDataString(registrationType)}&page={page}&pageSize={pageSize}";
+        using var request = CreateRequest(query);
+        using var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadFromJsonAsync<UnsubmittedOrganisationsPage>(cancellationToken)
+            ?? throw new JsonException("Unsubmitted organisations response is missing.");
+    }
+
     public async Task CheckHealth(CancellationToken cancellationToken)
     {
         using var request = CreateRequest("health/authorized");
