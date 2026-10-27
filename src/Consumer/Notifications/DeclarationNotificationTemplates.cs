@@ -21,4 +21,10 @@ public static class DeclarationNotificationTemplates
         public const string ProducerRequestedEn = nameof(ProducerRequestedEn);
         public const string ProducerRequestedCy = nameof(ProducerRequestedCy);
     }
+
+    public static class NotSubmittedReminder
+    {
+        public const string EnglishTemplateId = nameof(EnglishTemplateId);
+        public const string WelshTemplateId = nameof(WelshTemplateId);
+    }
 }
