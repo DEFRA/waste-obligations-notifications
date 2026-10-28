@@ -35,8 +35,9 @@ public sealed class NotSubmittedReminderWorkerTests
             .Returns(
                 callInfo =>
                     Task.FromException<NotSubmittedReminderScanResult>(new InvalidOperationException("scan failed")),
-                callInfo => Task.FromResult(new NotSubmittedReminderScanResult(0, 0, 0, null))
+                callInfo => Task.FromResult(new NotSubmittedReminderScanResult(0, 0, 0, 0, null))
             );
+        scanService.PrepareRequestedScan(false, Arg.Any<CancellationToken>()).Returns((string?)null);
 
         var trigger = new NotSubmittedReminderScanTrigger(scanService);
         var worker = CreateWorker(startup, scanService, trigger, enabled: true);
@@ -44,7 +45,7 @@ public sealed class NotSubmittedReminderWorkerTests
 
         var run = worker.StartAsync(stopping.Token);
         startup.MarkStarted();
-        trigger.Request();
+        await trigger.Request(false, stopping.Token);
         await Task.Delay(TimeSpan.FromMilliseconds(200), stopping.Token);
         await stopping.CancelAsync();
         await worker.StopAsync(CancellationToken.None);

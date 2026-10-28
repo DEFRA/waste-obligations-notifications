@@ -122,9 +122,15 @@ public sealed class NotSubmittedReminderFixture : IAsyncDisposable
     }
 
     public Task<NotSubmittedReminderScanResult> Scan() =>
-        _host!
-            .Services.GetRequiredService<INotSubmittedReminderScanService>()
-            .RunFullScan(TestContext.Current.CancellationToken);
+        ScanService.RunFullScan(TestContext.Current.CancellationToken);
+
+    public Task<string?> Reopen() => ScanService.PrepareRequestedScan(true, TestContext.Current.CancellationToken);
+
+    public Task<NotSubmittedReminderRunStatus> RunStatus() =>
+        ScanService.GetRunStatus(TestContext.Current.CancellationToken);
+
+    private INotSubmittedReminderScanService ScanService =>
+        _host!.Services.GetRequiredService<INotSubmittedReminderScanService>();
 
     public async Task<JsonElement[]> NotifyRequests()
     {

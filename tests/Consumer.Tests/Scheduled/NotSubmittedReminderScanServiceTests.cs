@@ -1,4 +1,6 @@
+using System.Globalization;
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Data.Entities;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Scheduled;
@@ -17,33 +19,255 @@ public sealed class NotSubmittedReminderScanServiceTests
     private const string Cutover = "2026-09-01T00:00:00Z";
 
     [Fact]
-    public void GetSkipReason_ShouldDelegateToCutoverGuard()
+    public async Task PrepareRequestedScan_WhenGuardSkips_ShouldReturnReasonWithoutTouchingRun()
     {
+        var runs = CreateRuns();
+        var service = CreateService(new() { Runs = runs, Now = "2026-11-30T10:00:00Z" });
+
+        var skipReason = await service.PrepareRequestedScan(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(NotSubmittedReminderCutoverGuard.OutsideSendWindowReason, skipReason);
+        Assert.Empty(runs.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task PrepareRequestedScan_WhenRunCompleted_ShouldReturnCompletedReason()
+    {
+        var runs = CreateRuns();
+        runs.Read(NotSubmittedReminderScanService.Campaign, 2026, Arg.Any<CancellationToken>())
+            .Returns(CreateRun(ScheduledCampaignRunStatus.Completed));
+        var service = CreateService(new() { Runs = runs });
+
+        var skipReason = await service.PrepareRequestedScan(false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(NotSubmittedReminderScanService.CompletedReason, skipReason);
+    }
+
+    [Fact]
+    public async Task PrepareRequestedScan_WhenRunInProgress_ShouldAllowScan()
+    {
+        var runs = CreateRuns();
+        runs.Read(NotSubmittedReminderScanService.Campaign, 2026, Arg.Any<CancellationToken>())
+            .Returns(CreateRun(ScheduledCampaignRunStatus.InProgress));
+        var service = CreateService(new() { Runs = runs });
+
+        var skipReason = await service.PrepareRequestedScan(false, TestContext.Current.CancellationToken);
+
+        Assert.Null(skipReason);
+        await runs.DidNotReceive().Reopen(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task PrepareRequestedScan_WhenReopenRequested_ShouldReopenRunAndAllowScan()
+    {
+        var runs = CreateRuns();
+        var service = CreateService(new() { Runs = runs });
+
+        var skipReason = await service.PrepareRequestedScan(true, TestContext.Current.CancellationToken);
+
+        Assert.Null(skipReason);
+        await runs.Received(1).Reopen(NotSubmittedReminderScanService.Campaign, 2026, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunFullScan_WhenRunAlreadyCompleted_ShouldSkipWithoutCallingObligations()
+    {
+        var obligations = Substitute.For<IWasteObligationsClient>();
+        var runs = CreateRuns(ScheduledCampaignRunStart.Completed);
+        var service = CreateService(new() { Obligations = obligations, Runs = runs });
+
+        var result = await service.RunFullScan(TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new NotSubmittedReminderScanResult(0, 0, 0, 0, NotSubmittedReminderScanService.CompletedReason),
+            result
+        );
+        Assert.Empty(obligations.ReceivedCalls());
+        await runs.DidNotReceive()
+            .RecordScan(
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<NotSubmittedReminderScanResult>(),
+                Arg.Any<CancellationToken>()
+            );
+    }
+
+    [Fact]
+    public async Task RunFullScan_WhenAnotherHostHoldsLease_ShouldSkipWithoutCallingObligations()
+    {
+        var obligations = Substitute.For<IWasteObligationsClient>();
         var service = CreateService(
-            Substitute.For<IWasteObligationsClient>(),
-            Substitute.For<IAccountBackendClient>(),
-            Substitute.For<INotificationCommandPublisher>(),
-            enabled: false
+            new() { Obligations = obligations, Runs = CreateRuns(ScheduledCampaignRunStart.Busy) }
         );
 
-        Assert.Equal(NotSubmittedReminderCutoverGuard.DisabledReason, service.GetSkipReason());
+        var result = await service.RunFullScan(TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new NotSubmittedReminderScanResult(0, 0, 0, 0, NotSubmittedReminderScanService.ScanInProgressReason),
+            result
+        );
+        Assert.Empty(obligations.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task RunFullScan_WhenOutsideSendWindow_ShouldNotStartRun()
+    {
+        var runs = CreateRuns();
+        var service = CreateService(new() { Runs = runs, Now = "2026-12-08T10:00:00Z" });
+
+        var result = await service.RunFullScan(TestContext.Current.CancellationToken);
+
+        Assert.Equal(NotSubmittedReminderCutoverGuard.OutsideSendWindowReason, result.SkipReason);
+        Assert.Empty(runs.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task RunFullScan_WhenScanFinishes_ShouldStartRunWithConfiguredLeaseAndRecordResult()
+    {
+        var organisationId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var obligations = Substitute.For<IWasteObligationsClient>();
+        obligations
+            .SearchUnsubmittedOrganisations(2026, "DirectProducer", 1, 100, Arg.Any<CancellationToken>())
+            .Returns(CreatePage([CreateRow(organisationId)]));
+
+        var accounts = Substitute.For<IAccountBackendClient>();
+        accounts
+            .ReadOrganisationWithPersons(organisationId, Arg.Any<CancellationToken>())
+            .Returns(CreateOrganisation("approved@example.test"));
+
+        var runs = CreateRuns();
+        var service = CreateService(
+            new()
+            {
+                Obligations = obligations,
+                Accounts = accounts,
+                Runs = runs,
+            }
+        );
+
+        var result = await service.RunFullScan(TestContext.Current.CancellationToken);
+
+        Assert.Equal(new NotSubmittedReminderScanResult(1, 1, 0, 0, null), result);
+        await runs.Received(1)
+            .TryStart(
+                NotSubmittedReminderScanService.Campaign,
+                2026,
+                TimeSpan.FromMinutes(45),
+                Arg.Any<CancellationToken>()
+            );
+        await runs.Received(1)
+            .RecordScan(NotSubmittedReminderScanService.Campaign, 2026, result, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunFullScan_WhenUnsubmittedSearchFails_ShouldReleaseRunAndRethrow()
+    {
+        var obligations = Substitute.For<IWasteObligationsClient>();
+        obligations
+            .SearchUnsubmittedOrganisations(2026, "DirectProducer", 1, 100, Arg.Any<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("unavailable"));
+
+        var runs = CreateRuns();
+        var service = CreateService(new() { Obligations = obligations, Runs = runs });
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            service.RunFullScan(TestContext.Current.CancellationToken)
+        );
+
+        await runs.Received(1).Release(NotSubmittedReminderScanService.Campaign, 2026, CancellationToken.None);
+        await runs.DidNotReceive()
+            .RecordScan(
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<NotSubmittedReminderScanResult>(),
+                Arg.Any<CancellationToken>()
+            );
+    }
+
+    [Fact]
+    public async Task RunFullScan_WhenReleaseAlsoFails_ShouldRethrowOriginalFailure()
+    {
+        var obligations = Substitute.For<IWasteObligationsClient>();
+        obligations
+            .SearchUnsubmittedOrganisations(2026, "DirectProducer", 1, 100, Arg.Any<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("unavailable"));
+
+        var runs = CreateRuns();
+        runs.Release(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("mongo unavailable"));
+        var service = CreateService(new() { Obligations = obligations, Runs = runs });
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            service.RunFullScan(TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Fact]
+    public async Task GetRunStatus_WhenNoRunRecorded_ShouldReportNotStartedWithSendWindow()
+    {
+        var service = CreateService(new());
+
+        var status = await service.GetRunStatus(TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            new NotSubmittedReminderRunStatus(
+                NotSubmittedReminderScanService.Campaign,
+                2026,
+                DateTimeOffset.Parse("2026-12-01T10:00:00Z", CultureInfo.InvariantCulture),
+                DateTimeOffset.Parse("2026-12-08T10:00:00Z", CultureInfo.InvariantCulture),
+                "not-started",
+                0,
+                null,
+                null,
+                null,
+                0,
+                0,
+                0,
+                0
+            ),
+            status
+        );
+    }
+
+    [Fact]
+    public async Task GetRunStatus_WhenRunCompleted_ShouldReportRecordedCounts()
+    {
+        var completedAt = new DateTime(2026, 12, 1, 10, 5, 0, DateTimeKind.Utc);
+        var runs = CreateRuns();
+        runs.Read(NotSubmittedReminderScanService.Campaign, 2026, Arg.Any<CancellationToken>())
+            .Returns(
+                CreateRun(ScheduledCampaignRunStatus.Completed) with
+                {
+                    ScanCount = 2,
+                    CompletedAtUtc = completedAt,
+                    OrganisationsProcessed = 5,
+                    CommandsPublished = 7,
+                    OrganisationsSkipped = 1,
+                }
+            );
+        var service = CreateService(new() { Runs = runs });
+
+        var status = await service.GetRunStatus(TestContext.Current.CancellationToken);
+
+        Assert.Equal("completed", status.Status);
+        Assert.Equal(2, status.ScanCount);
+        Assert.Equal(completedAt, status.CompletedAtUtc);
+        Assert.Equal(5, status.OrganisationsProcessed);
+        Assert.Equal(7, status.CommandsPublished);
+        Assert.Equal(1, status.OrganisationsSkipped);
+        Assert.Equal(0, status.RetryableFailures);
     }
 
     [Fact]
     public async Task RunFullScan_WhenDisabled_ShouldSkipWithoutCallingObligations()
     {
         var obligations = Substitute.For<IWasteObligationsClient>();
-        var service = CreateService(
-            obligations,
-            Substitute.For<IAccountBackendClient>(),
-            Substitute.For<INotificationCommandPublisher>(),
-            enabled: false
-        );
+        var service = CreateService(new() { Obligations = obligations, Enabled = false });
 
         var result = await service.RunFullScan(TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            new NotSubmittedReminderScanResult(0, 0, 0, NotSubmittedReminderCutoverGuard.DisabledReason),
+            new NotSubmittedReminderScanResult(0, 0, 0, 0, NotSubmittedReminderCutoverGuard.DisabledReason),
             result
         );
         await obligations
@@ -61,17 +285,12 @@ public sealed class NotSubmittedReminderScanServiceTests
     public async Task RunFullScan_WhenCutoverMisconfigured_ShouldReturnSkipReason()
     {
         var obligations = Substitute.For<IWasteObligationsClient>();
-        var service = CreateService(
-            obligations,
-            Substitute.For<IAccountBackendClient>(),
-            Substitute.For<INotificationCommandPublisher>(),
-            cutover: null
-        );
+        var service = CreateService(new() { Obligations = obligations, EmailDeliveryCutoverUtc = null });
 
         var result = await service.RunFullScan(TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            new NotSubmittedReminderScanResult(0, 0, 0, NotSubmittedReminderCutoverGuard.CutoverMisconfiguredReason),
+            new NotSubmittedReminderScanResult(0, 0, 0, 0, NotSubmittedReminderCutoverGuard.CutoverMisconfiguredReason),
             result
         );
         await obligations
@@ -100,11 +319,18 @@ public sealed class NotSubmittedReminderScanServiceTests
             .Returns(CreateOrganisation("approved@example.test"));
 
         var publisher = Substitute.For<INotificationCommandPublisher>();
-        var service = CreateService(obligations, accounts, publisher);
+        var service = CreateService(
+            new()
+            {
+                Obligations = obligations,
+                Accounts = accounts,
+                Publisher = publisher,
+            }
+        );
 
         var result = await service.RunFullScan(TestContext.Current.CancellationToken);
 
-        Assert.Equal(new NotSubmittedReminderScanResult(1, 1, 0, null), result);
+        Assert.Equal(new NotSubmittedReminderScanResult(1, 1, 0, 0, null), result);
         await publisher.Received(1).Publish(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>());
     }
 
@@ -123,11 +349,18 @@ public sealed class NotSubmittedReminderScanServiceTests
             .Throws(new HttpRequestException("unavailable"));
 
         var publisher = Substitute.For<INotificationCommandPublisher>();
-        var service = CreateService(obligations, accounts, publisher);
+        var service = CreateService(
+            new()
+            {
+                Obligations = obligations,
+                Accounts = accounts,
+                Publisher = publisher,
+            }
+        );
 
         var result = await service.RunFullScan(TestContext.Current.CancellationToken);
 
-        Assert.Equal(new NotSubmittedReminderScanResult(1, 0, 1, null), result);
+        Assert.Equal(new NotSubmittedReminderScanResult(1, 0, 1, 1, null), result);
         await publisher.DidNotReceive().Publish(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>());
     }
 
@@ -147,11 +380,11 @@ public sealed class NotSubmittedReminderScanServiceTests
                 new OrganisationWithPersons([new OrganisationPerson(Guid.NewGuid(), "A", "B", "x@test", "Other")])
             );
 
-        var service = CreateService(obligations, accounts, Substitute.For<INotificationCommandPublisher>());
+        var service = CreateService(new() { Obligations = obligations, Accounts = accounts });
 
         var result = await service.RunFullScan(TestContext.Current.CancellationToken);
 
-        Assert.Equal(new NotSubmittedReminderScanResult(1, 0, 1, null), result);
+        Assert.Equal(new NotSubmittedReminderScanResult(1, 0, 1, 0, null), result);
     }
 
     [Fact]
@@ -169,11 +402,18 @@ public sealed class NotSubmittedReminderScanServiceTests
             .Returns(CreateOrganisation("approved@example.test"));
 
         var publisher = Substitute.For<INotificationCommandPublisher>();
-        var service = CreateService(obligations, accounts, publisher);
+        var service = CreateService(
+            new()
+            {
+                Obligations = obligations,
+                Accounts = accounts,
+                Publisher = publisher,
+            }
+        );
 
         var result = await service.RunFullScan(TestContext.Current.CancellationToken);
 
-        Assert.Equal(new NotSubmittedReminderScanResult(1, 1, 0, null), result);
+        Assert.Equal(new NotSubmittedReminderScanResult(1, 1, 0, 0, null), result);
         await publisher.Received(1).Publish(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>());
     }
 
@@ -200,11 +440,18 @@ public sealed class NotSubmittedReminderScanServiceTests
             .Publish(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
             .Returns(_ => Task.CompletedTask, _ => Task.FromException(new InvalidOperationException("publish failed")));
 
-        var service = CreateService(obligations, accounts, publisher);
+        var service = CreateService(
+            new()
+            {
+                Obligations = obligations,
+                Accounts = accounts,
+                Publisher = publisher,
+            }
+        );
 
         var result = await service.RunFullScan(TestContext.Current.CancellationToken);
 
-        Assert.Equal(new NotSubmittedReminderScanResult(2, 1, 1, null), result);
+        Assert.Equal(new NotSubmittedReminderScanResult(2, 1, 1, 1, null), result);
     }
 
     [Fact]
@@ -229,11 +476,19 @@ public sealed class NotSubmittedReminderScanServiceTests
             .Returns(CreateOrganisation("second@example.test"));
 
         var publisher = Substitute.For<INotificationCommandPublisher>();
-        var service = CreateService(obligations, accounts, publisher, pageSize: 1);
+        var service = CreateService(
+            new()
+            {
+                Obligations = obligations,
+                Accounts = accounts,
+                Publisher = publisher,
+                PageSize = 1,
+            }
+        );
 
         var result = await service.RunFullScan(TestContext.Current.CancellationToken);
 
-        Assert.Equal(new NotSubmittedReminderScanResult(2, 2, 0, null), result);
+        Assert.Equal(new NotSubmittedReminderScanResult(2, 2, 0, 0, null), result);
         await publisher.Received(2).Publish(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>());
     }
 
@@ -245,12 +500,7 @@ public sealed class NotSubmittedReminderScanServiceTests
             .SearchUnsubmittedOrganisations(2026, "DirectProducer", 1, 100, Arg.Any<CancellationToken>())
             .Returns(CreatePage([]));
 
-        var service = CreateService(
-            obligations,
-            Substitute.For<IAccountBackendClient>(),
-            Substitute.For<INotificationCommandPublisher>(),
-            obligationYearOverride: null
-        );
+        var service = CreateService(new() { Obligations = obligations, ObligationYearOverride = null });
 
         await service.RunFullScan(TestContext.Current.CancellationToken);
 
@@ -259,39 +509,54 @@ public sealed class NotSubmittedReminderScanServiceTests
             .SearchUnsubmittedOrganisations(2026, "DirectProducer", 1, 100, Arg.Any<CancellationToken>());
     }
 
-    private static NotSubmittedReminderScanService CreateService(
-        IWasteObligationsClient obligations,
-        IAccountBackendClient accounts,
-        INotificationCommandPublisher publisher,
-        string now = "2026-12-01T10:00:00Z",
-        bool enabled = true,
-        string? cutover = Cutover,
-        int? obligationYearOverride = 2026,
-        int pageSize = 100
-    )
+    private sealed record ScanServiceTestSettings
+    {
+        public IWasteObligationsClient Obligations { get; init; } = Substitute.For<IWasteObligationsClient>();
+
+        public IAccountBackendClient Accounts { get; init; } = Substitute.For<IAccountBackendClient>();
+
+        public INotificationCommandPublisher Publisher { get; init; } = Substitute.For<INotificationCommandPublisher>();
+
+        public IScheduledCampaignRunStore? Runs { get; init; }
+
+        public string Now { get; init; } = "2026-12-01T10:00:00Z";
+
+        public bool Enabled { get; init; } = true;
+
+        public string? EmailDeliveryCutoverUtc { get; init; } = Cutover;
+
+        public int? ObligationYearOverride { get; init; } = 2026;
+
+        public int PageSize { get; init; } = 100;
+    }
+
+    private static NotSubmittedReminderScanService CreateService(ScanServiceTestSettings settings)
     {
         var reminder = Options.Create(
             new NotSubmittedReminderOptions
             {
-                Enabled = enabled,
+                Enabled = settings.Enabled,
                 Month = 12,
                 Day = 1,
                 Hour = 10,
                 SendWindow = TimeSpan.FromDays(7),
-                PageSize = pageSize,
-                ObligationYearOverride = obligationYearOverride,
+                ScanLease = TimeSpan.FromMinutes(45),
+                PageSize = settings.PageSize,
+                ObligationYearOverride = settings.ObligationYearOverride,
             }
         );
         var delivery = Options.Create(
             new NotificationCommandDeliveryOptions
             {
                 QueueUrl = "https://example.test/000000000000/queue.fifo",
-                EmailDeliveryCutoverUtc = cutover,
+                EmailDeliveryCutoverUtc = settings.EmailDeliveryCutoverUtc,
                 EvidenceDigestSecret = "secret",
                 RecipientLaneSecret = "secret",
             }
         );
-        var time = new FakeTimeProvider(DateTimeOffset.Parse(now, System.Globalization.CultureInfo.InvariantCulture));
+        var time = new FakeTimeProvider(
+            DateTimeOffset.Parse(settings.Now, System.Globalization.CultureInfo.InvariantCulture)
+        );
         var support = new NotSubmittedReminderScanSupport(
             reminder,
             new NotSubmittedReminderPresentation(Options.Create(new NotificationDefinitionsOptions())),
@@ -308,12 +573,41 @@ public sealed class NotSubmittedReminderScanServiceTests
 
         return new NotSubmittedReminderScanService(
             support,
-            obligations,
-            accounts,
-            publisher,
+            settings.Runs ?? CreateRuns(),
+            settings.Obligations,
+            settings.Accounts,
+            settings.Publisher,
             logs.CreateLogger<NotSubmittedReminderScanService>()
         );
     }
+
+    private static IScheduledCampaignRunStore CreateRuns(
+        ScheduledCampaignRunStart start = ScheduledCampaignRunStart.Started
+    )
+    {
+        var runs = Substitute.For<IScheduledCampaignRunStore>();
+        runs.TryStart(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>())
+            .Returns(start);
+        runs.RecordScan(
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<NotSubmittedReminderScanResult>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(true);
+        runs.Read(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns((ScheduledCampaignRun?)null);
+
+        return runs;
+    }
+
+    private static ScheduledCampaignRun CreateRun(ScheduledCampaignRunStatus status) =>
+        new()
+        {
+            Id = $"{NotSubmittedReminderScanService.Campaign}:2026",
+            Campaign = NotSubmittedReminderScanService.Campaign,
+            ObligationYear = 2026,
+            Status = status,
+        };
 
     private static UnsubmittedOrganisationsPage CreatePage(
         IReadOnlyList<UnsubmittedOrganisationRow> rows,

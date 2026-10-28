@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.IntegrationTests.Helpers;
@@ -21,31 +23,69 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 
 public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
 {
-    private const string Route = "/admin/not-submitted-reminder/scan";
+    private const string ScanRoute = "/admin/not-submitted-reminder/scan";
+    private const string StatusRoute = "/admin/not-submitted-reminder/status";
     private const string Secret = "local-test-admin:secret";
     private static readonly string[] ExpectedRecipientEmails = ["approved@example.test", "delegated@example.test"];
 
     [Fact]
-    public async Task WhenAdminRequestsScanInSendWindow_ShouldAcceptAndWakeWorkerToPublishReminders()
+    public async Task WhenAdminReadsStatusAfterStartupScan_ShouldReturnCompletedRunCounts()
     {
         await using var host = await ReminderAdminHost.Start(TimeSpan.Zero);
         using var client = await host.CreateReadyClient();
-        await WaitForAsync(() =>
-        {
-            Assert.Equal(1, host.State.UnsubmittedReads);
 
-            return Task.CompletedTask;
-        });
+        var anonymousTask = client.SendAsync(
+            Request(HttpMethod.Get, StatusRoute, null),
+            TestContext.Current.CancellationToken
+        );
+        var statusTask = WaitForCompletedStatus(client);
+        await Task.WhenAll(anonymousTask, statusTask);
+        using var anonymous = await anonymousTask;
+        var status = await statusTask;
+
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        Assert.Equal(NotSubmittedReminderScanService.Campaign, status.GetProperty("campaign").GetString());
+        Assert.Equal(host.State.ObligationYear, status.GetProperty("obligationYear").GetInt32());
+        Assert.Equal(1, status.GetProperty("scanCount").GetInt32());
+        Assert.Equal(0, status.GetProperty("organisationsProcessed").GetInt32());
+        Assert.Equal(0, status.GetProperty("commandsPublished").GetInt32());
+        Assert.Equal(0, status.GetProperty("retryableFailures").GetInt32());
+        Assert.Equal(JsonValueKind.String, status.GetProperty("completedAtUtc").ValueKind);
+        Assert.Equal(1, host.State.UnsubmittedReads);
+    }
+
+    [Fact]
+    public async Task WhenAdminReopensCompletedRun_ShouldAcceptAndWakeWorkerToPublishReminders()
+    {
+        await using var host = await ReminderAdminHost.Start(TimeSpan.Zero);
+        using var client = await host.CreateReadyClient();
+        await WaitForCompletedStatus(client);
         var organisationId = host.State.AddOrganisation(
             "GB-ENG",
             Person("approved@example.test", "Approved Person"),
             Person("delegated@example.test", "Delegated Person")
         );
 
-        using var anonymous = await client.SendAsync(Request(null), TestContext.Current.CancellationToken);
-        using var accepted = await client.SendAsync(Request(Secret), TestContext.Current.CancellationToken);
+        var anonymousTask = client.SendAsync(
+            Request(HttpMethod.Post, ScanRoute, null),
+            TestContext.Current.CancellationToken
+        );
+        var rejectedTask = client.SendAsync(
+            Request(HttpMethod.Post, ScanRoute, Secret),
+            TestContext.Current.CancellationToken
+        );
+        await Task.WhenAll(anonymousTask, rejectedTask);
+        using var anonymous = await anonymousTask;
+        using var rejected = await rejectedTask;
+        var rejectedBody = await rejected.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        using var accepted = await client.SendAsync(
+            Request(HttpMethod.Post, ScanRoute + "?reopen=true", Secret),
+            TestContext.Current.CancellationToken
+        );
 
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        Assert.Contains(NotSubmittedReminderScanService.CompletedReason, rejectedBody, StringComparison.Ordinal);
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         await WaitForAsync(() =>
         {
@@ -54,14 +94,13 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
 
             return Task.CompletedTask;
         });
-        Assert.All(
-            host.Sqs.Confirmed,
-            command =>
-                Assert.StartsWith(
-                    $"not-submitted-reminder-1:{host.State.ObligationYear}:{organisationId:N}:",
-                    command.IdempotencyKey
-                )
-        );
+        foreach (var command in host.Sqs.Confirmed)
+        {
+            Assert.StartsWith(
+                $"not-submitted-reminder-1:{host.State.ObligationYear}:{organisationId:N}:",
+                command.IdempotencyKey
+            );
+        }
         Assert.Equal(ExpectedRecipientEmails, host.Sqs.Confirmed.Select(command => command.EmailAddress).Order());
     }
 
@@ -72,18 +111,46 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
         using var client = await host.CreateReadyClient();
         host.State.AddOrganisation("GB-ENG", Person("approved@example.test", "Approved Person"));
 
-        using var response = await client.SendAsync(Request(Secret), TestContext.Current.CancellationToken);
+        using var response = await client.SendAsync(
+            Request(HttpMethod.Post, ScanRoute + "?reopen=true", Secret),
+            TestContext.Current.CancellationToken
+        );
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var status = await ReadStatus(client);
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Contains(NotSubmittedReminderCutoverGuard.OutsideSendWindowReason, body, StringComparison.Ordinal);
+        Assert.Equal("not-started", status.GetProperty("status").GetString());
         Assert.Equal(0, host.State.UnsubmittedReads);
         Assert.Empty(host.Sqs.Confirmed);
     }
 
-    private static HttpRequestMessage Request(string? secret)
+    private static async Task<JsonElement> WaitForCompletedStatus(HttpClient client)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, Route);
+        var status = default(JsonElement);
+        await WaitForAsync(async () =>
+        {
+            status = await ReadStatus(client);
+            Assert.Equal("completed", status.GetProperty("status").GetString());
+        });
+
+        return status;
+    }
+
+    private static async Task<JsonElement> ReadStatus(HttpClient client)
+    {
+        using var response = await client.SendAsync(
+            Request(HttpMethod.Get, StatusRoute, Secret),
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        return await response.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
+    }
+
+    private static HttpRequestMessage Request(HttpMethod method, string route, string? secret)
+    {
+        var request = new HttpRequestMessage(method, route);
         if (secret is not null)
             request.Headers.TryAddWithoutValidation(
                 "Authorization",
@@ -197,9 +264,11 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
                 await _dependencies.StopAsync(CancellationToken.None);
                 await _dependencies.DisposeAsync();
             }
+            var cleanup = new List<Task>(2);
             if (Sqs.CommandUrl.Length > 0)
-                await Sqs.DeleteQueueAsync(Sqs.CommandUrl, CancellationToken.None);
-            await _mongo.DropDatabaseAsync(_database, CancellationToken.None);
+                cleanup.Add(Sqs.DeleteQueueAsync(Sqs.CommandUrl, CancellationToken.None));
+            cleanup.Add(_mongo.DropDatabaseAsync(_database, CancellationToken.None));
+            await Task.WhenAll(cleanup);
             Sqs.Dispose();
             _mongo.Dispose();
         }

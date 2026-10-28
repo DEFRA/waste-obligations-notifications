@@ -10,10 +10,10 @@ public sealed class NotSubmittedReminderScanTriggerTests
     public async Task WhenScanIsAllowed_ShouldReleaseWaitingWorkerWithoutRunningScan()
     {
         var scanService = Substitute.For<INotSubmittedReminderScanService>();
-        scanService.GetSkipReason().Returns((string?)null);
+        scanService.PrepareRequestedScan(false, Arg.Any<CancellationToken>()).Returns((string?)null);
         var trigger = new NotSubmittedReminderScanTrigger(scanService);
 
-        var skipReason = trigger.Request();
+        var skipReason = await trigger.Request(false, TestContext.Current.CancellationToken);
         var wait = trigger.WaitForRequest(TimeSpan.FromMinutes(5), TestContext.Current.CancellationToken);
 
         Assert.Null(skipReason);
@@ -24,17 +24,19 @@ public sealed class NotSubmittedReminderScanTriggerTests
         await scanService.DidNotReceive().RunFullScan(Arg.Any<CancellationToken>());
     }
 
-    [Fact]
-    public async Task WhenScanIsNotAllowed_ShouldReturnReasonAndKeepWorkerWaiting()
+    [Theory]
+    [InlineData(NotSubmittedReminderCutoverGuard.OutsideSendWindowReason)]
+    [InlineData(NotSubmittedReminderScanService.CompletedReason)]
+    public async Task WhenScanIsNotAllowed_ShouldReturnReasonAndKeepWorkerWaiting(string reason)
     {
         var scanService = Substitute.For<INotSubmittedReminderScanService>();
-        scanService.GetSkipReason().Returns(NotSubmittedReminderCutoverGuard.OutsideSendWindowReason);
+        scanService.PrepareRequestedScan(false, Arg.Any<CancellationToken>()).Returns(reason);
         var trigger = new NotSubmittedReminderScanTrigger(scanService);
 
-        var skipReason = trigger.Request();
+        var skipReason = await trigger.Request(false, TestContext.Current.CancellationToken);
         var wait = trigger.WaitForRequest(TimeSpan.FromMinutes(5), TestContext.Current.CancellationToken);
 
-        Assert.Equal(NotSubmittedReminderCutoverGuard.OutsideSendWindowReason, skipReason);
+        Assert.Equal(reason, skipReason);
         Assert.NotSame(
             wait,
             await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(200), TestContext.Current.CancellationToken))
@@ -42,14 +44,27 @@ public sealed class NotSubmittedReminderScanTriggerTests
     }
 
     [Fact]
+    public async Task WhenReopenRequested_ShouldPassReopenToScanService()
+    {
+        var scanService = Substitute.For<INotSubmittedReminderScanService>();
+        scanService.PrepareRequestedScan(true, Arg.Any<CancellationToken>()).Returns((string?)null);
+        var trigger = new NotSubmittedReminderScanTrigger(scanService);
+
+        var skipReason = await trigger.Request(true, TestContext.Current.CancellationToken);
+
+        Assert.Null(skipReason);
+        await scanService.Received(1).PrepareRequestedScan(true, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task WhenRequestedRepeatedly_ShouldCoalesceIntoOnePendingScan()
     {
         var scanService = Substitute.For<INotSubmittedReminderScanService>();
-        scanService.GetSkipReason().Returns((string?)null);
+        scanService.PrepareRequestedScan(false, Arg.Any<CancellationToken>()).Returns((string?)null);
         var trigger = new NotSubmittedReminderScanTrigger(scanService);
 
-        trigger.Request();
-        trigger.Request();
+        await trigger.Request(false, TestContext.Current.CancellationToken);
+        await trigger.Request(false, TestContext.Current.CancellationToken);
         await trigger.WaitForRequest(TimeSpan.FromMinutes(5), TestContext.Current.CancellationToken);
         var second = trigger.WaitForRequest(TimeSpan.FromMinutes(5), TestContext.Current.CancellationToken);
 

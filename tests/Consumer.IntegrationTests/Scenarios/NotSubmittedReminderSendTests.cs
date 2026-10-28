@@ -16,7 +16,7 @@ public sealed class NotSubmittedReminderSendTests : IntegrationTestBase
     ];
 
     [Fact]
-    public async Task WhenScanRunsTwice_ShouldSendOnceToEachDistinctRecipient()
+    public async Task WhenScanCompletes_ShouldSkipLaterScansUntilReopenedAndSendOnceToEachDistinctRecipient()
     {
         await using var fixture = await NotSubmittedReminderFixture.Create();
         fixture.State.AddOrganisation(
@@ -38,17 +38,41 @@ public sealed class NotSubmittedReminderSendTests : IntegrationTestBase
             await fixture.AssertCommandQueueEmpty();
         });
         var firstCommands = fixture.ConfirmedCommands();
+        var completed = await fixture.RunStatus();
 
-        var second = await fixture.Scan();
+        var skipped = await fixture.Scan();
+
+        Assert.Equal(new NotSubmittedReminderScanResult(2, 3, 0, 0, null), first);
+        Assert.Equal(
+            new NotSubmittedReminderScanResult(0, 0, 0, 0, NotSubmittedReminderScanService.CompletedReason),
+            skipped
+        );
+        Assert.Equal(2, fixture.State.UnsubmittedReads);
+        Assert.Equal(3, fixture.ConfirmedCommands().Count);
+        Assert.Equal("completed", completed.Status);
+        Assert.Equal(1, completed.ScanCount);
+        Assert.Equal(
+            (2, 3, 0, 0),
+            (
+                completed.OrganisationsProcessed,
+                completed.CommandsPublished,
+                completed.OrganisationsSkipped,
+                completed.RetryableFailures
+            )
+        );
+        Assert.NotNull(completed.CompletedAtUtc);
+
+        Assert.Null(await fixture.Reopen());
+        var reopened = await fixture.Scan();
         await WaitForAsync(async () =>
         {
             Assert.Equal(6, fixture.ConfirmedCommands().Count);
             await fixture.AssertCommandQueueEmpty();
         });
 
-        Assert.Equal(new NotSubmittedReminderScanResult(2, 3, 0, null), first);
-        Assert.Equal(first, second);
+        Assert.Equal(first, reopened);
         Assert.Equal(4, fixture.State.UnsubmittedReads);
+        Assert.Equal(2, (await fixture.RunStatus()).ScanCount);
         Assert.Equal(
             firstCommands.Select(command => command.IdempotencyKey),
             fixture.ConfirmedCommands().Skip(3).Select(command => command.IdempotencyKey)
@@ -79,9 +103,13 @@ public sealed class NotSubmittedReminderSendTests : IntegrationTestBase
             await fixture.AssertCommandQueueEmpty();
         });
 
-        Assert.Equal(new NotSubmittedReminderScanResult(2, 1, 1, null), first);
-        Assert.Equal(new NotSubmittedReminderScanResult(2, 2, 0, null), second);
+        Assert.Equal(new NotSubmittedReminderScanResult(2, 1, 1, 1, null), first);
+        Assert.Equal(new NotSubmittedReminderScanResult(2, 2, 0, 0, null), second);
         Assert.Equal(ExpectedPartialFailureEmails, fixture.ConfirmedCommands().Select(command => command.EmailAddress));
+        var status = await fixture.RunStatus();
+        Assert.Equal("completed", status.Status);
+        Assert.Equal(2, status.ScanCount);
+        Assert.Equal(0, status.RetryableFailures);
     }
 
     [Fact]
@@ -103,7 +131,7 @@ public sealed class NotSubmittedReminderSendTests : IntegrationTestBase
             await fixture.AssertCommandQueueEmpty();
         });
 
-        Assert.Equal(new NotSubmittedReminderScanResult(1, 1, 0, null), second);
+        Assert.Equal(new NotSubmittedReminderScanResult(1, 1, 0, 0, null), second);
         var request = Assert.Single(await fixture.NotifyRequests());
         Assert.Equal("first@example.test", request.GetProperty("email_address").GetString());
         Assert.DoesNotContain(fixture.ConfirmedCommands(), command => command.EmailAddress == "second@example.test");
