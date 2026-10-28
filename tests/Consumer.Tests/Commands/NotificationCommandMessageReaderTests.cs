@@ -8,6 +8,22 @@ namespace Defra.WasteObligations.Consumer.Tests.Commands;
 
 public sealed class NotificationCommandMessageReaderTests
 {
+    [Fact]
+    public void WhenSourceIsPresent_ShouldRetainGenericSourceAndRejectEmailIdentifiers()
+    {
+        var message = CreateMessage("\"2026-10-01T00:00:00Z\"");
+        message.Body = message.Body.Replace(
+            "\"personalisation\": {}",
+            "\"personalisation\": {}, \"source\": {\"type\": \"future-event\", \"id\": \"entity-123\"}",
+            StringComparison.Ordinal
+        );
+        var command = NotificationCommandMessageReader.Read(message);
+        Assert.Equal("future-event", command.Source?.Type);
+        Assert.Equal("entity-123", command.Source?.Id);
+        message.Body = message.Body.Replace("entity-123", "person@example.invalid", StringComparison.Ordinal);
+        Assert.Throws<InvalidDataException>(() => NotificationCommandMessageReader.Read(message));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("v1:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]

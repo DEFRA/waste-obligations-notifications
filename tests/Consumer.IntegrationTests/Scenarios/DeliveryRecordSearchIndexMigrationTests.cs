@@ -34,7 +34,28 @@ public sealed class DeliveryRecordSearchIndexMigrationTests : IntegrationTestBas
             Assert.True(await runner.CheckCompletion(token));
             Assert.True(await migration.ValidateSchema(database, token));
             var indexes = await ListIndexes(records, token);
-            Assert.Equal(6, indexes.Count);
+            Assert.Equal(8, indexes.Count);
+            AssertIndex(
+                indexes,
+                "recipient_recordedAtUtc_id_desc",
+                new BsonDocument
+                {
+                    { "recipient", 1 },
+                    { RecordedAtField, -1 },
+                    { "_id", -1 },
+                }
+            );
+            AssertIndex(
+                indexes,
+                "source_recordedAtUtc_id_desc",
+                new BsonDocument
+                {
+                    { "source.type", 1 },
+                    { "source.id", 1 },
+                    { RecordedAtField, -1 },
+                    { "_id", -1 },
+                }
+            );
             AssertIndex(indexes, RecordedIndexName, new BsonDocument { { RecordedAtField, -1 }, { "_id", -1 } });
             AssertIndex(
                 indexes,
@@ -72,13 +93,16 @@ public sealed class DeliveryRecordSearchIndexMigrationTests : IntegrationTestBas
             [
                 "_id_",
                 "notificationKey_unique",
+                "recipient_recordedAtUtc_id_desc",
                 "resendOfNotificationKey_recordedAtUtc_id_desc",
+                "source_recordedAtUtc_id_desc",
                 "unrelated_type",
             ];
             Assert.Equal(remainingNames, (await ListIndexes(records, token)).Select(index => index["name"].AsString));
             Assert.False(await migration.ValidateSchema(database, token));
             Assert.True(await new NotificationDeliveryRecordIndexes().ValidateSchema(database, token));
             Assert.True(await new NotificationDeliveryRecordParentSearchIndex().ValidateSchema(database, token));
+            Assert.True(await new NotificationDeliveryRecordSourceSearchIndexes().ValidateSchema(database, token));
             Assert.True(completion.IsCompleted);
         }
         finally

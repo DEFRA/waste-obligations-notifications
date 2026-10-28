@@ -213,6 +213,9 @@ does not prove optional search-index completion or future dependency availabilit
 
 ## Retained delivery-record search
 
+New commands may retain a non-sensitive source type and ID, independent of the delivery identity. The admin search accepts both source fields, or a recipient in a POST body; recipient matching uses the normalized address digest. Follow the HTTP runbook for examples. Existing records without source metadata cannot be found by source. Search indexes are optional migrations and must complete before relying on efficient lookup.
+
+
 [Search query](../src/Consumer/Administration/DeliveryRecordSearchQuery.cs),
 [Mongo reader](../src/Consumer/Administration/MongoDeliveryRecordSearchReader.cs)
 and [search scenarios](../tests/Consumer.IntegrationTests/Scenarios/DeliveryRecordSearchTests.cs)

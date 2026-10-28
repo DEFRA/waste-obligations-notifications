@@ -50,7 +50,8 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             "submitted",
             "private-recipient@example.com",
             "private-template",
-            JsonSerializer.SerializeToElement(new { body = "private-body" })
+            JsonSerializer.SerializeToElement(new { body = "private-body" }),
+            Source: new NotificationSource("other-source", "entity-1")
         );
         var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
         var filter = new BsonDocument("notificationKey", digest.CreateIdempotencyKeyDigest(command.IdempotencyKey));
@@ -72,6 +73,14 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             );
             Assert.Equal(DeliveryClaimResult.Claimed, await store.Claim(command, "inspection-owner", 120, token));
             var activeRecord = await records.Find(filter).SingleAsync(token);
+            Assert.Equal("other-source", activeRecord["source"]["type"].AsString);
+            Assert.Equal("entity-1", activeRecord["source"]["id"].AsString);
+            var suppressed = await records
+                .Find(
+                    new BsonDocument("notificationKey", digest.CreateIdempotencyKeyDigest("suppressed-inspection-key"))
+                )
+                .SingleAsync(token);
+            Assert.Equal("entity-1", suppressed["source"]["id"].AsString);
             var active = await store.Inspect(command, token);
             Assert.Equal("active-claim", active.Classification);
             Assert.Equal(new DateTimeOffset(activeRecord["recordedAtUtc"].ToUniversalTime()), active.RecordedAtUtc);

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
@@ -46,6 +47,9 @@ public sealed class MongoDeliveryRecordSearchReader(
             if (query.ResendOfNotificationKey is not null)
                 filters.Add(builder.Type(ParentField, BsonType.String));
             AddExact(filters, OutcomeField, query.Outcome);
+            AddExact(filters, "source.type", query.SourceType);
+            AddExact(filters, "source.id", query.SourceId);
+            AddExact(filters, "recipient", query.RecipientDigest);
             if (query.ReadCursor() is { } cursor)
                 filters.Add(
                     builder.Or(
@@ -68,6 +72,7 @@ public sealed class MongoDeliveryRecordSearchReader(
                 { "templateId", 1 },
                 { "templateVersion", 1 },
                 { ParentField, 1 },
+                { "source", 1 },
             };
             var records = mongoClient
                 .GetDatabase(mongoOptions.Value.DatabaseName)
@@ -166,8 +171,18 @@ public sealed class MongoDeliveryRecordSearchReader(
             ReadString(record, ParentField) is { } parent
             && Commands.NotificationCommand.IsOpaqueNotificationKey(parent)
                 ? parent
-                : null
+                : null,
+            ReadSource(record)
         );
+
+    private static NotificationSource? ReadSource(BsonDocument record)
+    {
+        if (!record.TryGetValue("source", out var value) || value is not BsonDocument source)
+            return null;
+        var type = ReadString(source, "type");
+        var id = ReadString(source, "id");
+        return type is not null && id is not null ? new NotificationSource(type, id) : null;
+    }
 
     private static string? ReadString(BsonDocument record, string name) =>
         record.TryGetValue(name, out var value) && value.IsString ? value.AsString : null;

@@ -209,6 +209,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                 ServerNow,
             }
         );
+        if (command.Source is { } source)
+            abandoned.Add("source", SourceLiteral(source));
         if (command.ResendOfNotificationKey is { } parent)
             abandoned.Add(ParentField, Literal(parent));
 
@@ -305,6 +307,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             )
             .SetOnInsert(record => record.Outcome, NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue())
             .CurrentDate(record => record.RecordedAtUtc);
+        if (command.Source is { } source)
+            update = update.SetOnInsert(record => record.Source, source);
         if (command.ResendOfNotificationKey is { } parent)
             update = update.SetOnInsert(record => record.ResendOfNotificationKey, parent);
 
@@ -399,6 +403,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                 ServerNow,
             }
         );
+        if (command.Source is { } source)
+            fields.Add("source", SourceLiteral(source));
         if (command.ResendOfNotificationKey is { } parent)
             fields.Add(ParentField, Literal(parent));
 
@@ -560,6 +566,9 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
 
         return parent is null ? value.IsBsonNull : value.IsString && value.AsString == parent;
     }
+
+    private static BsonDocument SourceLiteral(NotificationSource source) =>
+        new("$literal", new BsonDocument { { "type", source.Type }, { "id", source.Id } });
 
     private static BsonDocument Literal(string value) => new("$literal", value);
 

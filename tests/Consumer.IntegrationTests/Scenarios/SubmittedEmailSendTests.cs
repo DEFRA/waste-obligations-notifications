@@ -66,7 +66,10 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
         {
             Assert.Equal(1, fixture.Sqs.AnalyticsDeletions);
             Assert.Equal(1, fixture.Sqs.CommandDeletions);
-            Assert.Equal("delivery-accepted", (await fixture.Record())["outcome"].AsString);
+            var record = await fixture.Record();
+            Assert.Equal("delivery-accepted", record["outcome"].AsString);
+            Assert.Equal("compliance-declaration", record["source"]["type"].AsString);
+            Assert.Equal(fixture.DeclarationId, record["source"]["id"].AsString);
             await fixture.AssertQueuesEmpty();
         });
         var request = Assert.Single(await fixture.NotifyRequests());
@@ -109,6 +112,7 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
         private readonly string _databaseName = $"submission_integration_{Guid.NewGuid():N}";
         private readonly HttpClient _http = new() { BaseAddress = new Uri("http://localhost:8086") };
         private readonly string _declarationId = ObjectId.GenerateNewId().ToString();
+        public string DeclarationId => _declarationId;
         private readonly Guid _organisationId = Guid.NewGuid();
         private IHost? _host;
         private bool _started;

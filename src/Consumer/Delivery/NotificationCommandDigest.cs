@@ -32,6 +32,13 @@ public sealed class NotificationCommandDigest(IOptions<NotificationCommandDelive
             writer.WriteString("emailAddress", command.EmailAddress.Trim().ToLowerInvariant());
             writer.WriteString("notificationType", command.NotificationType);
             writer.WriteString("templateId", command.TemplateId);
+            if (command.Source is { } source)
+            {
+                writer.WriteStartObject("source");
+                writer.WriteString("type", source.Type);
+                writer.WriteString("id", source.Id);
+                writer.WriteEndObject();
+            }
             writer.WritePropertyName("personalisation");
             WriteCanonicalJson(writer, command.Personalisation);
             writer.WriteEndObject();

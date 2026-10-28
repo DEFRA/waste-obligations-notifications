@@ -116,3 +116,9 @@ bypass duplicate suppression. The digest format version is not a key ID, and
 rotation is unsupported without an identity-preserving migration. The recipient
 lane secret must match every publisher and consumer; changing it while commands
 remain queued or dead-lettered can break per-recipient ordering.
+
+## Source correlation for delivery evidence
+
+Commands may carry a non-sensitive, generic source type and ID. These are retained with delivery evidence for authenticated search and participate in immutable-command conflict detection. They do not define delivery identity: one source can produce several emails, and source-independent producers may omit them. Recipient search uses the existing keyed digest, without retaining an address in delivery evidence.
+
+Introducing source metadata changes the immutable digest for commands that supply it. Cancellation also changes its key prefix. Existing records are not migrated: deployment must account for commands crossing this boundary, since replays can conflict with earlier submission evidence or create a new cancellation identity.

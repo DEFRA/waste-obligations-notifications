@@ -89,3 +89,16 @@ Authorization: Bearer {{$auth.token("service")}}
 # @no-log
 GET {{host}}/admin/notification-commands/delivery-records?resendOfNotificationKey=v1%3Asynthetic-key&pageSize=25
 Authorization: Bearer {{$auth.token("service")}}
+
+### Search delivery records by source (replace the synthetic ID)
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?sourceType=compliance-declaration&sourceId=65f1f6570bb08052a8a27b01
+Authorization: Bearer {{$auth.token("service")}}
+
+### Search by recipient without putting the address in the URL
+# @no-log
+POST {{host}}/admin/notification-commands/delivery-records?pageSize=25
+Authorization: Bearer {{$auth.token("service")}}
+Content-Type: application/json
+
+{"recipient":"recipient@example.invalid"}

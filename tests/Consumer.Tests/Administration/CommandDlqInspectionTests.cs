@@ -1727,6 +1727,36 @@ public sealed class CommandDlqInspectionTests
             )
         );
 
+    [Fact]
+    public async Task WhenSearchingByRecipient_ShouldPassOnlyNormalizedDigestToReader()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .SearchReader.Search(Arg.Any<DeliveryRecordSearchQuery>(), Arg.Any<CancellationToken>())
+            .Returns(new DeliveryRecordSearchResult([], null));
+        using var client = factory.CreateClient();
+        using var request = SearchRequest("admin", "sourceType=compliance-declaration&sourceId=abc123");
+        request.Method = HttpMethod.Post;
+        request.Content = new StringContent(
+            "{\"recipient\":\"  Person@Example.invalid  \"}",
+            Encoding.UTF8,
+            "application/json"
+        );
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var digest = factory.Services.GetRequiredService<INotificationCommandDigest>();
+        await factory
+            .SearchReader.Received(1)
+            .Search(
+                Arg.Is<DeliveryRecordSearchQuery>(query =>
+                    query.RecipientDigest == digest.CreateRecipientDigest("person@example.invalid")
+                    && query.SourceType == "compliance-declaration"
+                    && query.SourceId == "abc123"
+                ),
+                Arg.Any<CancellationToken>()
+            );
+    }
+
     private static HttpRequestMessage SearchRequest(string condition, string? query = null)
     {
         var request = Request(condition);

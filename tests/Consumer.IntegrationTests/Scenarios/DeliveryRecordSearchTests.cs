@@ -10,6 +10,47 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 public sealed class DeliveryRecordSearchTests : IntegrationTestBase
 {
     [Fact]
+    public async Task WhenSearchingBySourceAndRecipient_ShouldReturnOnlyMatchingEvidence()
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_source_search_{Guid.NewGuid():N}";
+        var records = client.GetDatabase(databaseName).GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        var token = TestContext.Current.CancellationToken;
+        var time = DateTime.UtcNow;
+        var first = Record(1, "v1:first", "delivery-accepted", time);
+        first["source"] = new BsonDocument { { "type", "compliance-declaration" }, { "id", "declaration-1" } };
+        first["recipient"] = "recipient-digest";
+        var other = Record(2, "v1:other", "delivery-accepted", time);
+        other["source"] = new BsonDocument { { "type", "another-source" }, { "id", "declaration-1" } };
+        other["recipient"] = "recipient-digest";
+        var third = Record(3, "v1:third", "delivery-accepted", time);
+        third["source"] = first["source"].DeepClone();
+        third["recipient"] = "other-digest";
+        try
+        {
+            await records.InsertManyAsync([first, other, third], cancellationToken: token);
+            var result = await Reader(client, databaseName)
+                .Search(
+                    new DeliveryRecordSearchQuery
+                    {
+                        SourceType = "compliance-declaration",
+                        SourceId = "declaration-1",
+                        RecipientDigest = "recipient-digest",
+                    },
+                    token
+                );
+            var record = Assert.Single(result.Records);
+            Assert.Equal("v1:first", record.NotificationKey);
+            Assert.Equal("compliance-declaration", record.Source?.Type);
+            Assert.Equal("declaration-1", record.Source?.Id);
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task WhenSearchingRecordingRange_ShouldApplyBoundsAndCombinedExactFiltersWithoutChangingEvidence()
     {
         using var client = CreateMongoClient();

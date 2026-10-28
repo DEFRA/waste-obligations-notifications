@@ -1,23 +1,51 @@
 using Defra.WasteObligations.Consumer.Administration;
+using Defra.WasteObligations.Consumer.Delivery;
 
 namespace Defra.WasteObligations.Consumer.Endpoints.Admin;
 
 public static class DeliveryRecordSearchEndpoints
 {
-    public static void MapDeliveryRecordSearchEndpoints(this IEndpointRouteBuilder builder) =>
+    public static void MapDeliveryRecordSearchEndpoints(this IEndpointRouteBuilder builder)
+    {
         builder.MapGet("/notification-commands/delivery-records", Search).ExcludeFromDescription();
+        builder.MapPost("/notification-commands/delivery-records", SearchByRecipient).ExcludeFromDescription();
+    }
 
-    private static async Task<IResult> Search(
+    private sealed record RecipientSearch(string Recipient);
+
+    private static Task<IResult> SearchByRecipient(
         HttpRequest request,
+        RecipientSearch input,
+        INotificationCommandDigest digest,
         IDeliveryRecordSearchReader reader,
         CommandDlqDiagnostics diagnostics,
         CancellationToken cancellationToken
     )
     {
+        if (
+            string.IsNullOrWhiteSpace(input.Recipient)
+            || input.Recipient.Length > 320
+            || input.Recipient.Any(char.IsControl)
+        )
+            return Task.FromResult<IResult>(
+                Results.Problem(statusCode: 400, detail: "Delivery record search query is invalid.")
+            );
+
+        return Search(request, reader, diagnostics, cancellationToken, digest.CreateRecipientDigest(input.Recipient));
+    }
+
+    private static async Task<IResult> Search(
+        HttpRequest request,
+        IDeliveryRecordSearchReader reader,
+        CommandDlqDiagnostics diagnostics,
+        CancellationToken cancellationToken,
+        string? recipientDigest = null
+    )
+    {
         DeliveryRecordSearchQuery query;
         try
         {
-            query = DeliveryRecordSearchQuery.Parse(request.Query);
+            query = DeliveryRecordSearchQuery.Parse(request.Query) with { RecipientDigest = recipientDigest };
         }
         catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException)
         {
