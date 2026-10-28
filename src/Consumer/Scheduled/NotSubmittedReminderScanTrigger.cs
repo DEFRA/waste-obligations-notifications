@@ -8,9 +8,9 @@ public sealed class NotSubmittedReminderScanTrigger(INotSubmittedReminderScanSer
         new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite }
     );
 
-    public string? Request()
+    public async Task<string?> Request(bool reopen, CancellationToken cancellationToken)
     {
-        var skipReason = scanService.GetSkipReason();
+        var skipReason = await scanService.PrepareRequestedScan(reopen, cancellationToken);
         if (skipReason is null)
             _requests.Writer.TryWrite(true);
 

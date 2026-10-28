@@ -1,5 +1,6 @@
 using Defra.WasteObligations.Consumer.Startup;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using MongoDB.Driver;
 
 namespace Defra.WasteObligations.Consumer.Scheduled;
 
@@ -24,6 +25,11 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<NotSubmittedReminderCutoverGuard>();
         services.AddSingleton<NotSubmittedReminderPresentation>();
         services.AddSingleton<NotSubmittedReminderScanSupport>();
+        // Mongo is resolved on first use so the hosted worker does not initialise it at startup.
+        services.AddSingleton<IScheduledCampaignRunStore>(serviceProvider => new MongoScheduledCampaignRunStore(
+            serviceProvider.GetRequiredService<IMongoDatabase>,
+            serviceProvider.GetRequiredService<TimeProvider>()
+        ));
         services.AddSingleton<INotSubmittedReminderScanService, NotSubmittedReminderScanService>();
         services.AddSingleton<NotSubmittedReminderScanTrigger>();
         services.AddHostedService<NotSubmittedReminderWorker>();

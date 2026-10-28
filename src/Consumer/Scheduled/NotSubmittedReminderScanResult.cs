@@ -4,5 +4,6 @@ public sealed record NotSubmittedReminderScanResult(
     int OrganisationsProcessed,
     int CommandsPublished,
     int OrganisationsSkipped,
+    int RetryableFailures,
     string? SkipReason
 );
