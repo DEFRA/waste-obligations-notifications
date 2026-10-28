@@ -1,6 +1,19 @@
 ### Request a not-submitted reminder scan
 # Returns 202 and runs the idempotent scan in the background.
-# Returns 409 with the skip reason when disabled, outside the send window or before cutover.
+# Returns 409 with the skip reason when disabled, outside the send window, before cutover
+# or when the campaign run for the current obligation year is already complete.
 # @no-log
 POST {{host}}/admin/not-submitted-reminder/scan
+Authorization: {{authorization}}
+
+### Reopen a completed not-submitted reminder run and request a scan
+# Clears completion for the current obligation year so the next scan republishes eligible commands.
+# @no-log
+POST {{host}}/admin/not-submitted-reminder/scan?reopen=true
+Authorization: {{authorization}}
+
+### Read the not-submitted reminder run status
+# Returns the send window, run status and counts from the last recorded scan.
+# @no-log
+GET {{host}}/admin/not-submitted-reminder/status
 Authorization: {{authorization}}

@@ -26,7 +26,7 @@ administration supports inspection and recovery without changing business data.
 | Declaration reads and deleted-record fallback | [Waste Obligations client](../src/Consumer/Services/WasteObligations), [shared reader and validation](../src/Consumer/Submission/SubmittedEmailProducer.cs), [submission regressions](../tests/Consumer.Tests/Consumers/SubmittedEmailConsumerTests.cs), [cancellation and replay scenarios](../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs) |
 | Cancellation organisation and Account enrichment | [organisation client](../src/Consumer/Services/WasteOrganisations), [Account client](../src/Consumer/Services/AccountBackend), [cancellation producer](../src/Consumer/Cancellation/CancellationEmailProducer.cs) |
 | Analytics receive/enrichment/publication budget | [options](../src/Consumer/Consumers/AnalyticsEventConsumerOptions.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs) |
-| Not submitted reminder producer | [scan service](../src/Consumer/Scheduled/NotSubmittedReminderScanService.cs), [worker](../src/Consumer/Scheduled/NotSubmittedReminderWorker.cs), [admin trigger](../src/Consumer/Endpoints/Admin/NotSubmittedReminderEndpoints.cs), [unit tests](../tests/Consumer.Tests/Scheduled/) |
+| Not submitted reminder producer | [scan service](../src/Consumer/Scheduled/NotSubmittedReminderScanService.cs), [worker](../src/Consumer/Scheduled/NotSubmittedReminderWorker.cs), [run store](../src/Consumer/Scheduled/MongoScheduledCampaignRunStore.cs), [admin endpoints](../src/Consumer/Endpoints/Admin/NotSubmittedReminderEndpoints.cs), [unit tests](../tests/Consumer.Tests/Scheduled/), [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/NotSubmittedReminderSendTests.cs) |
 
 Required publication must be confirmed before acknowledging its source. A valid
 no-email outcome can acknowledge without publication; validation/dependency or
@@ -55,6 +55,21 @@ Retries re-evaluate live contacts; terminal evidence and immutable conflicts rem
 the replay boundary. No recipient snapshot or producer ledger is introduced.
 Publication precedence does not establish inbox order: recipient lanes, recovery
 and resend can change later delivery order.
+
+## Scheduled reminder runs
+
+Each campaign and obligation year has one `ScheduledCampaignRun` record. A host
+must hold its scan lease to scan, so concurrent hosts skip rather than duplicate
+upstream reads and command publication. A lease that outlives a crashed host
+expires after `ScanLease`; keep it longer than a full scan. A scan with no
+retryable failures (Account read or command publication) completes the run, and
+later scheduled or requested scans skip until an administrator reopens it.
+Scans with retryable failures leave the run open and are retried on the next
+interval within the send window.
+
+Completion records publication of every eligible command, not Notify acceptance;
+use delivery records for send outcomes. Reopening republishes eligible commands
+under unchanged idempotency keys, so delivered intentions remain suppressed.
 
 ## Notification commands and data protection
 
