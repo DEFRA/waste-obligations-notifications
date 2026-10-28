@@ -7,11 +7,18 @@ public static class DeliveryRecordSearchEndpoints
 {
     public static void MapDeliveryRecordSearchEndpoints(this IEndpointRouteBuilder builder)
     {
-        builder.MapGet("/notification-commands/delivery-records", Search).ExcludeFromDescription();
+        builder.MapGet("/notification-commands/delivery-records", SearchAll).ExcludeFromDescription();
         builder.MapPost("/notification-commands/delivery-records", SearchByRecipient).ExcludeFromDescription();
     }
 
     private sealed record RecipientSearch(string Recipient);
+
+    private static Task<IResult> SearchAll(
+        HttpRequest request,
+        IDeliveryRecordSearchReader reader,
+        CommandDlqDiagnostics diagnostics,
+        CancellationToken cancellationToken
+    ) => Search(request, reader, diagnostics, cancellationToken, null);
 
     private static Task<IResult> SearchByRecipient(
         HttpRequest request,
@@ -39,13 +46,13 @@ public static class DeliveryRecordSearchEndpoints
         IDeliveryRecordSearchReader reader,
         CommandDlqDiagnostics diagnostics,
         CancellationToken cancellationToken,
-        string? recipientDigest = null
+        string? recipientDigest
     )
     {
         DeliveryRecordSearchQuery query;
         try
         {
-            query = DeliveryRecordSearchQuery.Parse(request.Query) with { RecipientDigest = recipientDigest };
+            query = DeliveryRecordSearchQuery.Parse(request.Query, recipientDigest);
         }
         catch (Exception exception) when (exception is ArgumentException or FormatException or OverflowException)
         {

@@ -27,9 +27,17 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
         var third = Record(3, "v1:third", "delivery-accepted", time);
         third["source"] = first["source"].DeepClone();
         third["recipient"] = "other-digest";
+        var differentSource = Record(4, "v1:other-source-id", "delivery-accepted", time);
+        differentSource["source"] = new BsonDocument
+        {
+            { "type", "compliance-declaration" },
+            { "id", "declaration-2" },
+        };
+        differentSource["recipient"] = "recipient-digest";
+        differentSource["correlationId"] = "4bf92f3577b34da6a3ce929d0e0e4736";
         try
         {
-            await records.InsertManyAsync([first, other, third], cancellationToken: token);
+            await records.InsertManyAsync([first, other, third, differentSource], cancellationToken: token);
             var result = await Reader(client, databaseName)
                 .Search(
                     new DeliveryRecordSearchQuery

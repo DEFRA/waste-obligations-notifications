@@ -22,7 +22,7 @@ public sealed record DeliveryRecordSearchQuery
     public int PageSize { get; init; } = 25;
     public string? Cursor { get; init; }
 
-    public static DeliveryRecordSearchQuery Parse(IQueryCollection values)
+    public static DeliveryRecordSearchQuery Parse(IQueryCollection values, string? recipientDigest = null)
     {
         string[] supportedNames =
         [
@@ -52,6 +52,7 @@ public sealed record DeliveryRecordSearchQuery
             SourceType = Read(values, "sourceType"),
             SourceId = Read(values, "sourceId"),
             CorrelationId = Read(values, "correlationId"),
+            RecipientDigest = recipientDigest,
             PageSize = Read(values, "pageSize") is { } size
                 ? int.Parse(size, NumberStyles.None, CultureInfo.InvariantCulture)
                 : 25,
