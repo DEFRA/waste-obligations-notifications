@@ -24,7 +24,7 @@ public static class ServiceCollectionExtensions
             .ValidateOnStart();
         services
             .AddHttpClient<IWasteOrganisationsClient, WasteOrganisationsClient>()
-            .ConfigureDownstream<WasteOrganisationsOptions>(WasteOrganisationsOptions.SectionName);
+            .ConfigureDownstream<WasteOrganisationsOptions>(WasteOrganisationsOptions.SectionName, useProxy: false);
         services
             .AddHealthChecks()
             .AddCheck<WasteOrganisationsHealthCheck>(

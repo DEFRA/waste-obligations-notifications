@@ -67,8 +67,8 @@ credentials. Remove URL-embedded credentials before deploying; use the separate
 Basic settings instead. Waste Obligations retains its disabled-analytics contract:
 empty read credentials are allowed until processing is enabled, as enforced by
 its [registration](src/Consumer/Services/WasteObligations/ServiceCollectionExtensions.cs).
-Background analytics has no inbound headers to propagate. Account/OAuth follow the companion
-service's `HTTP_PROXY` convention with local bypass.
+Background analytics has no inbound headers to propagate. Account/OAuth and Notify use the companion
+service's `HTTP_PROXY` convention with local bypass; Waste Obligations and Waste Organisations connect directly.
 
 Resilience settings are bound under `WasteObligations`, `WasteOrganisations`,
 `AccountBackend` and `AccountOAuth`. See their

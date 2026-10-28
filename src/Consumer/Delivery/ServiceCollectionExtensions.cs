@@ -1,6 +1,7 @@
 using Amazon.SQS;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Services.Http;
 using Defra.WasteObligations.Consumer.Startup;
 using Defra.WasteObligations.Consumer.Utils.Metrics;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -82,14 +83,7 @@ public static class ServiceCollectionExtensions
                     client.Timeout = Timeout.InfiniteTimeSpan;
                 }
             )
-            .ConfigurePrimaryHttpMessageHandler(() =>
-                new SocketsHttpHandler
-                {
-                    AllowAutoRedirect = false,
-                    // The hosted consumer retains this client, so recycle connections to refresh DNS.
-                    PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-                }
-            )
+            .ConfigurePrimaryHttpMessageHandler(() => DownstreamHttpHandler.Create(useProxy: true))
             .RemoveAllLoggers();
 
         services.AddAWSService<IAmazonSQS>();
