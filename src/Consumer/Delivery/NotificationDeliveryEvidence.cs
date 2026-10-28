@@ -12,5 +12,6 @@ public sealed record NotificationDeliveryEvidence(
     string? NotifyReference,
     string? TemplateId,
     int? TemplateVersion,
-    string? ResendOfNotificationKey = null
+    string? ResendOfNotificationKey = null,
+    string? CorrelationId = null
 );

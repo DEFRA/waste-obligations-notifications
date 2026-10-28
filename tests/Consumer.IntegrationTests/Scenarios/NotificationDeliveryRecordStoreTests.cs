@@ -51,7 +51,8 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             "private-recipient@example.com",
             "private-template",
             JsonSerializer.SerializeToElement(new { body = "private-body" }),
-            Source: new NotificationSource("other-source", "entity-1")
+            Source: new NotificationSource("other-source", "entity-1"),
+            CorrelationId: "4bf92f3577b34da6a3ce929d0e0e4736"
         );
         var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
         var filter = new BsonDocument("notificationKey", digest.CreateIdempotencyKeyDigest(command.IdempotencyKey));
@@ -59,6 +60,45 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
         {
             await new MongoMigrationRunner(database, loggerFactory.CreateLogger<MongoMigrationRunner>(), readiness).Run(
                 token
+            );
+            var withoutTrace = command with { IdempotencyKey = "initially-uncorrelated", CorrelationId = null };
+            Assert.Equal(DeliveryClaimResult.Claimed, await store.Claim(withoutTrace, "first", 120, token));
+            var withoutTraceFilter = new BsonDocument(
+                "notificationKey",
+                digest.CreateIdempotencyKeyDigest(withoutTrace.IdempotencyKey)
+            );
+            Assert.False((await records.Find(withoutTraceFilter).SingleAsync(token)).Contains("correlationId"));
+            await records.UpdateOneAsync(
+                withoutTraceFilter,
+                new BsonDocument("$set", new BsonDocument("leaseExpiresAtUtc", DateTime.UnixEpoch)),
+                cancellationToken: token
+            );
+            Assert.Equal(
+                DeliveryClaimResult.Claimed,
+                await store.Claim(withoutTrace with { CorrelationId = command.CorrelationId }, "second", 120, token)
+            );
+            Assert.Equal(
+                command.CorrelationId,
+                (await records.Find(withoutTraceFilter).SingleAsync(token))["correlationId"].AsString
+            );
+            await records.UpdateOneAsync(
+                withoutTraceFilter,
+                new BsonDocument("$set", new BsonDocument("leaseExpiresAtUtc", DateTime.UnixEpoch)),
+                cancellationToken: token
+            );
+            Assert.Equal(
+                AbandonmentResult.Recorded,
+                await store.RecordAbandonment(
+                    withoutTrace with
+                    {
+                        CorrelationId = "59a48ed1-c28b-4126-bbc5-46b0461798b8",
+                    },
+                    token
+                )
+            );
+            Assert.Equal(
+                command.CorrelationId,
+                (await records.Find(withoutTraceFilter).SingleAsync(token))["correlationId"].AsString
             );
             Assert.Equal(new NotificationDeliveryState("unrecorded", null, null), await store.Inspect(command, token));
             Assert.Equal(
@@ -81,6 +121,8 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 )
                 .SingleAsync(token);
             Assert.Equal("entity-1", suppressed["source"]["id"].AsString);
+            Assert.Equal(command.CorrelationId, activeRecord["correlationId"].AsString);
+            Assert.Equal(command.CorrelationId, suppressed["correlationId"].AsString);
             var active = await store.Inspect(command, token);
             Assert.Equal("active-claim", active.Classification);
             Assert.Equal(new DateTimeOffset(activeRecord["recordedAtUtc"].ToUniversalTime()), active.RecordedAtUtc);
@@ -102,7 +144,18 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 cancellationToken: token
             );
             Assert.Equal("expired-claim", (await store.Inspect(command, token)).Classification);
-            Assert.Equal(DeliveryClaimResult.Claimed, await store.Claim(command, "new-inspection-owner", 120, token));
+            Assert.Equal(
+                DeliveryClaimResult.Claimed,
+                await store.Claim(
+                    command with
+                    {
+                        CorrelationId = "59a48ed1-c28b-4126-bbc5-46b0461798b8",
+                    },
+                    "new-inspection-owner",
+                    120,
+                    token
+                )
+            );
             Assert.True(
                 await store.RecordAcceptance(
                     command,

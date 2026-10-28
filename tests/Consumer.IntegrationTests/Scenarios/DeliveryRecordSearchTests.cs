@@ -20,6 +20,7 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
         var first = Record(1, "v1:first", "delivery-accepted", time);
         first["source"] = new BsonDocument { { "type", "compliance-declaration" }, { "id", "declaration-1" } };
         first["recipient"] = "recipient-digest";
+        first["correlationId"] = "4bf92f3577b34da6a3ce929d0e0e4736";
         var other = Record(2, "v1:other", "delivery-accepted", time);
         other["source"] = new BsonDocument { { "type", "another-source" }, { "id", "declaration-1" } };
         other["recipient"] = "recipient-digest";
@@ -36,6 +37,7 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
                         SourceType = "compliance-declaration",
                         SourceId = "declaration-1",
                         RecipientDigest = "recipient-digest",
+                        CorrelationId = "4bf92f3577b34da6a3ce929d0e0e4736",
                     },
                     token
                 );
@@ -43,6 +45,16 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             Assert.Equal("v1:first", record.NotificationKey);
             Assert.Equal("compliance-declaration", record.Source?.Type);
             Assert.Equal("declaration-1", record.Source?.Id);
+            Assert.Equal("4bf92f3577b34da6a3ce929d0e0e4736", record.CorrelationId);
+            Assert.Empty(
+                (
+                    await Reader(client, databaseName)
+                        .Search(
+                            new DeliveryRecordSearchQuery { CorrelationId = "59a48ed1-c28b-4126-bbc5-46b0461798b8" },
+                            token
+                        )
+                ).Records
+            );
         }
         finally
         {

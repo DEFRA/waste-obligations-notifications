@@ -1,6 +1,7 @@
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Data.Entities;
+using Defra.WasteObligations.Consumer.Utils.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -59,6 +60,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { "notifyReference", 1 },
             { "templateId", 1 },
             { "templateVersion", 1 },
+            { "correlationId", 1 },
             { ParentField, 1 },
             {
                 "matches",
@@ -151,7 +153,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             ReadString(record, "notifyReference"),
             ReadString(record, "templateId"),
             ReadTemplateVersion(record),
-            ReadString(record, ParentField)
+            ReadString(record, ParentField),
+            TraceCorrelation.Read(ReadString(record, "correlationId"))
         );
     }
 
@@ -209,6 +212,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                 ServerNow,
             }
         );
+        abandoned.Add("correlationId", FirstCorrelation(command.CorrelationId));
         if (command.Source is { } source)
             abandoned.Add("source", SourceLiteral(source));
         if (command.ResendOfNotificationKey is { } parent)
@@ -307,6 +311,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             )
             .SetOnInsert(record => record.Outcome, NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue())
             .CurrentDate(record => record.RecordedAtUtc);
+        if (TraceCorrelation.Read(command.CorrelationId) is { } correlationId)
+            update = update.SetOnInsert(record => record.CorrelationId, correlationId);
         if (command.Source is { } source)
             update = update.SetOnInsert(record => record.Source, source);
         if (command.ResendOfNotificationKey is { } parent)
@@ -403,6 +409,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                 ServerNow,
             }
         );
+        if (TraceCorrelation.Read(command.CorrelationId) is not null)
+            fields.Add("correlationId", FirstCorrelation(command.CorrelationId));
         if (command.Source is { } source)
             fields.Add("source", SourceLiteral(source));
         if (command.ResendOfNotificationKey is { } parent)
@@ -566,6 +574,16 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
 
         return parent is null ? value.IsBsonNull : value.IsString && value.AsString == parent;
     }
+
+    private static BsonDocument FirstCorrelation(string? correlationId) =>
+        new(
+            IfNullOperator,
+            new BsonArray
+            {
+                "$correlationId",
+                TraceCorrelation.Read(correlationId) is { } valid ? Literal(valid) : new BsonString("$$REMOVE"),
+            }
+        );
 
     private static BsonDocument SourceLiteral(NotificationSource source) =>
         new("$literal", new BsonDocument { { "type", source.Type }, { "id", source.Id } });

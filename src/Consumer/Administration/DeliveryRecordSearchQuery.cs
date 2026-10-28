@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Defra.WasteObligations.Consumer.Utils.Logging;
 using Microsoft.AspNetCore.WebUtilities;
 using MongoDB.Bson;
 
@@ -17,6 +18,7 @@ public sealed record DeliveryRecordSearchQuery
     public string? SourceType { get; init; }
     public string? SourceId { get; init; }
     public string? RecipientDigest { get; init; }
+    public string? CorrelationId { get; init; }
     public int PageSize { get; init; } = 25;
     public string? Cursor { get; init; }
 
@@ -32,6 +34,7 @@ public sealed record DeliveryRecordSearchQuery
             "outcome",
             "sourceType",
             "sourceId",
+            "correlationId",
             "pageSize",
             "cursor",
         ];
@@ -48,6 +51,7 @@ public sealed record DeliveryRecordSearchQuery
             Outcome = Read(values, "outcome"),
             SourceType = Read(values, "sourceType"),
             SourceId = Read(values, "sourceId"),
+            CorrelationId = Read(values, "correlationId"),
             PageSize = Read(values, "pageSize") is { } size
                 ? int.Parse(size, NumberStyles.None, CultureInfo.InvariantCulture)
                 : 25,
@@ -61,7 +65,8 @@ public sealed record DeliveryRecordSearchQuery
     public void Validate()
     {
         if (
-            (SourceType is null) != (SourceId is null)
+            (CorrelationId is not null && TraceCorrelation.Read(CorrelationId) is null)
+            || (SourceType is null) != (SourceId is null)
             || PageSize is < 1 or > 100
             || RecordedFromUtc is { Kind: not DateTimeKind.Utc }
             || RecordedToUtc is { Kind: not DateTimeKind.Utc }
@@ -141,6 +146,8 @@ public sealed record DeliveryRecordSearchQuery
             filters[nameof(SourceId)] = SourceId;
         if (RecipientDigest is not null)
             filters[nameof(RecipientDigest)] = RecipientDigest;
+        if (CorrelationId is not null)
+            filters[nameof(CorrelationId)] = CorrelationId;
 
         return Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(filters)));
     }

@@ -70,6 +70,7 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
             Assert.Equal("delivery-accepted", record["outcome"].AsString);
             Assert.Equal("compliance-declaration", record["source"]["type"].AsString);
             Assert.Equal(fixture.DeclarationId, record["source"]["id"].AsString);
+            Assert.Equal("4bf92f3577b34da6a3ce929d0e0e4736", record["correlationId"].AsString);
             await fixture.AssertQueuesEmpty();
         });
         var request = Assert.Single(await fixture.NotifyRequests());
@@ -228,7 +229,7 @@ public sealed class SubmittedEmailSendTests : IntegrationTestBase
                 {
                     QueueUrl = Sqs.AnalyticsUrl,
                     MessageBody = $$$"""
-                    {"eventId":"01K5A7M9Q2X6F4N8C0V3B1D5E7","entityId":"cdec_{{{_declarationId}}}","entity":"compliance_declaration","eventType":"submission.created","operation":"create","version":1,"schemaVersion":"compliance_declaration_v1.3","sequence":1,"occurredAt":"2026-09-20T11:12:13Z","recordedAt":"2026-09-20T11:12:14Z","actor":"2be16023-4b2b-4e6c-960a-0bc1a1162a84","after":{"organisation":{"id":"{{{_organisationId}}}","businessCountry":"GB-WLS","registrationType":"ComplianceScheme","regulator":"Changed Snapshot Regulator","regulatorEmail":"snapshot@example.test"},"submitterName":"Changed Snapshot Submitter"}}
+                    {"eventId":"01K5A7M9Q2X6F4N8C0V3B1D5E7","correlationId":"4bf92f3577b34da6a3ce929d0e0e4736","entityId":"cdec_{{{_declarationId}}}","entity":"compliance_declaration","eventType":"submission.created","operation":"create","version":1,"schemaVersion":"compliance_declaration_v1.3","sequence":1,"occurredAt":"2026-09-20T11:12:13Z","recordedAt":"2026-09-20T11:12:14Z","actor":"2be16023-4b2b-4e6c-960a-0bc1a1162a84","after":{"organisation":{"id":"{{{_organisationId}}}","businessCountry":"GB-WLS","registrationType":"ComplianceScheme","regulator":"Changed Snapshot Regulator","regulatorEmail":"snapshot@example.test"},"submitterName":"Changed Snapshot Submitter"}}
                     """,
                 },
                 TestContext.Current.CancellationToken

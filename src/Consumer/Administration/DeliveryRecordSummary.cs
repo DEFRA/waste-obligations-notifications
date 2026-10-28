@@ -16,7 +16,8 @@ public sealed record DeliveryRecordSummary(
     string? TemplateId,
     int? TemplateVersion,
     string? ResendOfNotificationKey = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] NotificationSource? Source = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] NotificationSource? Source = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CorrelationId = null
 )
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

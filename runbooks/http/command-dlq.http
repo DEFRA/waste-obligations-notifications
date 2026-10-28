@@ -102,3 +102,8 @@ Authorization: Bearer {{$auth.token("service")}}
 Content-Type: application/json
 
 {"recipient":"recipient@example.invalid"}
+
+### Search delivery records by correlation ID
+# @no-log
+GET {{host}}/admin/notification-commands/delivery-records?correlationId=4bf92f3577b34da6a3ce929d0e0e4736
+Authorization: Bearer {{$auth.token("service")}}

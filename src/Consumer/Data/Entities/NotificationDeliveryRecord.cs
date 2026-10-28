@@ -19,6 +19,9 @@ public sealed record NotificationDeliveryRecord
     [BsonIgnoreIfNull]
     public NotificationSource? Source { get; init; }
 
+    [BsonIgnoreIfNull]
+    public string? CorrelationId { get; init; }
+
     public required string Recipient { get; init; }
 
     public required string NotificationType { get; init; }

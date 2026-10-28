@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
+using Defra.WasteObligations.Consumer.Utils.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -50,6 +51,7 @@ public sealed class MongoDeliveryRecordSearchReader(
             AddExact(filters, "source.type", query.SourceType);
             AddExact(filters, "source.id", query.SourceId);
             AddExact(filters, "recipient", query.RecipientDigest);
+            AddExact(filters, "correlationId", query.CorrelationId);
             if (query.ReadCursor() is { } cursor)
                 filters.Add(
                     builder.Or(
@@ -73,6 +75,7 @@ public sealed class MongoDeliveryRecordSearchReader(
                 { "templateVersion", 1 },
                 { ParentField, 1 },
                 { "source", 1 },
+                { "correlationId", 1 },
             };
             var records = mongoClient
                 .GetDatabase(mongoOptions.Value.DatabaseName)
@@ -172,7 +175,8 @@ public sealed class MongoDeliveryRecordSearchReader(
             && Commands.NotificationCommand.IsOpaqueNotificationKey(parent)
                 ? parent
                 : null,
-            ReadSource(record)
+            ReadSource(record),
+            TraceCorrelation.Read(ReadString(record, "correlationId"))
         );
 
     private static NotificationSource? ReadSource(BsonDocument record)
