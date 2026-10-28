@@ -124,6 +124,42 @@ public sealed class DeliveryRecordSearchIndexMigrationTests : IntegrationTestBas
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenNewSearchIndexConflicts_ShouldPreserveExistingIndexAndRefuseMigration(bool correlation)
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_search_conflict_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        var token = TestContext.Current.CancellationToken;
+        MongoMigration migration = correlation
+            ? new NotificationDeliveryRecordCorrelationSearchIndex()
+            : new NotificationDeliveryRecordSourceSearchIndexes();
+        var name = correlation ? "correlationId_recordedAtUtc_id_desc" : "recipient_recordedAtUtc_id_desc";
+        try
+        {
+            await records.Indexes.CreateOneAsync(
+                new CreateIndexModel<BsonDocument>(
+                    Builders<BsonDocument>.IndexKeys.Ascending("unrelated"),
+                    new CreateIndexOptions { Name = name }
+                ),
+                cancellationToken: token
+            );
+            var before = await ListIndexes(records, token);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                migration.UpAsync(new MigrationContext(database, null!, token))
+            );
+            Assert.False(await migration.ValidateSchema(database, token));
+            Assert.Equal(before, await ListIndexes(records, token));
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
+    [Theory]
     [InlineData("wrong-key")]
     [InlineData("unique")]
     [InlineData("sparse")]

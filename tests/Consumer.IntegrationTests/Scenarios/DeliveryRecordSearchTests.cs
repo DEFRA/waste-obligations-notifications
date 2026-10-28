@@ -35,25 +35,45 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
         };
         differentSource["recipient"] = "recipient-digest";
         differentSource["correlationId"] = "4bf92f3577b34da6a3ce929d0e0e4736";
+        var next = Record(5, "v1:next", "delivery-accepted", time.AddSeconds(-1));
+        next["source"] = first["source"].DeepClone();
+        next["recipient"] = first["recipient"];
+        next["correlationId"] = first["correlationId"];
         try
         {
-            await records.InsertManyAsync([first, other, third, differentSource], cancellationToken: token);
-            var result = await Reader(client, databaseName)
-                .Search(
-                    new DeliveryRecordSearchQuery
-                    {
-                        SourceType = "compliance-declaration",
-                        SourceId = "declaration-1",
-                        RecipientDigest = "recipient-digest",
-                        CorrelationId = "4bf92f3577b34da6a3ce929d0e0e4736",
-                    },
-                    token
-                );
+            await records.InsertManyAsync([first, other, third, differentSource, next], cancellationToken: token);
+            var reader = Reader(client, databaseName);
+            var query = new DeliveryRecordSearchQuery
+            {
+                SourceType = "compliance-declaration",
+                SourceId = "declaration-1",
+                RecipientDigest = "recipient-digest",
+                CorrelationId = "4bf92f3577b34da6a3ce929d0e0e4736",
+                PageSize = 1,
+            };
+            var result = await reader.Search(query, token);
             var record = Assert.Single(result.Records);
             Assert.Equal("v1:first", record.NotificationKey);
             Assert.Equal("compliance-declaration", record.Source?.Type);
             Assert.Equal("declaration-1", record.Source?.Id);
             Assert.Equal("4bf92f3577b34da6a3ce929d0e0e4736", record.CorrelationId);
+            Assert.NotNull(result.NextCursor);
+            var second = await reader.Search(query with { Cursor = result.NextCursor }, token);
+            Assert.Equal("v1:next", Assert.Single(second.Records).NotificationKey);
+            Assert.Null(second.NextCursor);
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                reader.Search(query with { Cursor = result.NextCursor, SourceId = "declaration-2" }, token)
+            );
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                reader.Search(
+                    query with
+                    {
+                        Cursor = result.NextCursor,
+                        CorrelationId = "59a48ed1-c28b-4126-bbc5-46b0461798b8",
+                    },
+                    token
+                )
+            );
             Assert.Empty(
                 (
                     await Reader(client, databaseName)

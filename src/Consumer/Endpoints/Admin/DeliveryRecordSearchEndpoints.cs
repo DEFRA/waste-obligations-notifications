@@ -18,7 +18,7 @@ public static class DeliveryRecordSearchEndpoints
         IDeliveryRecordSearchReader reader,
         CommandDlqDiagnostics diagnostics,
         CancellationToken cancellationToken
-    ) => Search(request, reader, diagnostics, cancellationToken, null);
+    ) => Search(request, reader, diagnostics, null, cancellationToken);
 
     private static Task<IResult> SearchByRecipient(
         HttpRequest request,
@@ -38,15 +38,15 @@ public static class DeliveryRecordSearchEndpoints
                 Results.Problem(statusCode: 400, detail: "Delivery record search query is invalid.")
             );
 
-        return Search(request, reader, diagnostics, cancellationToken, digest.CreateRecipientDigest(input.Recipient));
+        return Search(request, reader, diagnostics, digest.CreateRecipientDigest(input.Recipient), cancellationToken);
     }
 
     private static async Task<IResult> Search(
         HttpRequest request,
         IDeliveryRecordSearchReader reader,
         CommandDlqDiagnostics diagnostics,
-        CancellationToken cancellationToken,
-        string? recipientDigest
+        string? recipientDigest,
+        CancellationToken cancellationToken
     )
     {
         DeliveryRecordSearchQuery query;

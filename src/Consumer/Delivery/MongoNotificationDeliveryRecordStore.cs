@@ -19,6 +19,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private const string NotificationKeyField = "notificationKey";
     private const string ImmutableFieldsField = "immutableFields";
     private const string ParentField = "resendOfNotificationKey";
+    private const string CorrelationIdField = "correlationId";
     private const string RecordedAtField = "recordedAtUtc";
     private const string LeaseExpiresAtField = "leaseExpiresAtUtc";
     private const string LeaseExpiresAtExpression = "$leaseExpiresAtUtc";
@@ -60,7 +61,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { "notifyReference", 1 },
             { "templateId", 1 },
             { "templateVersion", 1 },
-            { "correlationId", 1 },
+            { CorrelationIdField, 1 },
             { ParentField, 1 },
             {
                 "matches",
@@ -154,7 +155,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             ReadString(record, "templateId"),
             ReadTemplateVersion(record),
             ReadString(record, ParentField),
-            TraceCorrelation.Read(ReadString(record, "correlationId"))
+            TraceCorrelation.Read(ReadString(record, CorrelationIdField))
         );
     }
 
@@ -212,7 +213,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                 ServerNow,
             }
         );
-        abandoned.Add("correlationId", FirstCorrelation(command.CorrelationId));
+        abandoned.Add(CorrelationIdField, FirstCorrelation(command.CorrelationId));
         if (command.Source is { } source)
             abandoned.Add("source", SourceLiteral(source));
         if (command.ResendOfNotificationKey is { } parent)
@@ -410,7 +411,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             }
         );
         if (TraceCorrelation.Read(command.CorrelationId) is not null)
-            fields.Add("correlationId", FirstCorrelation(command.CorrelationId));
+            fields.Add(CorrelationIdField, FirstCorrelation(command.CorrelationId));
         if (command.Source is { } source)
             fields.Add("source", SourceLiteral(source));
         if (command.ResendOfNotificationKey is { } parent)
