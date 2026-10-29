@@ -3,6 +3,7 @@ using MongoDB.Driver;
 
 namespace Defra.WasteObligations.Consumer.Scheduled;
 
+// Callers must hold the campaign's scheduled lease; this store only records run state.
 public sealed class MongoScheduledCampaignRunStore(Func<IMongoDatabase> database, TimeProvider timeProvider)
     : IScheduledCampaignRunStore
 {
@@ -13,7 +14,6 @@ public sealed class MongoScheduledCampaignRunStore(Func<IMongoDatabase> database
     private static readonly UpdateDefinitionBuilder<ScheduledCampaignRun> s_update =
         Builders<ScheduledCampaignRun>.Update;
 
-    private readonly string _instanceId = $"{Environment.MachineName}-{Guid.NewGuid():N}";
     private readonly Lazy<IMongoCollection<ScheduledCampaignRun>> _collection = new(() =>
         database().GetCollection<ScheduledCampaignRun>(nameof(ScheduledCampaignRun))
     );
@@ -23,23 +23,15 @@ public sealed class MongoScheduledCampaignRunStore(Func<IMongoDatabase> database
     public async Task<ScheduledCampaignRunStart> TryStart(
         string campaign,
         int obligationYear,
-        TimeSpan lease,
         CancellationToken cancellationToken
     )
     {
-        var id = RunId(campaign, obligationYear);
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
         var filter = s_filter.And(
-            s_filter.Eq(run => run.Id, id),
-            s_filter.Ne(run => run.Status, ScheduledCampaignRunStatus.Completed),
-            s_filter.Or(
-                s_filter.Eq(run => run.LeaseExpiresAtUtc, null),
-                s_filter.Lte(run => run.LeaseExpiresAtUtc, utcNow)
-            )
+            s_filter.Eq(run => run.Id, RunId(campaign, obligationYear)),
+            s_filter.Ne(run => run.Status, ScheduledCampaignRunStatus.Completed)
         );
         var update = s_update
-            .Set(run => run.LeaseOwner, _instanceId)
-            .Set(run => run.LeaseExpiresAtUtc, utcNow.Add(lease))
             .Set(run => run.LastScanStartedAtUtc, utcNow)
             .Inc(run => run.ScanCount, 1)
             .SetOnInsert(run => run.Campaign, campaign)
@@ -54,15 +46,15 @@ public sealed class MongoScheduledCampaignRunStore(Func<IMongoDatabase> database
         }
         catch (MongoCommandException exception) when (exception.Code == DuplicateKeyErrorCode)
         {
-            return await ReadContendedStart(id, cancellationToken);
+            return ScheduledCampaignRunStart.Completed;
         }
         catch (MongoWriteException exception) when (exception.WriteError.Code == DuplicateKeyErrorCode)
         {
-            return await ReadContendedStart(id, cancellationToken);
+            return ScheduledCampaignRunStart.Completed;
         }
     }
 
-    public async Task<bool> RecordScan(
+    public async Task RecordScan(
         string campaign,
         int obligationYear,
         NotSubmittedReminderScanResult result,
@@ -75,9 +67,7 @@ public sealed class MongoScheduledCampaignRunStore(Func<IMongoDatabase> database
             .Set(run => run.CommandsPublished, result.CommandsPublished)
             .Set(run => run.OrganisationsSkipped, result.OrganisationsSkipped)
             .Set(run => run.RetryableFailures, result.RetryableFailures)
-            .Set(run => run.LastScanFinishedAtUtc, utcNow)
-            .Unset(run => run.LeaseOwner)
-            .Unset(run => run.LeaseExpiresAtUtc);
+            .Set(run => run.LastScanFinishedAtUtc, utcNow);
         if (result.RetryableFailures == 0)
         {
             update = update
@@ -85,21 +75,12 @@ public sealed class MongoScheduledCampaignRunStore(Func<IMongoDatabase> database
                 .Set(run => run.CompletedAtUtc, utcNow);
         }
 
-        var recorded = await Runs.UpdateOneAsync(
-            OwnedRun(campaign, obligationYear),
+        await Runs.UpdateOneAsync(
+            s_filter.Eq(run => run.Id, RunId(campaign, obligationYear)),
             update,
             cancellationToken: cancellationToken
         );
-
-        return recorded.MatchedCount == 1;
     }
-
-    public async Task Release(string campaign, int obligationYear, CancellationToken cancellationToken) =>
-        await Runs.UpdateOneAsync(
-            OwnedRun(campaign, obligationYear),
-            s_update.Unset(run => run.LeaseOwner).Unset(run => run.LeaseExpiresAtUtc),
-            cancellationToken: cancellationToken
-        );
 
     public async Task Reopen(string campaign, int obligationYear, CancellationToken cancellationToken) =>
         await Runs.UpdateOneAsync(
@@ -117,19 +98,4 @@ public sealed class MongoScheduledCampaignRunStore(Func<IMongoDatabase> database
             .FirstOrDefaultAsync(cancellationToken);
 
     private static string RunId(string campaign, int obligationYear) => $"{campaign}:{obligationYear}";
-
-    private FilterDefinition<ScheduledCampaignRun> OwnedRun(string campaign, int obligationYear) =>
-        s_filter.And(
-            s_filter.Eq(run => run.Id, RunId(campaign, obligationYear)),
-            s_filter.Eq(run => run.LeaseOwner, _instanceId)
-        );
-
-    private async Task<ScheduledCampaignRunStart> ReadContendedStart(string id, CancellationToken cancellationToken)
-    {
-        var existing = await Runs.Find(s_filter.Eq(run => run.Id, id)).FirstOrDefaultAsync(cancellationToken);
-
-        return existing?.Status == ScheduledCampaignRunStatus.Completed
-            ? ScheduledCampaignRunStart.Completed
-            : ScheduledCampaignRunStart.Busy;
-    }
 }

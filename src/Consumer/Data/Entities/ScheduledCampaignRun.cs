@@ -30,10 +30,4 @@ public sealed record ScheduledCampaignRun
     public int OrganisationsSkipped { get; init; }
 
     public int RetryableFailures { get; init; }
-
-    [BsonIgnoreIfNull]
-    public string? LeaseOwner { get; init; }
-
-    [BsonIgnoreIfNull]
-    public DateTime? LeaseExpiresAtUtc { get; init; }
 }

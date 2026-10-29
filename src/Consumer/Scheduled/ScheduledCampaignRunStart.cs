@@ -4,5 +4,4 @@ public enum ScheduledCampaignRunStart
 {
     Started,
     Completed,
-    Busy,
 }

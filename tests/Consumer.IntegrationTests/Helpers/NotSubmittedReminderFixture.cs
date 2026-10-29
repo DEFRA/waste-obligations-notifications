@@ -4,6 +4,7 @@ using System.Text.Json;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 using Defra.WasteObligations.Consumer.Commands;
+using Defra.WasteObligations.Consumer.Data.Entities;
 using Defra.WasteObligations.Consumer.Delivery;
 using Defra.WasteObligations.Consumer.Notifications;
 using Defra.WasteObligations.Consumer.Scheduled;
@@ -86,6 +87,8 @@ public sealed class NotSubmittedReminderFixture : IAsyncDisposable
                 ["NotSubmittedReminder:Minute"] = "0",
                 ["NotSubmittedReminder:SendWindow"] = "2.00:00:00",
                 ["NotSubmittedReminder:PageSize"] = "1",
+                ["NotSubmittedReminder:ScanLease"] = "00:01:00",
+                ["NotSubmittedReminder:ScanLeaseRenewalInterval"] = "00:00:01",
                 ["NotSubmittedReminder:ObligationYearOverride"] = londonNow.Year.ToString(CultureInfo.InvariantCulture),
                 ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                 ["Mongo:DatabaseName"] = fixture._database,
@@ -171,6 +174,30 @@ public sealed class NotSubmittedReminderFixture : IAsyncDisposable
     }
 
     public IReadOnlyList<NotificationCommand> ConfirmedCommands() => Sqs.Confirmed.ToArray();
+
+    // Simulates another host acquiring the lease after this host's lease has expired.
+    public async Task<bool> TakeOverScanLease()
+    {
+        var database = _mongo.GetDatabase(_database);
+        await database
+            .GetCollection<ScheduledCampaignLease>(ScheduledCampaignLease.CollectionName)
+            .UpdateOneAsync(
+                Builders<ScheduledCampaignLease>.Filter.Eq(lease => lease.Id, ScanLeaseId),
+                Builders<ScheduledCampaignLease>.Update.Set(lease => lease.ExpiresAt, DateTime.UtcNow.AddMinutes(-1)),
+                cancellationToken: TestContext.Current.CancellationToken
+            );
+
+        return await OtherHostLeases()
+            .TryAcquire(ScanLeaseId, TimeSpan.FromMinutes(10), TestContext.Current.CancellationToken);
+    }
+
+    public Task<bool> CanAnotherHostAcquireScanLease() =>
+        OtherHostLeases().TryAcquire(ScanLeaseId, TimeSpan.FromMinutes(10), TestContext.Current.CancellationToken);
+
+    private string ScanLeaseId => $"{NotSubmittedReminderScanService.Campaign}:{State.ObligationYear}";
+
+    private MongoScheduledCampaignLeaseService OtherHostLeases() =>
+        new(() => _mongo.GetDatabase(_database), TimeProvider.System);
 
     public async ValueTask DisposeAsync()
     {

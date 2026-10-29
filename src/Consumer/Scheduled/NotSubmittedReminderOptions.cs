@@ -29,8 +29,11 @@ public sealed record NotSubmittedReminderOptions
     [Range(typeof(TimeSpan), "00:01:00", "24:00:00")]
     public TimeSpan ScanInterval { get; init; } = TimeSpan.FromMinutes(30);
 
-    [Range(typeof(TimeSpan), "00:01:00", "1.00:00:00")]
-    public TimeSpan ScanLease { get; init; } = TimeSpan.FromHours(1);
+    [Range(typeof(TimeSpan), "00:01:00", "01:00:00")]
+    public TimeSpan ScanLease { get; init; } = TimeSpan.FromMinutes(5);
+
+    [Range(typeof(TimeSpan), "00:00:01", "00:30:00")]
+    public TimeSpan ScanLeaseRenewalInterval { get; init; } = TimeSpan.FromMinutes(1);
 
     [Range(1, 100)]
     public int PageSize { get; init; } = 100;
@@ -46,6 +49,7 @@ public sealed record NotSubmittedReminderOptions
         && SendWindow >= TimeSpan.FromMinutes(1)
         && ScanInterval >= TimeSpan.FromMinutes(1)
         && ScanLease >= TimeSpan.FromMinutes(1)
+        && ScanLeaseRenewalInterval >= TimeSpan.FromSeconds(1)
         && PageSize is >= 1 and <= 100
         && !string.IsNullOrWhiteSpace(TimeZoneId);
 }

@@ -36,9 +36,15 @@ public static class NotSubmittedReminderHttpFixtureExtensions
         app.MapPost("/token", () => Results.Json(new { access_token = state.AccessToken, expires_in = 3600 }));
         app.MapGet(
             "/api/organisations/organisation-with-persons/{organisationId:guid}",
-            (HttpContext context, Guid organisationId) =>
+            async (HttpContext context, Guid organisationId) =>
             {
                 Assert.Equal($"Bearer {state.AccessToken}", context.Request.Headers.Authorization.ToString());
+
+                if (organisationId == state.HeldAccountRead)
+                {
+                    state.AccountReadHeld.TrySetResult();
+                    await Task.Delay(Timeout.Infinite, context.RequestAborted);
+                }
 
                 return state.Persons.TryGetValue(organisationId, out var persons)
                     ? Results.Json(new OrganisationWithPersons(persons))

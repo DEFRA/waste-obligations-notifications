@@ -138,6 +138,38 @@ public sealed class NotSubmittedReminderSendTests : IntegrationTestBase
         await fixture.AssertAcceptedRecords(1);
     }
 
+    [Fact]
+    public async Task WhenAnotherHostTakesOverLeaseDuringScan_ShouldStopPublishingWithoutRecordingScan()
+    {
+        await using var fixture = await NotSubmittedReminderFixture.Create();
+        fixture.State.AddOrganisation("GB-ENG", Person("first@example.test", "Approved Person"));
+        fixture.State.HeldAccountRead = fixture.State.AddOrganisation(
+            "GB-ENG",
+            Person("second@example.test", "Approved Person")
+        );
+        fixture.State.AddOrganisation("GB-ENG", Person("third@example.test", "Approved Person"));
+
+        var scan = fixture.Scan();
+        await fixture.State.AccountReadHeld.Task.WaitAsync(
+            TimeSpan.FromSeconds(30),
+            TestContext.Current.CancellationToken
+        );
+        var takenOver = await fixture.TakeOverScanLease();
+        var result = await scan.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.True(takenOver);
+        Assert.Equal(
+            new NotSubmittedReminderScanResult(0, 0, 0, 0, NotSubmittedReminderScanService.LeaseLostReason),
+            result
+        );
+        Assert.Equal(["first@example.test"], fixture.ConfirmedCommands().Select(command => command.EmailAddress));
+        var status = await fixture.RunStatus();
+        Assert.Equal("in-progress", status.Status);
+        Assert.Equal(1, status.ScanCount);
+        Assert.Null(status.LastScanFinishedAtUtc);
+        Assert.False(await fixture.CanAnotherHostAcquireScanLease());
+    }
+
     private static OrganisationPerson Person(string email, string role) =>
         new(Guid.NewGuid(), "Synthetic", "Person", email, role);
 }

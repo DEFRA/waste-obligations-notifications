@@ -10,6 +10,8 @@ public sealed class NotSubmittedReminderHttpState
     public IReadOnlyList<UnsubmittedOrganisationRow> Organisations { get; set; } = [];
     public Dictionary<Guid, IReadOnlyList<OrganisationPerson>> Persons { get; } = [];
     public int UnsubmittedReads;
+    public Guid? HeldAccountRead { get; set; }
+    public TaskCompletionSource AccountReadHeld { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Guid AddOrganisation(string country, params OrganisationPerson[] persons)
     {

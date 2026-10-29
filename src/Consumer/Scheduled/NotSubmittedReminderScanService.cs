@@ -7,6 +7,7 @@ namespace Defra.WasteObligations.Consumer.Scheduled;
 
 public sealed class NotSubmittedReminderScanService(
     NotSubmittedReminderScanSupport support,
+    ScheduledCampaignLeaseKeeper leases,
     IScheduledCampaignRunStore runs,
     IWasteObligationsClient obligations,
     IAccountBackendClient accounts,
@@ -17,6 +18,7 @@ public sealed class NotSubmittedReminderScanService(
     public const string Campaign = "not-submitted-reminder-" + NotSubmittedReminderCommandFactory.CampaignId;
     public const string CompletedReason = "not-submitted-reminder-completed";
     public const string ScanInProgressReason = "not-submitted-reminder-scan-in-progress";
+    public const string LeaseLostReason = "not-submitted-reminder-lease-lost";
 
     private const string DirectProducer = "DirectProducer";
 
@@ -69,22 +71,40 @@ public sealed class NotSubmittedReminderScanService(
             return Skipped(skipReason);
         }
 
-        var start = await runs.TryStart(Campaign, obligationYear, settings.ScanLease, cancellationToken);
-        if (start != ScheduledCampaignRunStart.Started)
-            return Skipped(start == ScheduledCampaignRunStart.Completed ? CompletedReason : ScanInProgressReason);
+        await using var lease = await leases.TryHold(
+            LeaseId(obligationYear),
+            settings.ScanLease,
+            settings.ScanLeaseRenewalInterval,
+            cancellationToken
+        );
+        if (lease is null)
+            return Skipped(ScanInProgressReason);
 
         NotSubmittedReminderScanResult result;
         try
         {
-            result = await Scan(obligationYear, cancellationToken);
-        }
-        catch
-        {
-            await ReleaseAfterFailure(obligationYear);
-            throw;
-        }
+            var start = await runs.TryStart(Campaign, obligationYear, lease.Token);
+            if (start == ScheduledCampaignRunStart.Completed)
+                return Skipped(CompletedReason);
 
-        var recorded = await runs.RecordScan(Campaign, obligationYear, result, cancellationToken);
+            result = await Scan(obligationYear, lease.Token);
+
+            await runs.RecordScan(Campaign, obligationYear, result, lease.Token);
+        }
+        catch (OperationCanceledException exception) when (lease.IsLost && !cancellationToken.IsCancellationRequested)
+        {
+            if (logger.IsEnabled(LogLevel.Warning))
+            {
+                logger.LogWarning(
+                    exception,
+                    "Not submitted reminder scan stopped ({ReasonCode}) for obligation year {ObligationYear}",
+                    "lease-lost",
+                    obligationYear
+                );
+            }
+
+            return Skipped(LeaseLostReason);
+        }
 
         if (logger.IsEnabled(LogLevel.Information))
         {
@@ -95,7 +115,7 @@ public sealed class NotSubmittedReminderScanService(
                 result.CommandsPublished,
                 result.OrganisationsSkipped,
                 result.RetryableFailures,
-                RunOutcome(recorded, result)
+                result.RetryableFailures == 0 ? "completed" : "incomplete"
             );
         }
 
@@ -132,76 +152,78 @@ public sealed class NotSubmittedReminderScanService(
 
     private static NotSubmittedReminderScanResult Skipped(string reason) => new(0, 0, 0, 0, reason);
 
-    private static string RunOutcome(bool recorded, NotSubmittedReminderScanResult result)
-    {
-        if (!recorded)
-            return "lease-lost";
-
-        return result.RetryableFailures == 0 ? "completed" : "incomplete";
-    }
+    private static string LeaseId(int obligationYear) => $"{Campaign}:{obligationYear}";
 
     private int GetObligationYear() =>
         support.Options.Value.ObligationYearOverride ?? UkObligationYear.FromUtcNow(support.TimeProvider);
 
     private async Task<NotSubmittedReminderScanResult> Scan(int obligationYear, CancellationToken cancellationToken)
     {
-        var settings = support.Options.Value;
         var actionOccurredAtUtc = support.Occurrence.GetOccurrenceUtc(obligationYear);
-        var page = 1;
-        var processed = 0;
+        var (organisations, listChanged) = await ReadUnsubmittedOrganisations(obligationYear, cancellationToken);
         var published = 0;
         var skipped = 0;
-        var failures = 0;
+        var failures = listChanged ? 1 : 0;
+
+        foreach (var row in organisations)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var outcome = await PublishForOrganisation(row, obligationYear, actionOccurredAtUtc, cancellationToken);
+            if (outcome.Published == 0)
+                skipped++;
+            published += outcome.Published;
+            failures += outcome.Failures;
+        }
+
+        return new NotSubmittedReminderScanResult(organisations.Count, published, skipped, failures, null);
+    }
+
+    // Offset paging can skip or repeat rows when the list changes between requests, so read every page first.
+    private async Task<(
+        IReadOnlyList<UnsubmittedOrganisationRow> Organisations,
+        bool ListChanged
+    )> ReadUnsubmittedOrganisations(int obligationYear, CancellationToken cancellationToken)
+    {
+        var pageSize = support.Options.Value.PageSize;
+        var organisations = new List<UnsubmittedOrganisationRow>();
+        var seen = new HashSet<Guid>();
+        var page = 1;
+        var read = 0;
+        int? firstTotal = null;
         var total = int.MaxValue;
 
-        while (processed < total)
+        while (read < total)
         {
             var pageResult = await obligations.SearchUnsubmittedOrganisations(
                 obligationYear,
                 DirectProducer,
                 page,
-                settings.PageSize,
+                pageSize,
                 cancellationToken
             );
             total = pageResult.Total;
-
-            foreach (var row in pageResult.UnsubmittedOrganisations)
-            {
-                processed++;
-                var outcome = await PublishForOrganisation(row, obligationYear, actionOccurredAtUtc, cancellationToken);
-                if (outcome.Published == 0)
-                    skipped++;
-                published += outcome.Published;
-                failures += outcome.Failures;
-            }
+            firstTotal ??= total;
 
             if (pageResult.UnsubmittedOrganisations.Count == 0)
                 break;
 
+            read += pageResult.UnsubmittedOrganisations.Count;
+            organisations.AddRange(pageResult.UnsubmittedOrganisations.Where(row => seen.Add(row.OrganisationId)));
             page++;
         }
 
-        return new NotSubmittedReminderScanResult(processed, published, skipped, failures, null);
-    }
+        var listChanged = firstTotal != total || organisations.Count < total;
+        if (listChanged && logger.IsEnabled(LogLevel.Warning))
+        {
+            logger.LogWarning(
+                "Not submitted reminder unsubmitted list changed during the scan ({ReasonCode}) for obligation year {ObligationYear}",
+                "unsubmitted-list-changed",
+                obligationYear
+            );
+        }
 
-    private async Task ReleaseAfterFailure(int obligationYear)
-    {
-        try
-        {
-            await runs.Release(Campaign, obligationYear, CancellationToken.None);
-        }
-        catch (Exception exception)
-        {
-            if (logger.IsEnabled(LogLevel.Warning))
-            {
-                logger.LogWarning(
-                    exception,
-                    "Not submitted reminder run lease was not released ({ReasonCode}) for obligation year {ObligationYear}",
-                    "run-release-failed",
-                    obligationYear
-                );
-            }
-        }
+        return (organisations, listChanged);
     }
 
     private async Task<(int Published, int Failures)> PublishForOrganisation(
@@ -228,7 +250,10 @@ public sealed class NotSubmittedReminderScanService(
         {
             organisation = await accounts.ReadOrganisationWithPersons(row.OrganisationId, cancellationToken);
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        catch (Exception exception)
+            when (exception is HttpRequestException or TaskCanceledException
+                && !cancellationToken.IsCancellationRequested
+            )
         {
             if (logger.IsEnabled(LogLevel.Warning))
             {
@@ -278,26 +303,40 @@ public sealed class NotSubmittedReminderScanService(
                 personalisation
             );
 
-            try
-            {
-                await publisher.Publish(command, cancellationToken);
+            if (await TryPublish(command, row.OrganisationId, cancellationToken))
                 published++;
-            }
-            catch (Exception exception)
-            {
+            else
                 failures++;
-                if (logger.IsEnabled(LogLevel.Warning))
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Not submitted reminder failed to publish for organisation {OrganisationId} ({ReasonCode})",
-                        row.OrganisationId,
-                        "command-publish-failed"
-                    );
-                }
-            }
         }
 
         return (published, failures);
+    }
+
+    private async Task<bool> TryPublish(
+        NotificationCommand command,
+        Guid organisationId,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            await publisher.Publish(command, cancellationToken);
+
+            return true;
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            if (logger.IsEnabled(LogLevel.Warning))
+            {
+                logger.LogWarning(
+                    exception,
+                    "Not submitted reminder failed to publish for organisation {OrganisationId} ({ReasonCode})",
+                    organisationId,
+                    "command-publish-failed"
+                );
+            }
+
+            return false;
+        }
     }
 }

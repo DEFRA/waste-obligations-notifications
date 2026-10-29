@@ -19,6 +19,10 @@ public static class ServiceCollectionExtensions
             .Bind(configuration.GetSection(NotSubmittedReminderOptions.SectionName))
             .ValidateDataAnnotations()
             .Validate(options => options.HasValidSchedule, "Not submitted reminder schedule settings are invalid")
+            .Validate(
+                options => options.ScanLeaseRenewalInterval * 2 <= options.ScanLease,
+                "Not submitted reminder lease renewal interval must be no more than half the scan lease"
+            )
             .ValidateOnStart();
 
         services.AddSingleton<NotSubmittedReminderOccurrence>();
@@ -30,6 +34,11 @@ public static class ServiceCollectionExtensions
             serviceProvider.GetRequiredService<IMongoDatabase>,
             serviceProvider.GetRequiredService<TimeProvider>()
         ));
+        services.AddSingleton<IScheduledCampaignLeaseService>(serviceProvider => new MongoScheduledCampaignLeaseService(
+            serviceProvider.GetRequiredService<IMongoDatabase>,
+            serviceProvider.GetRequiredService<TimeProvider>()
+        ));
+        services.AddSingleton<ScheduledCampaignLeaseKeeper>();
         services.AddSingleton<INotSubmittedReminderScanService, NotSubmittedReminderScanService>();
         services.AddSingleton<NotSubmittedReminderScanTrigger>();
         services.AddHostedService<NotSubmittedReminderWorker>();
