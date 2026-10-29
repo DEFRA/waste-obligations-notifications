@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Defra.WasteObligations.Consumer.Commands;
 
 namespace Defra.WasteObligations.Consumer.Administration;
 
@@ -14,7 +15,9 @@ public sealed record DeliveryRecordSummary(
     string? NotifyReference,
     string? TemplateId,
     int? TemplateVersion,
-    string? ResendOfNotificationKey = null
+    string? ResendOfNotificationKey = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] NotificationSource? Source = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CorrelationId = null
 )
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

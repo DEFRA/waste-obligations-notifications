@@ -1,6 +1,7 @@
 using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Data.Entities;
+using Defra.WasteObligations.Consumer.Utils.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -18,6 +19,7 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
     private const string NotificationKeyField = "notificationKey";
     private const string ImmutableFieldsField = "immutableFields";
     private const string ParentField = "resendOfNotificationKey";
+    private const string CorrelationIdField = "correlationId";
     private const string RecordedAtField = "recordedAtUtc";
     private const string LeaseExpiresAtField = "leaseExpiresAtUtc";
     private const string LeaseExpiresAtExpression = "$leaseExpiresAtUtc";
@@ -59,6 +61,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             { "notifyReference", 1 },
             { "templateId", 1 },
             { "templateVersion", 1 },
+            { CorrelationIdField, 1 },
+            { "source", 1 },
             { ParentField, 1 },
             {
                 "matches",
@@ -151,7 +155,9 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             ReadString(record, "notifyReference"),
             ReadString(record, "templateId"),
             ReadTemplateVersion(record),
-            ReadString(record, ParentField)
+            ReadString(record, ParentField),
+            TraceCorrelation.Read(ReadString(record, CorrelationIdField)),
+            NotificationSourceReader.Read(record)
         );
     }
 
@@ -209,6 +215,8 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                 ServerNow,
             }
         );
+        abandoned.Add(CorrelationIdField, FirstCorrelation(command.CorrelationId));
+        abandoned.Add("source", FirstSource(command.Source));
         if (command.ResendOfNotificationKey is { } parent)
             abandoned.Add(ParentField, Literal(parent));
 
@@ -305,6 +313,10 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
             )
             .SetOnInsert(record => record.Outcome, NotificationDeliveryOutcome.DeliverySuppressed.ToStorageValue())
             .CurrentDate(record => record.RecordedAtUtc);
+        if (TraceCorrelation.Read(command.CorrelationId) is { } correlationId)
+            update = update.SetOnInsert(record => record.CorrelationId, correlationId);
+        if (command.Source is { } source)
+            update = update.SetOnInsert(record => record.Source, source);
         if (command.ResendOfNotificationKey is { } parent)
             update = update.SetOnInsert(record => record.ResendOfNotificationKey, parent);
 
@@ -399,6 +411,10 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
                 ServerNow,
             }
         );
+        if (TraceCorrelation.Read(command.CorrelationId) is not null)
+            fields.Add(CorrelationIdField, FirstCorrelation(command.CorrelationId));
+        if (command.Source is not null)
+            fields.Add("source", FirstSource(command.Source));
         if (command.ResendOfNotificationKey is { } parent)
             fields.Add(ParentField, Literal(parent));
 
@@ -560,6 +576,25 @@ public sealed class MongoNotificationDeliveryRecordStore : INotificationDelivery
 
         return parent is null ? value.IsBsonNull : value.IsString && value.AsString == parent;
     }
+
+    private static BsonDocument FirstCorrelation(string? correlationId) =>
+        new(
+            IfNullOperator,
+            new BsonArray
+            {
+                "$correlationId",
+                TraceCorrelation.Read(correlationId) is { } valid ? Literal(valid) : new BsonString("$$REMOVE"),
+            }
+        );
+
+    private static BsonDocument FirstSource(NotificationSource? source) =>
+        new(
+            IfNullOperator,
+            new BsonArray { "$source", source is not null ? SourceLiteral(source) : new BsonString("$$REMOVE") }
+        );
+
+    private static BsonDocument SourceLiteral(NotificationSource source) =>
+        new("$literal", new BsonDocument { { "type", source.Type }, { "id", source.Id } });
 
     private static BsonDocument Literal(string value) => new("$literal", value);
 

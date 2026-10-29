@@ -106,6 +106,14 @@ public sealed class CancellationEmailProducerTests
             JsonSerializer.Serialize(commands[0])
         );
         Assert.Equal("compliance-declaration:65f1f6570bb08052a8a27b01:submitted:v1", commands[0].IdempotencyKey);
+        Assert.All(
+            commands,
+            command =>
+            {
+                Assert.Equal("compliance-declaration", command.Source?.Type);
+                Assert.Equal("65f1f6570bb08052a8a27b01", command.Source?.Id);
+            }
+        );
         var command = commands[1];
         Assert.Equal(template, command.TemplateId);
         Assert.Equal(notificationType, command.NotificationType);
@@ -139,7 +147,7 @@ public sealed class CancellationEmailProducerTests
         var original = (await fixture.Create())[1];
 
         Assert.Equal(
-            "cdec:65f1f6570bb08052a8a27b01:cancelled:v1:c7567b8761d74234c689a1fa651d27736456262add7e749cad744dcde588b3fa",
+            "compliance-declaration:65f1f6570bb08052a8a27b01:cancelled:v1:c7567b8761d74234c689a1fa651d27736456262add7e749cad744dcde588b3fa",
             original.IdempotencyKey
         );
 

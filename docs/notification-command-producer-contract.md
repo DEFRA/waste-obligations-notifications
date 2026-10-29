@@ -73,9 +73,12 @@ identity. See [digest-key lifetime](../README.md#digest-key-lifetime) and the
 Publishers may supply the optional JSON field `correlationId`
 with the originating trace ID. Consumers accept the same GUID or 32-character
 hexadecimal format as analytics events and ignore missing or invalid correlation
-metadata. It supplies ECS `trace.id` for command outcome and failure logs and is
-not part of delivery identity or persisted evidence. Existing messages need no
-change. The analytics consumer sets this field from the originating event,
+metadata. Accepted IDs are lowercased for logging, storage and exact search. It supplies ECS `trace.id` for command outcome and failure logs and is
+not part of delivery identity. A valid correlation ID is retained when a record
+is created or a pending record is reclaimed or abandoned. Existing IDs are
+preserved; missing or invalid IDs are not stored. Terminal duplicates do not
+update the record, so the retained trace need not represent every replay.
+Existing messages need no change. The analytics consumer sets this field from the originating event,
 replacing any correlation supplied by its command builder, so all commands from
 that event share its trace. See [validation](../src/Consumer/Utils/Logging/TraceCorrelation.cs),
 [JSON parsing](../src/Consumer/Utils/Logging/TraceCorrelationJsonConverter.cs)
@@ -97,3 +100,9 @@ transport copies or operator requests. It preserves recipient, template,
 personalisation, type and business-action time, and uses the normal recipient
 lane and command-key transport deduplication. Consumer and administration support
 ship in the same development changeset; mixed-version operation is not supported.
+
+## Source reference
+
+Commands may include `source` with `type` and `id` strings identifying the originating business entity. Both values are required when supplied; type is at most 64 characters and ID at most 128, using ASCII letters, digits, hyphen, underscore or full stop. Producers must use non-sensitive identifiers, never email addresses or names. A valid source is retained with delivery evidence as diagnostic metadata and is not part of the immutable command fields. Publishers must validate it; consumers ignore malformed source metadata. The first retained source is preserved on retries and abandonment. Resends retain the same source. Existing commands without a source remain valid.
+
+Declaration producers use type `compliance-declaration` and the declaration ID. Submission and cancellation keys share the `compliance-declaration` prefix; each cancellation key still distinguishes action and recipient.

@@ -101,12 +101,13 @@ public sealed class CancellationEmailProducer(
                 );
                 var command = new NotificationCommand(
                     NotificationCommand.CurrentSchemaVersion,
-                    $"cdec:{declarationId}:cancelled:v1:{identity}",
+                    $"compliance-declaration:{declarationId}:cancelled:v1:{identity}",
                     actionTime,
                     $"declaration-cancelled-{family}-{(welsh ? "cy" : "en")}",
                     address,
                     template,
-                    CancellationPresentation.Create(declaration, welsh, recipient)
+                    CancellationPresentation.Create(declaration, welsh, recipient),
+                    Source: new NotificationSource("compliance-declaration", declarationId)
                 );
                 command.Validate();
                 commands.Add(command);

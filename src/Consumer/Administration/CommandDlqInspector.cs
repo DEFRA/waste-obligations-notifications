@@ -186,7 +186,9 @@ public sealed class CommandDlqInspector(
             record.NotifyReference,
             record.TemplateId,
             record.TemplateVersion,
-            record.ResendOfNotificationKey
+            record.ResendOfNotificationKey,
+            Source: record.Source,
+            CorrelationId: record.CorrelationId
         );
 
     private InvalidOperationException InspectionFailure()

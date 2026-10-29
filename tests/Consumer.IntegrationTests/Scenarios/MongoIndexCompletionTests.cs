@@ -76,7 +76,7 @@ public sealed class MongoIndexCompletionTests : IntegrationTestBase
             await retry.WaitAsync(TimeSpan.FromSeconds(10), token);
             Assert.True(completion.IsCompleted);
             Assert.Equal(
-                3,
+                5,
                 await database
                     .GetCollection<BsonDocument>("_migrations")
                     .CountDocumentsAsync(new BsonDocument(), cancellationToken: token)

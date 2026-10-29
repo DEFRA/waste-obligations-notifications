@@ -427,6 +427,39 @@ public sealed class CommandDlqInspectionTests
     }
 
     [Fact]
+    public async Task WhenInspectingRetainedSource_ShouldShowSourceInDeliverySummary()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var evidence = new NotificationDeliveryEvidence(
+            "v1:test",
+            "submitted",
+            "delivery-accepted",
+            DateTime.UtcNow,
+            DateTime.UtcNow,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            Source: new NotificationSource("compliance-declaration", "abc123")
+        );
+        factory
+            .Store.Inspect(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new NotificationDeliveryState("delivery-accepted", null, null, evidence));
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var source = body.RootElement.GetProperty("messages")[0].GetProperty("deliveryRecord").GetProperty("source");
+        Assert.Equal("compliance-declaration", source.GetProperty("type").GetString());
+        Assert.Equal("abc123", source.GetProperty("id").GetString());
+    }
+
+    [Fact]
     public async Task WhenInspectingMatchingAcceptedRecord_ShouldReturnRetainedSummaryAndEncodedNavigation()
     {
         await using var factory = new InspectionApplicationFactory();
@@ -1252,6 +1285,9 @@ public sealed class CommandDlqInspectionTests
     [InlineData("notificationKey=known-key&unexpected=value")]
     [InlineData("notificationKey=")]
     [InlineData("outcome=%00")]
+    [InlineData("sourceType=compliance-declaration")]
+    [InlineData("sourceId=declaration-1")]
+    [InlineData("correlationId=not-a-trace")]
     [InlineData("recordedFromUtc=2026-10-12T00:00:00")]
     [InlineData("recordedFromUtc=2026-10-12T00:00:00%2B01:00")]
     [InlineData("recordedFromUtc=2026-10-13T00:00:00Z&recordedToUtc=2026-10-12T00:00:00Z")]
@@ -1726,6 +1762,134 @@ public sealed class CommandDlqInspectionTests
                 property => property.Value is ScalarValue scalar ? scalar.Value : property.Value.ToString()
             )
         );
+
+    [Fact]
+    public async Task WhenSearchingByRecipient_ShouldPassOnlyNormalizedDigestToReader()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        factory
+            .SearchReader.Search(Arg.Any<DeliveryRecordSearchQuery>(), Arg.Any<CancellationToken>())
+            .Returns(new DeliveryRecordSearchResult([], null));
+        using var client = factory.CreateClient();
+        using var request = SearchRequest("admin", "sourceType=compliance-declaration&sourceId=abc123");
+        request.Method = HttpMethod.Post;
+        request.Content = new StringContent(
+            "{\"recipient\":\"  Person@Example.invalid  \"}",
+            Encoding.UTF8,
+            "application/json"
+        );
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var digest = factory.Services.GetRequiredService<INotificationCommandDigest>();
+        await factory
+            .SearchReader.Received(1)
+            .Search(
+                Arg.Is<DeliveryRecordSearchQuery>(query =>
+                    query.RecipientDigest == digest.CreateRecipientDigest("person@example.invalid")
+                    && query.SourceType == "compliance-declaration"
+                    && query.SourceId == "abc123"
+                ),
+                Arg.Any<CancellationToken>()
+            );
+    }
+
+    [Fact]
+    public async Task WhenPagingRecipientSearch_ShouldKeepCursorBoundToRecipientAndRejectOtherFilters()
+    {
+        var mongo = Substitute.For<IMongoClient>();
+        var database = Substitute.For<IMongoDatabase>();
+        var collection = Substitute.For<IMongoCollection<BsonDocument>>();
+        mongo.GetDatabase("inspection-test", Arg.Any<MongoDatabaseSettings>()).Returns(database);
+        database
+            .GetCollection<BsonDocument>("NotificationDeliveryRecord", Arg.Any<MongoCollectionSettings>())
+            .Returns(collection);
+        var documents = new[]
+        {
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() },
+                { "notificationKey", "first" },
+                { "notificationType", "submitted" },
+                { "outcome", "delivery-accepted" },
+                { "recordedAtUtc", new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc) },
+                { "actionOccurredAtUtc", new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc) },
+            },
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() },
+                { "notificationKey", "second" },
+                { "notificationType", "submitted" },
+                { "outcome", "delivery-accepted" },
+                { "recordedAtUtc", new DateTime(2026, 10, 12, 8, 0, 0, DateTimeKind.Utc) },
+                { "actionOccurredAtUtc", new DateTime(2026, 10, 11, 9, 0, 0, DateTimeKind.Utc) },
+            },
+        };
+        collection
+            .FindAsync(
+                Arg.Any<FilterDefinition<BsonDocument>>(),
+                Arg.Any<FindOptions<BsonDocument, BsonDocument>>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
+            {
+                var cursor = Substitute.For<IAsyncCursor<BsonDocument>>();
+                cursor.Current.Returns(documents);
+                cursor.MoveNextAsync(Arg.Any<CancellationToken>()).Returns(true, false);
+                return Task.FromResult(cursor);
+            });
+        await using var factory = new InspectionApplicationFactory(searchMongo: mongo);
+        using var client = factory.CreateClient();
+        using var first = SearchRequest("admin", "pageSize=1");
+        first.Method = HttpMethod.Post;
+        first.Content = new StringContent(
+            "{\"recipient\":\"person@example.invalid\"}",
+            Encoding.UTF8,
+            "application/json"
+        );
+        using var firstResponse = await client.SendAsync(first, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        using var firstBody = JsonDocument.Parse(
+            await firstResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var cursorValue = firstBody.RootElement.GetProperty("nextCursor").GetString();
+        Assert.False(string.IsNullOrEmpty(cursorValue));
+
+        using var second = SearchRequest("admin", "pageSize=1&cursor=" + Uri.EscapeDataString(cursorValue));
+        second.Method = HttpMethod.Post;
+        second.Content = new StringContent(
+            "{\"recipient\":\" PERSON@example.invalid \"}",
+            Encoding.UTF8,
+            "application/json"
+        );
+        using var secondResponse = await client.SendAsync(second, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+
+        using var other = SearchRequest("admin", "pageSize=1&cursor=" + Uri.EscapeDataString(cursorValue));
+        other.Method = HttpMethod.Post;
+        other.Content = new StringContent(
+            "{\"recipient\":\"other@example.invalid\"}",
+            Encoding.UTF8,
+            "application/json"
+        );
+        using var otherResponse = await client.SendAsync(other, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, otherResponse.StatusCode);
+
+        using var unfiltered = SearchRequest("admin", "pageSize=1");
+        using var unfilteredResponse = await client.SendAsync(unfiltered, TestContext.Current.CancellationToken);
+        using var unfilteredBody = JsonDocument.Parse(
+            await unfilteredResponse.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var unfilteredCursor = unfilteredBody.RootElement.GetProperty("nextCursor").GetString();
+        using var mixed = SearchRequest("admin", "pageSize=1&cursor=" + Uri.EscapeDataString(unfilteredCursor!));
+        mixed.Method = HttpMethod.Post;
+        mixed.Content = new StringContent(
+            "{\"recipient\":\"person@example.invalid\"}",
+            Encoding.UTF8,
+            "application/json"
+        );
+        using var mixedResponse = await client.SendAsync(mixed, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.BadRequest, mixedResponse.StatusCode);
+    }
 
     private static HttpRequestMessage SearchRequest(string condition, string? query = null)
     {

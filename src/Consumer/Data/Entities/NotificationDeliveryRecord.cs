@@ -1,3 +1,4 @@
+using Defra.WasteObligations.Consumer.Commands;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
@@ -14,6 +15,12 @@ public sealed record NotificationDeliveryRecord
 
     [BsonIgnoreIfNull]
     public string? ResendOfNotificationKey { get; init; }
+
+    [BsonIgnoreIfNull]
+    public NotificationSource? Source { get; init; }
+
+    [BsonIgnoreIfNull]
+    public string? CorrelationId { get; init; }
 
     public required string Recipient { get; init; }
 

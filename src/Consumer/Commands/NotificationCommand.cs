@@ -17,7 +17,10 @@ public sealed record NotificationCommand(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResendOfNotificationKey = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonConverter(typeof(TraceCorrelationJsonConverter))]
-        string? CorrelationId = null
+        string? CorrelationId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [property: JsonConverter(typeof(NotificationSourceJsonConverter))]
+        NotificationSource? Source = null
 )
 {
     public const int CurrentSchemaVersion = 1;
@@ -43,6 +46,8 @@ public sealed record NotificationCommand(
                 "Notification command idempotencyKey must be at most 128 characters using only SQS-supported ASCII letters, digits, or punctuation."
             );
         }
+
+        Source?.Validate();
 
         RequireValue(NotificationType, "notificationType");
         RequireValue(EmailAddress, "emailAddress");

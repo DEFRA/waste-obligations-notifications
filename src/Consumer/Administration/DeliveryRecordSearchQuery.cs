@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Defra.WasteObligations.Consumer.Utils.Logging;
 using Microsoft.AspNetCore.WebUtilities;
 using MongoDB.Bson;
 
@@ -14,10 +15,14 @@ public sealed record DeliveryRecordSearchQuery
     public string? NotificationKey { get; init; }
     public string? ResendOfNotificationKey { get; init; }
     public string? Outcome { get; init; }
+    public string? SourceType { get; init; }
+    public string? SourceId { get; init; }
+    public string? RecipientDigest { get; init; }
+    public string? CorrelationId { get; init; }
     public int PageSize { get; init; } = 25;
     public string? Cursor { get; init; }
 
-    public static DeliveryRecordSearchQuery Parse(IQueryCollection values)
+    public static DeliveryRecordSearchQuery Parse(IQueryCollection values, string? recipientDigest = null)
     {
         string[] supportedNames =
         [
@@ -27,6 +32,9 @@ public sealed record DeliveryRecordSearchQuery
             "notificationKey",
             "resendOfNotificationKey",
             "outcome",
+            "sourceType",
+            "sourceId",
+            "correlationId",
             "pageSize",
             "cursor",
         ];
@@ -41,6 +49,10 @@ public sealed record DeliveryRecordSearchQuery
             NotificationKey = Read(values, "notificationKey"),
             ResendOfNotificationKey = Read(values, "resendOfNotificationKey"),
             Outcome = Read(values, "outcome"),
+            SourceType = Read(values, "sourceType"),
+            SourceId = Read(values, "sourceId"),
+            CorrelationId = Read(values, "correlationId")?.ToLowerInvariant(),
+            RecipientDigest = recipientDigest,
             PageSize = Read(values, "pageSize") is { } size
                 ? int.Parse(size, NumberStyles.None, CultureInfo.InvariantCulture)
                 : 25,
@@ -54,13 +66,22 @@ public sealed record DeliveryRecordSearchQuery
     public void Validate()
     {
         if (
-            PageSize is < 1 or > 100
+            (CorrelationId is not null && TraceCorrelation.Read(CorrelationId) is null)
+            || (SourceType is null) != (SourceId is null)
+            || PageSize is < 1 or > 100
             || RecordedFromUtc is { Kind: not DateTimeKind.Utc }
             || RecordedToUtc is { Kind: not DateTimeKind.Utc }
             || RecordedFromUtc >= RecordedToUtc
-            || new[] { NotifyNotificationId, NotificationKey, ResendOfNotificationKey, Outcome }.Any(value =>
-                value is not null && (value.Length is < 1 or > 512 || value.Any(char.IsControl))
-            )
+            || new[]
+            {
+                NotifyNotificationId,
+                NotificationKey,
+                ResendOfNotificationKey,
+                Outcome,
+                SourceType,
+                SourceId,
+                RecipientDigest,
+            }.Any(value => value is not null && (value.Length is < 1 or > 512 || value.Any(char.IsControl)))
         )
             throw new ArgumentException("Delivery record search query is invalid.");
         ReadCursor();
@@ -109,22 +130,28 @@ public sealed record DeliveryRecordSearchQuery
             )
         );
 
-    private string FilterFingerprint() =>
-        Convert.ToHexString(
-            SHA256.HashData(
-                JsonSerializer.SerializeToUtf8Bytes(
-                    new
-                    {
-                        RecordedFromUtc,
-                        RecordedToUtc,
-                        NotifyNotificationId,
-                        NotificationKey,
-                        ResendOfNotificationKey,
-                        Outcome,
-                    }
-                )
-            )
-        );
+    private string FilterFingerprint()
+    {
+        var filters = new Dictionary<string, object?>
+        {
+            [nameof(RecordedFromUtc)] = RecordedFromUtc,
+            [nameof(RecordedToUtc)] = RecordedToUtc,
+            [nameof(NotifyNotificationId)] = NotifyNotificationId,
+            [nameof(NotificationKey)] = NotificationKey,
+            [nameof(ResendOfNotificationKey)] = ResendOfNotificationKey,
+            [nameof(Outcome)] = Outcome,
+        };
+        if (SourceType is not null)
+            filters[nameof(SourceType)] = SourceType;
+        if (SourceId is not null)
+            filters[nameof(SourceId)] = SourceId;
+        if (RecipientDigest is not null)
+            filters[nameof(RecipientDigest)] = RecipientDigest;
+        if (CorrelationId is not null)
+            filters[nameof(CorrelationId)] = CorrelationId;
+
+        return Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(filters)));
+    }
 
     private static string? Read(IQueryCollection values, string name)
     {

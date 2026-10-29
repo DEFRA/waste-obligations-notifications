@@ -158,7 +158,8 @@ public sealed class SubmittedEmailProducer(
                         regulatorEmail = Required(organisation.RegulatorEmail),
                         user = Required(user.Name),
                     }
-                )
+                ),
+                Source: new NotificationSource("compliance-declaration", declarationId)
             ).NormaliseRecipient();
             command.Validate();
 

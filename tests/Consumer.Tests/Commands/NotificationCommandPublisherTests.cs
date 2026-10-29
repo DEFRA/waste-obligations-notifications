@@ -194,6 +194,8 @@ public class NotificationCommandPublisherTests
 
     [Theory]
     [InlineData("\"4bf92f3577b34da6a3ce929d0e0e4736\"", "4bf92f3577b34da6a3ce929d0e0e4736")]
+    [InlineData("\"4BF92F3577B34DA6A3CE929D0E0E4736\"", "4bf92f3577b34da6a3ce929d0e0e4736")]
+    [InlineData("\"59A48ED1-C28B-4126-BBC5-46B0461798B8\"", "59a48ed1-c28b-4126-bbc5-46b0461798b8")]
     [InlineData("\"59a48ed1-c28b-4126-bbc5-46b0461798b8\"", "59a48ed1-c28b-4126-bbc5-46b0461798b8")]
     [InlineData("null", null)]
     [InlineData("\"private-recipient@example.invalid\"", null)]

@@ -213,11 +213,14 @@ does not prove optional search-index completion or future dependency availabilit
 
 ## Retained delivery-record search
 
+New commands may retain a non-sensitive source type and ID, independent of the delivery identity. The admin search accepts both source fields, or a recipient in a POST body; recipient matching uses the normalized address digest. Follow the HTTP runbook for examples. Existing records without source metadata cannot be found by source. Search indexes are optional migrations and must complete before relying on efficient lookup.
+
+
 [Search query](../src/Consumer/Administration/DeliveryRecordSearchQuery.cs),
 [Mongo reader](../src/Consumer/Administration/MongoDeliveryRecordSearchReader.cs)
 and [search scenarios](../tests/Consumer.IntegrationTests/Scenarios/DeliveryRecordSearchTests.cs)
 define filters, cursor semantics and summaries. Use the [HTTP runbook](../runbooks/http/README.md)
-for requests. Search is authenticated, read-only and independent of queue copies;
+for requests. A valid retained correlation ID can be searched exactly; it identifies the first trace retained during a record write, not every replay. Search is authenticated, read-only and independent of queue copies;
 it does not authorize recovery or report live Notify delivery. Recording time
 is different from business-action time. Concurrent updates do not provide a
 snapshot, and empty results cannot prove absence of malformed evidence.

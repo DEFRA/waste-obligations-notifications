@@ -10,6 +10,95 @@ namespace Defra.WasteObligations.Consumer.IntegrationTests.Scenarios;
 public sealed class DeliveryRecordSearchTests : IntegrationTestBase
 {
     [Fact]
+    public async Task WhenSearchingBySourceAndRecipient_ShouldReturnOnlyMatchingEvidence()
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_source_search_{Guid.NewGuid():N}";
+        var records = client.GetDatabase(databaseName).GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        var token = TestContext.Current.CancellationToken;
+        var time = DateTime.UtcNow;
+        var first = Record(1, "v1:first", "delivery-accepted", time);
+        first["source"] = new BsonDocument { { "type", "compliance-declaration" }, { "id", "declaration-1" } };
+        first["recipient"] = "recipient-digest";
+        first["correlationId"] = "4bf92f3577b34da6a3ce929d0e0e4736";
+        var other = Record(2, "v1:other", "delivery-accepted", time);
+        other["source"] = new BsonDocument { { "type", "another-source" }, { "id", "declaration-1" } };
+        other["recipient"] = "recipient-digest";
+        var third = Record(3, "v1:third", "delivery-accepted", time);
+        third["source"] = first["source"].DeepClone();
+        third["recipient"] = "other-digest";
+        var differentSource = Record(4, "v1:other-source-id", "delivery-accepted", time);
+        differentSource["source"] = new BsonDocument
+        {
+            { "type", "compliance-declaration" },
+            { "id", "declaration-2" },
+        };
+        differentSource["recipient"] = "recipient-digest";
+        differentSource["correlationId"] = "4bf92f3577b34da6a3ce929d0e0e4736";
+        var next = Record(5, "v1:next", "delivery-accepted", time.AddSeconds(-1));
+        next["source"] = first["source"].DeepClone();
+        next["recipient"] = first["recipient"];
+        next["correlationId"] = first["correlationId"];
+        try
+        {
+            await records.InsertManyAsync([first, other, third, differentSource, next], cancellationToken: token);
+            var reader = Reader(client, databaseName);
+            var query = new DeliveryRecordSearchQuery
+            {
+                SourceType = "compliance-declaration",
+                SourceId = "declaration-1",
+                RecipientDigest = "recipient-digest",
+                CorrelationId = "4bf92f3577b34da6a3ce929d0e0e4736",
+                PageSize = 1,
+            };
+            var result = await reader.Search(query, token);
+            var record = Assert.Single(result.Records);
+            Assert.Equal("v1:first", record.NotificationKey);
+            Assert.Equal("compliance-declaration", record.Source?.Type);
+            Assert.Equal("declaration-1", record.Source?.Id);
+            Assert.Equal("4bf92f3577b34da6a3ce929d0e0e4736", record.CorrelationId);
+            Assert.NotNull(result.NextCursor);
+            var second = await reader.Search(query with { Cursor = result.NextCursor }, token);
+            Assert.Equal("v1:next", Assert.Single(second.Records).NotificationKey);
+            Assert.Null(second.NextCursor);
+            var uppercaseQuery = DeliveryRecordSearchQuery.Parse(
+                new Microsoft.AspNetCore.Http.QueryCollection(
+                    Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(
+                        "?correlationId=4BF92F3577B34DA6A3CE929D0E0E4736"
+                    )
+                )
+            );
+            Assert.Equal(3, (await reader.Search(uppercaseQuery, token)).Records.Count);
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                reader.Search(query with { Cursor = result.NextCursor, SourceId = "declaration-2" }, token)
+            );
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                reader.Search(
+                    query with
+                    {
+                        Cursor = result.NextCursor,
+                        CorrelationId = "59a48ed1-c28b-4126-bbc5-46b0461798b8",
+                    },
+                    token
+                )
+            );
+            Assert.Empty(
+                (
+                    await Reader(client, databaseName)
+                        .Search(
+                            new DeliveryRecordSearchQuery { CorrelationId = "59a48ed1-c28b-4126-bbc5-46b0461798b8" },
+                            token
+                        )
+                ).Records
+            );
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task WhenSearchingRecordingRange_ShouldApplyBoundsAndCombinedExactFiltersWithoutChangingEvidence()
     {
         using var client = CreateMongoClient();

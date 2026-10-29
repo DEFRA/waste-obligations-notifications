@@ -34,7 +34,38 @@ public sealed class DeliveryRecordSearchIndexMigrationTests : IntegrationTestBas
             Assert.True(await runner.CheckCompletion(token));
             Assert.True(await migration.ValidateSchema(database, token));
             var indexes = await ListIndexes(records, token);
-            Assert.Equal(6, indexes.Count);
+            Assert.Equal(9, indexes.Count);
+            AssertIndex(
+                indexes,
+                "correlationId_recordedAtUtc_id_desc",
+                new BsonDocument
+                {
+                    { "correlationId", 1 },
+                    { RecordedAtField, -1 },
+                    { "_id", -1 },
+                }
+            );
+            AssertIndex(
+                indexes,
+                "recipient_recordedAtUtc_id_desc",
+                new BsonDocument
+                {
+                    { "recipient", 1 },
+                    { RecordedAtField, -1 },
+                    { "_id", -1 },
+                }
+            );
+            AssertIndex(
+                indexes,
+                "source_recordedAtUtc_id_desc",
+                new BsonDocument
+                {
+                    { "source.type", 1 },
+                    { "source.id", 1 },
+                    { RecordedAtField, -1 },
+                    { "_id", -1 },
+                }
+            );
             AssertIndex(indexes, RecordedIndexName, new BsonDocument { { RecordedAtField, -1 }, { "_id", -1 } });
             AssertIndex(
                 indexes,
@@ -71,15 +102,56 @@ public sealed class DeliveryRecordSearchIndexMigrationTests : IntegrationTestBas
             string[] remainingNames =
             [
                 "_id_",
+                "correlationId_recordedAtUtc_id_desc",
                 "notificationKey_unique",
+                "recipient_recordedAtUtc_id_desc",
                 "resendOfNotificationKey_recordedAtUtc_id_desc",
+                "source_recordedAtUtc_id_desc",
                 "unrelated_type",
             ];
             Assert.Equal(remainingNames, (await ListIndexes(records, token)).Select(index => index["name"].AsString));
             Assert.False(await migration.ValidateSchema(database, token));
             Assert.True(await new NotificationDeliveryRecordIndexes().ValidateSchema(database, token));
             Assert.True(await new NotificationDeliveryRecordParentSearchIndex().ValidateSchema(database, token));
+            Assert.True(await new NotificationDeliveryRecordSourceSearchIndexes().ValidateSchema(database, token));
+            Assert.True(await new NotificationDeliveryRecordCorrelationSearchIndex().ValidateSchema(database, token));
             Assert.True(completion.IsCompleted);
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(databaseName, CancellationToken.None);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WhenNewSearchIndexConflicts_ShouldPreserveExistingIndexAndRefuseMigration(bool correlation)
+    {
+        using var client = CreateMongoClient();
+        var databaseName = $"notifications_search_conflict_{Guid.NewGuid():N}";
+        var database = client.GetDatabase(databaseName);
+        var records = database.GetCollection<BsonDocument>("NotificationDeliveryRecord");
+        var token = TestContext.Current.CancellationToken;
+        MongoMigration migration = correlation
+            ? new NotificationDeliveryRecordCorrelationSearchIndex()
+            : new NotificationDeliveryRecordSourceSearchIndexes();
+        var name = correlation ? "correlationId_recordedAtUtc_id_desc" : "recipient_recordedAtUtc_id_desc";
+        try
+        {
+            await records.Indexes.CreateOneAsync(
+                new CreateIndexModel<BsonDocument>(
+                    Builders<BsonDocument>.IndexKeys.Ascending("unrelated"),
+                    new CreateIndexOptions { Name = name }
+                ),
+                cancellationToken: token
+            );
+            var before = await ListIndexes(records, token);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                migration.UpAsync(new MigrationContext(database, null!, token))
+            );
+            Assert.False(await migration.ValidateSchema(database, token));
+            Assert.Equal(before, await ListIndexes(records, token));
         }
         finally
         {
