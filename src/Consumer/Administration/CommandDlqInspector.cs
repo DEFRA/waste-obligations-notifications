@@ -187,6 +187,7 @@ public sealed class CommandDlqInspector(
             record.TemplateId,
             record.TemplateVersion,
             record.ResendOfNotificationKey,
+            Source: record.Source,
             CorrelationId: record.CorrelationId
         );
 

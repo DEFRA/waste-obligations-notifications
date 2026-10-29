@@ -73,7 +73,7 @@ identity. See [digest-key lifetime](../README.md#digest-key-lifetime) and the
 Publishers may supply the optional JSON field `correlationId`
 with the originating trace ID. Consumers accept the same GUID or 32-character
 hexadecimal format as analytics events and ignore missing or invalid correlation
-metadata. It supplies ECS `trace.id` for command outcome and failure logs and is
+metadata. Accepted IDs are lowercased for logging, storage and exact search. It supplies ECS `trace.id` for command outcome and failure logs and is
 not part of delivery identity. A valid correlation ID is retained when a record
 is created or a pending record is reclaimed or abandoned. Existing IDs are
 preserved; missing or invalid IDs are not stored. Terminal duplicates do not
@@ -103,6 +103,6 @@ ship in the same development changeset; mixed-version operation is not supported
 
 ## Source reference
 
-Commands may include `source` with `type` and `id` strings identifying the originating business entity. Both values are required when supplied; type is at most 64 characters and ID at most 128, using ASCII letters, digits, hyphen, underscore or full stop. Producers must use non-sensitive identifiers, never email addresses or names. A source is retained with delivery evidence as diagnostic metadata and is not part of the immutable command fields. Resends retain the same source. Existing commands without a source remain valid.
+Commands may include `source` with `type` and `id` strings identifying the originating business entity. Both values are required when supplied; type is at most 64 characters and ID at most 128, using ASCII letters, digits, hyphen, underscore or full stop. Producers must use non-sensitive identifiers, never email addresses or names. A valid source is retained with delivery evidence as diagnostic metadata and is not part of the immutable command fields. Publishers must validate it; consumers ignore malformed source metadata. The first retained source is preserved on retries and abandonment. Resends retain the same source. Existing commands without a source remain valid.
 
 Declaration producers use type `compliance-declaration` and the declaration ID. Submission and cancellation keys share the `compliance-declaration` prefix; each cancellation key still distinguishes action and recipient.

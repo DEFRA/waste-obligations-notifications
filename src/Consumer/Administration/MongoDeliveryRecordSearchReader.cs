@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Defra.WasteObligations.Consumer.Commands;
 using Defra.WasteObligations.Consumer.Data;
 using Defra.WasteObligations.Consumer.Utils.Logging;
 using Microsoft.Extensions.Options;
@@ -175,18 +174,9 @@ public sealed class MongoDeliveryRecordSearchReader(
             && Commands.NotificationCommand.IsOpaqueNotificationKey(parent)
                 ? parent
                 : null,
-            ReadSource(record),
+            NotificationSourceReader.Read(record),
             TraceCorrelation.Read(ReadString(record, "correlationId"))
         );
-
-    private static NotificationSource? ReadSource(BsonDocument record)
-    {
-        if (!record.TryGetValue("source", out var value) || value is not BsonDocument source)
-            return null;
-        var type = ReadString(source, "type");
-        var id = ReadString(source, "id");
-        return type is not null && id is not null ? new NotificationSource(type, id) : null;
-    }
 
     private static string? ReadString(BsonDocument record, string name) =>
         record.TryGetValue(name, out var value) && value.IsString ? value.AsString : null;

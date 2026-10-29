@@ -1,3 +1,5 @@
+using Defra.WasteObligations.Consumer.Commands;
+
 namespace Defra.WasteObligations.Consumer.Delivery;
 
 public sealed record NotificationDeliveryEvidence(
@@ -13,5 +15,6 @@ public sealed record NotificationDeliveryEvidence(
     string? TemplateId,
     int? TemplateVersion,
     string? ResendOfNotificationKey = null,
-    string? CorrelationId = null
+    string? CorrelationId = null,
+    NotificationSource? Source = null
 );

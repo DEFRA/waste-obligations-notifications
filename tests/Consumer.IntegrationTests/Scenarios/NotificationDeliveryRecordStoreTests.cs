@@ -75,7 +75,16 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
             );
             Assert.Equal(
                 DeliveryClaimResult.Claimed,
-                await store.Claim(withoutTrace with { CorrelationId = command.CorrelationId }, "second", 120, token)
+                await store.Claim(
+                    withoutTrace with
+                    {
+                        CorrelationId = command.CorrelationId,
+                        Source = new NotificationSource("other-source", "changed-entity"),
+                    },
+                    "second",
+                    120,
+                    token
+                )
             );
             Assert.Equal(
                 command.CorrelationId,
@@ -92,6 +101,7 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                     withoutTrace with
                     {
                         CorrelationId = "59a48ed1-c28b-4126-bbc5-46b0461798b8",
+                        Source = null,
                     },
                     token
                 )
@@ -100,6 +110,11 @@ public sealed class NotificationDeliveryRecordStoreTests : IntegrationTestBase
                 command.CorrelationId,
                 (await records.Find(withoutTraceFilter).SingleAsync(token))["correlationId"].AsString
             );
+            Assert.Equal(
+                "entity-1",
+                (await records.Find(withoutTraceFilter).SingleAsync(token))["source"]["id"].AsString
+            );
+            Assert.Equal("entity-1", (await store.Inspect(withoutTrace, token)).Record?.Source?.Id);
             Assert.Equal(new NotificationDeliveryState("unrecorded", null, null), await store.Inspect(command, token));
             Assert.Equal(
                 SuppressionClaimResult.Recorded,

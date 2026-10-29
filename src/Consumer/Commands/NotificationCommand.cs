@@ -18,7 +18,9 @@ public sealed record NotificationCommand(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [property: JsonConverter(typeof(TraceCorrelationJsonConverter))]
         string? CorrelationId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] NotificationSource? Source = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [property: JsonConverter(typeof(NotificationSourceJsonConverter))]
+        NotificationSource? Source = null
 )
 {
     public const int CurrentSchemaVersion = 1;

@@ -51,7 +51,7 @@ public sealed record DeliveryRecordSearchQuery
             Outcome = Read(values, "outcome"),
             SourceType = Read(values, "sourceType"),
             SourceId = Read(values, "sourceId"),
-            CorrelationId = Read(values, "correlationId"),
+            CorrelationId = Read(values, "correlationId")?.ToLowerInvariant(),
             RecipientDigest = recipientDigest,
             PageSize = Read(values, "pageSize") is { } size
                 ? int.Parse(size, NumberStyles.None, CultureInfo.InvariantCulture)

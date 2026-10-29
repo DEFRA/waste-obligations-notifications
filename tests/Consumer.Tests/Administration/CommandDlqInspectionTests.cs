@@ -427,6 +427,39 @@ public sealed class CommandDlqInspectionTests
     }
 
     [Fact]
+    public async Task WhenInspectingRetainedSource_ShouldShowSourceInDeliverySummary()
+    {
+        await using var factory = new InspectionApplicationFactory();
+        var evidence = new NotificationDeliveryEvidence(
+            "v1:test",
+            "submitted",
+            "delivery-accepted",
+            DateTime.UtcNow,
+            DateTime.UtcNow,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            Source: new NotificationSource("compliance-declaration", "abc123")
+        );
+        factory
+            .Store.Inspect(Arg.Any<NotificationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new NotificationDeliveryState("delivery-accepted", null, null, evidence));
+        using var client = factory.CreateClient();
+        using var request = Request("admin");
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(
+            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)
+        );
+        var source = body.RootElement.GetProperty("messages")[0].GetProperty("deliveryRecord").GetProperty("source");
+        Assert.Equal("compliance-declaration", source.GetProperty("type").GetString());
+        Assert.Equal("abc123", source.GetProperty("id").GetString());
+    }
+
+    [Fact]
     public async Task WhenInspectingMatchingAcceptedRecord_ShouldReturnRetainedSummaryAndEncodedNavigation()
     {
         await using var factory = new InspectionApplicationFactory();

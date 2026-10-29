@@ -61,6 +61,14 @@ public sealed class DeliveryRecordSearchTests : IntegrationTestBase
             var second = await reader.Search(query with { Cursor = result.NextCursor }, token);
             Assert.Equal("v1:next", Assert.Single(second.Records).NotificationKey);
             Assert.Null(second.NextCursor);
+            var uppercaseQuery = DeliveryRecordSearchQuery.Parse(
+                new Microsoft.AspNetCore.Http.QueryCollection(
+                    Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(
+                        "?correlationId=4BF92F3577B34DA6A3CE929D0E0E4736"
+                    )
+                )
+            );
+            Assert.Equal(3, (await reader.Search(uppercaseQuery, token)).Records.Count);
             await Assert.ThrowsAsync<ArgumentException>(() =>
                 reader.Search(query with { Cursor = result.NextCursor, SourceId = "declaration-2" }, token)
             );

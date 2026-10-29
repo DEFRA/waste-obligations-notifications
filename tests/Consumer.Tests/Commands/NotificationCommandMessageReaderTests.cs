@@ -9,7 +9,7 @@ namespace Defra.WasteObligations.Consumer.Tests.Commands;
 public sealed class NotificationCommandMessageReaderTests
 {
     [Fact]
-    public void WhenSourceIsPresent_ShouldRetainGenericSourceAndRejectEmailIdentifiers()
+    public void WhenSourceIsPresent_ShouldRetainValidSourceAndIgnoreEmailIdentifiers()
     {
         var message = CreateMessage("\"2026-10-01T00:00:00Z\"");
         message.Body = message.Body.Replace(
@@ -21,7 +21,23 @@ public sealed class NotificationCommandMessageReaderTests
         Assert.Equal("future-event", command.Source?.Type);
         Assert.Equal("entity-123", command.Source?.Id);
         message.Body = message.Body.Replace("entity-123", "person@example.invalid", StringComparison.Ordinal);
-        Assert.Throws<InvalidDataException>(() => NotificationCommandMessageReader.Read(message));
+        Assert.Null(NotificationCommandMessageReader.Read(message).Source);
+    }
+
+    [Theory]
+    [InlineData("42")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("{\"type\":\"event\",\"id\":42}")]
+    public void WhenSourceIsMalformed_ShouldIgnoreItWithoutRejectingCommand(string sourceJson)
+    {
+        var message = CreateMessage("\"2026-10-01T00:00:00Z\"");
+        message.Body = message.Body.Replace(
+            "\"personalisation\": {}",
+            "\"personalisation\": {}, \"source\": " + sourceJson,
+            StringComparison.Ordinal
+        );
+        Assert.Null(NotificationCommandMessageReader.Read(message).Source);
     }
 
     [Theory]
