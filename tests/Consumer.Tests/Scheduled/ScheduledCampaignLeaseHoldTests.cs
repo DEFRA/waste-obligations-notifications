@@ -61,6 +61,7 @@ public sealed class ScheduledCampaignLeaseHoldTests
 
         Assert.NotNull(hold);
         await WaitForAsync(() => hold.IsLost);
+        await Task.Delay(TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
         await hold.DisposeAsync();
         await leases.Received(1).Release(LeaseId, Arg.Any<CancellationToken>());
     }
@@ -84,6 +85,28 @@ public sealed class ScheduledCampaignLeaseHoldTests
 
         Assert.NotNull(hold);
         await WaitForAsync(() => hold.IsLost);
+    }
+
+    [Fact]
+    public async Task TryHold_WhenRenewalSucceeds_ShouldKeepHoldUntilDisposed()
+    {
+        var leases = Substitute.For<IScheduledCampaignLeaseService>();
+        leases.TryAcquire(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
+        leases.TryRenew(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
+        var keeper = CreateKeeper(leases);
+
+        var hold = await keeper.TryHold(
+            LeaseId,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMilliseconds(50),
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.NotNull(hold);
+        await Task.Delay(TimeSpan.FromMilliseconds(120), TestContext.Current.CancellationToken);
+        Assert.False(hold.IsLost);
+        await hold.DisposeAsync();
+        await leases.Received().TryRenew(LeaseId, Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -125,7 +148,7 @@ public sealed class ScheduledCampaignLeaseHoldTests
             if (condition())
                 return;
 
-            await Task.Delay(TimeSpan.FromMilliseconds(50));
+            await Task.Delay(TimeSpan.FromMilliseconds(50), TestContext.Current.CancellationToken);
         }
 
         Assert.Fail("Condition was not met in time.");

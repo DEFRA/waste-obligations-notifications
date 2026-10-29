@@ -739,6 +739,37 @@ public sealed class NotSubmittedReminderScanServiceTests
     }
 
     [Fact]
+    public async Task RunFullScan_WhenLaterPageEmptyBeforeTotalReached_ShouldCountListChangeFailure()
+    {
+        var organisationId = Guid.Parse("12121212-1212-1212-1212-121212121212");
+        var obligations = Substitute.For<IWasteObligationsClient>();
+        obligations
+            .SearchUnsubmittedOrganisations(2026, "DirectProducer", Arg.Any<int>(), 1, Arg.Any<CancellationToken>())
+            .Returns(
+                CreatePage([CreateRow(organisationId)], total: 3, page: 1, pageSize: 1),
+                CreatePage([], total: 3, page: 2, pageSize: 1)
+            );
+
+        var accounts = Substitute.For<IAccountBackendClient>();
+        accounts
+            .ReadOrganisationWithPersons(organisationId, Arg.Any<CancellationToken>())
+            .Returns(CreateOrganisation("partial-page@example.test"));
+
+        var service = CreateService(
+            new()
+            {
+                Obligations = obligations,
+                Accounts = accounts,
+                PageSize = 1,
+            }
+        );
+
+        var result = await service.RunFullScan(TestContext.Current.CancellationToken);
+
+        Assert.Equal(new NotSubmittedReminderScanResult(1, 1, 0, 1, null), result);
+    }
+
+    [Fact]
     public async Task RunFullScan_WhenTotalChangesBetweenPages_ShouldPublishReadOrganisationsAndLeaveRunOpen()
     {
         var first = Guid.Parse("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd");

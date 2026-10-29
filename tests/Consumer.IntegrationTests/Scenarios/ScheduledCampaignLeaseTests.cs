@@ -12,6 +12,24 @@ public sealed class ScheduledCampaignLeaseTests : IntegrationTestBase
     private static readonly TimeSpan s_lease = TimeSpan.FromMinutes(10);
 
     [Fact]
+    public async Task WhenConcurrentAcquireRaces_ShouldAllowOnlyOneOwner()
+    {
+        await using var database = new LeaseDatabase();
+        var clock = new MutableTimeProvider(s_start);
+        var first = database.Leases(clock);
+        var second = database.Leases(clock);
+        var raceId = $"integration-race:{Guid.NewGuid():N}";
+
+        var results = await Task.WhenAll(
+            first.TryAcquire(raceId, s_lease, TestContext.Current.CancellationToken),
+            second.TryAcquire(raceId, s_lease, TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(1, results.Count(acquired => acquired));
+        Assert.Equal(1, results.Count(acquired => !acquired));
+    }
+
+    [Fact]
     public async Task WhenAnotherHostHoldsLease_ShouldRejectItUntilLeaseExpires()
     {
         await using var database = new LeaseDatabase();
