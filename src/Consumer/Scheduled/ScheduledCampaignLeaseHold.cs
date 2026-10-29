@@ -20,24 +20,20 @@ public sealed class ScheduledCampaignLeaseHold : IAsyncDisposable
         IScheduledCampaignLeaseService leases,
         TimeProvider timeProvider,
         ILogger logger,
-        string leaseId,
-        TimeSpan leaseDuration,
-        TimeSpan renewalInterval,
-        long acquireRequestStartedAt,
-        CancellationToken stoppingToken
+        ScheduledCampaignLeaseRequest request
     )
     {
         _leases = leases;
         _timeProvider = timeProvider;
         _logger = logger;
-        _leaseId = leaseId;
-        _leaseDuration = leaseDuration;
-        _renewalInterval = renewalInterval;
+        _leaseId = request.LeaseId;
+        _leaseDuration = request.LeaseDuration;
+        _renewalInterval = request.RenewalInterval;
 
-        var remaining = GetRemainingLeaseTime(acquireRequestStartedAt);
+        var remaining = GetRemainingLeaseTime(request.AcquireRequestStartedAt);
         _expiry = new CancellationTokenSource(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero, timeProvider);
         _expiryRegistration = _expiry.Token.Register(LogLeaseLost);
-        _scan = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, _expiry.Token);
+        _scan = CancellationTokenSource.CreateLinkedTokenSource(request.StoppingToken, _expiry.Token);
         _renewal = _expiry.IsCancellationRequested ? Task.CompletedTask : Renew();
     }
 

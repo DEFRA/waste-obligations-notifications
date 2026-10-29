@@ -21,11 +21,13 @@ public sealed class ScheduledCampaignLeaseKeeper(
             leases,
             timeProvider,
             logger,
-            leaseId,
-            leaseDuration,
-            renewalInterval,
-            requestStartedAt,
-            cancellationToken
+            new ScheduledCampaignLeaseRequest(
+                leaseId,
+                leaseDuration,
+                renewalInterval,
+                requestStartedAt,
+                cancellationToken
+            )
         );
         if (!hold.IsLost)
             return hold;

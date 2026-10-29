@@ -105,7 +105,7 @@ public sealed class ScheduledCampaignLeaseTests : IntegrationTestBase
         public MongoScheduledCampaignLeaseService Leases(TimeProvider clock) =>
             new(() => _client.GetDatabase(_name), clock);
 
-        public Task ExpireLease(string leaseId) =>
+        public Task<UpdateResult> ExpireLease(string leaseId) =>
             _client
                 .GetDatabase(_name)
                 .GetCollection<ScheduledCampaignLease>(ScheduledCampaignLease.CollectionName)
