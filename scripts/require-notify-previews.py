@@ -22,6 +22,13 @@ EXPECTED = {
         "ProducerRequestedEnglish_ShouldRenderCancellation",
         "ProducerRequestedWelsh_ShouldRenderCancellation",
     },
+    "NotifyReminderPreviewTests": {
+        "EnglishEnvironmentAgency_ShouldRenderReminder",
+        "EnglishSepa_ShouldRenderReminder",
+        "EnglishNrw_ShouldRenderReminder",
+        "EnglishNiea_ShouldRenderReminder",
+        "WelshBilingual_ShouldRenderReminder",
+    },
 }
 
 

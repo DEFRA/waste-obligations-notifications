@@ -9,7 +9,9 @@ response shapes; ADRs retain why those decisions were made. Use
 ## Current scope
 
 Analytics produces commands for compliance-declaration submission and cancellation;
-other valid analytics events retain their existing acknowledgement behaviour.
+a scheduled producer can publish CSoC Email 1 reminder commands for unsubmitted
+direct producers when enabled. Other valid analytics events retain their existing
+acknowledgement behaviour.
 Analytics does not send email or persist event data. Source-independent command
 delivery owns cutover, durable evidence and Notify requests. Authenticated
 administration supports inspection and recovery without changing business data.
@@ -24,6 +26,7 @@ administration supports inspection and recovery without changing business data.
 | Declaration reads and deleted-record fallback | [Waste Obligations client](../src/Consumer/Services/WasteObligations), [shared reader and validation](../src/Consumer/Submission/SubmittedEmailProducer.cs), [submission regressions](../tests/Consumer.Tests/Consumers/SubmittedEmailConsumerTests.cs), [cancellation and replay scenarios](../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs) |
 | Cancellation organisation and Account enrichment | [organisation client](../src/Consumer/Services/WasteOrganisations), [Account client](../src/Consumer/Services/AccountBackend), [cancellation producer](../src/Consumer/Cancellation/CancellationEmailProducer.cs) |
 | Analytics receive/enrichment/publication budget | [options](../src/Consumer/Consumers/AnalyticsEventConsumerOptions.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs) |
+| Not submitted reminder producer | [scan service](../src/Consumer/Scheduled/NotSubmittedReminderScanService.cs), [worker](../src/Consumer/Scheduled/NotSubmittedReminderWorker.cs), [run store](../src/Consumer/Scheduled/MongoScheduledCampaignRunStore.cs), [lease hold](../src/Consumer/Scheduled/ScheduledCampaignLeaseHold.cs), [admin endpoints](../src/Consumer/Endpoints/Admin/NotSubmittedReminderEndpoints.cs), [unit tests](../tests/Consumer.Tests/Scheduled/), [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/NotSubmittedReminderSendTests.cs) |
 
 Required publication must be confirmed before acknowledging its source. A valid
 no-email outcome can acknowledge without publication; validation/dependency or
@@ -52,6 +55,33 @@ Retries re-evaluate live contacts; terminal evidence and immutable conflicts rem
 the replay boundary. No recipient snapshot or producer ledger is introduced.
 Publication precedence does not establish inbox order: recipient lanes, recovery
 and resend can change later delivery order.
+
+## Scheduled reminder runs
+
+Each campaign and obligation year has one `ScheduledCampaignRun` record. Scan
+leases are kept separately in `_scheduled_campaign_leases`, so concurrent hosts
+skip rather than duplicate upstream reads and command publication. The scanning
+host renews its lease every `ScanLeaseRenewalInterval` and stops reading and
+publishing when renewal is rejected or not confirmed before the lease deadline;
+it does not record that scan's results, and a later scan repeats the work under
+the same idempotency keys. A crashed host's lease expires after `ScanLease`.
+
+A scan reads every page of unsubmitted organisations before publishing. Paging
+is not a snapshot: if the total changes or organisations repeat across pages,
+the scan still publishes what it read but counts a retryable failure. A scan
+with no retryable failures (unsubmitted list change, Account read or command
+publication) completes the run, and later scheduled or requested scans skip
+until an administrator reopens it. Scans with retryable failures leave the run
+open and are retried on the next interval within the send window.
+
+Manual scan requests acquire the same campaign lease before reopening or reading
+the run and release it once that update is complete. If the lease is held, by
+this host or another, the request returns `409 Conflict` so operators retry once
+the current scan finishes; a scan cannot start between the check and the reopen.
+
+Completion records publication of every eligible command, not Notify acceptance;
+use delivery records for send outcomes. Reopening republishes eligible commands
+under unchanged idempotency keys, so delivered intentions remain suppressed.
 
 ## Notification commands and data protection
 
