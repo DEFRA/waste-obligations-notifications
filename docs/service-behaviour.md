@@ -74,6 +74,10 @@ publication) completes the run, and later scheduled or requested scans skip
 until an administrator reopens it. Scans with retryable failures leave the run
 open and are retried on the next interval within the send window.
 
+Manual scan requests return `409 Conflict` while an active scan lease is held,
+so operators retry once the current scan finishes rather than accepting a
+request that would be dropped or race with the in-flight work.
+
 Completion records publication of every eligible command, not Notify acceptance;
 use delivery records for send outcomes. Reopening republishes eligible commands
 under unchanged idempotency keys, so delivered intentions remain suppressed.

@@ -70,4 +70,12 @@ public sealed class MongoScheduledCampaignLeaseService(Func<IMongoDatabase> data
             s_filter.And(s_filter.Eq(lease => lease.Id, leaseId), s_filter.Eq(lease => lease.Owner, _instanceId)),
             cancellationToken
         );
+
+    public async Task<bool> IsHeld(string leaseId, CancellationToken cancellationToken)
+    {
+        var utcNow = timeProvider.GetUtcNow().UtcDateTime;
+        var lease = await Leases.Find(s_filter.Eq(lease => lease.Id, leaseId)).FirstOrDefaultAsync(cancellationToken);
+
+        return lease is not null && lease.ExpiresAt > utcNow;
+    }
 }

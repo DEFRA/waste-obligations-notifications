@@ -12,6 +12,21 @@ public sealed class ScheduledCampaignLeaseTests : IntegrationTestBase
     private static readonly TimeSpan s_lease = TimeSpan.FromMinutes(10);
 
     [Fact]
+    public async Task WhenLeaseIsHeld_IsHeldShouldReturnTrueUntilReleasedOrExpired()
+    {
+        await using var database = new LeaseDatabase();
+        var clock = new MutableTimeProvider(s_start);
+        var leases = database.Leases(clock);
+        var heldId = $"integration-held:{Guid.NewGuid():N}";
+
+        Assert.False(await leases.IsHeld(heldId, TestContext.Current.CancellationToken));
+        await leases.TryAcquire(heldId, s_lease, TestContext.Current.CancellationToken);
+        Assert.True(await leases.IsHeld(heldId, TestContext.Current.CancellationToken));
+        await leases.Release(heldId, TestContext.Current.CancellationToken);
+        Assert.False(await leases.IsHeld(heldId, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task WhenConcurrentAcquireRaces_ShouldAllowOnlyOneOwner()
     {
         await using var database = new LeaseDatabase();

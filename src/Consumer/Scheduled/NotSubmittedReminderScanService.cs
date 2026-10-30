@@ -29,6 +29,9 @@ public sealed class NotSubmittedReminderScanService(
         if (skipReason is not null)
             return skipReason;
 
+        if (await leases.IsHeld(LeaseId(obligationYear), cancellationToken))
+            return ScanInProgressReason;
+
         if (reopen)
         {
             await runs.Reopen(Campaign, obligationYear, cancellationToken);

@@ -6,6 +6,9 @@ public sealed class ScheduledCampaignLeaseKeeper(
     ILogger<ScheduledCampaignLeaseKeeper> logger
 )
 {
+    public Task<bool> IsHeld(string leaseId, CancellationToken cancellationToken) =>
+        leases.IsHeld(leaseId, cancellationToken);
+
     public async Task<ScheduledCampaignLeaseHold?> TryHold(
         string leaseId,
         TimeSpan leaseDuration,

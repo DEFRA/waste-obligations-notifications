@@ -59,6 +59,20 @@ public sealed class NotSubmittedReminderScanServiceTests
     }
 
     [Fact]
+    public async Task PrepareRequestedScan_WhenScanLeaseHeld_ShouldReturnScanInProgressReason()
+    {
+        var leases = Substitute.For<IScheduledCampaignLeaseService>();
+        leases.IsHeld(LeaseId, Arg.Any<CancellationToken>()).Returns(true);
+        var runs = CreateRuns();
+        var service = CreateService(new() { Leases = leases, Runs = runs });
+
+        var skipReason = await service.PrepareRequestedScan(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(NotSubmittedReminderScanService.ScanInProgressReason, skipReason);
+        await runs.DidNotReceive().Reopen(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task PrepareRequestedScan_WhenReopenRequested_ShouldReopenRunAndAllowScan()
     {
         var runs = CreateRuns();
@@ -905,6 +919,7 @@ public sealed class NotSubmittedReminderScanServiceTests
     private static IScheduledCampaignLeaseService CreateLeases(bool acquired = true)
     {
         var leases = Substitute.For<IScheduledCampaignLeaseService>();
+        leases.IsHeld(Arg.Any<string>(), Arg.Any<CancellationToken>()).Returns(false);
         leases.TryAcquire(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(acquired);
         leases.TryRenew(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<CancellationToken>()).Returns(true);
 
