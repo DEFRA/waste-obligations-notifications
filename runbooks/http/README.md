@@ -30,6 +30,8 @@ For deployed environments:
   further scans. Use `?reopen=true` only to scan again for direct producers still on
   the unsubmitted list (or after partial publish failures on the last run). Command
   idempotency still suppresses duplicate emails to recipients already accepted by Notify.
+  The `not-submitted-reminder-2` requests do the same for CSoC Email 2, which
+  only sends to direct producers whose recycling obligations are met.
 
 Executable response examples are recorded in the Verify `*.verified.json` snapshots in
 [`tests/Consumer.Tests/Administration`](../../tests/Consumer.Tests/Administration).

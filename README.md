@@ -136,6 +136,16 @@ whole-queue redrive. Native replay/recovery proof remains a separate
 [operator verification](docs/command-dlq-native-sqs-verification.md); emulator tests
 cannot supply it or authorize testing shared resources.
 
+### Scheduled reminders
+
+CSoC Email 1 (`NotSubmittedReminder__`) and Email 2 (`NotSubmittedReminder2__`)
+are disabled by default; see the
+[campaign definitions](src/Consumer/Scheduled/NotSubmittedReminderCampaign.cs) and
+[options](src/Consumer/Scheduled/NotSubmittedReminderOptions.cs). Email 2 requires
+`NotSubmittedReminder2__Personalisation__reportPackagingDataAccountUrl`; the
+checked-in value targets development, so set each environment's Report packaging
+data URL before enabling it.
+
 ### Mongo, metrics and health
 
 Configure `Mongo__DatabaseUri` and `Mongo__DatabaseName`; the notifications database

@@ -15,12 +15,16 @@ public sealed class NotSubmittedReminderScanService(
     ILogger<NotSubmittedReminderScanService> logger
 ) : INotSubmittedReminderScanService
 {
-    public const string Campaign = "not-submitted-reminder-" + NotSubmittedReminderCommandFactory.CampaignId;
     public const string CompletedReason = "not-submitted-reminder-completed";
     public const string ScanInProgressReason = "not-submitted-reminder-scan-in-progress";
     public const string LeaseLostReason = "not-submitted-reminder-lease-lost";
 
+    public const string ObligationsNotMetReason = "obligations-not-met";
+    public const string ObligationStatusUnknownReason = "obligation-status-unknown";
+
     private const string DirectProducer = "DirectProducer";
+
+    private string Campaign => support.Campaign.Name;
 
     public async Task<string?> PrepareRequestedScan(bool reopen, CancellationToken cancellationToken)
     {
@@ -45,7 +49,8 @@ public sealed class NotSubmittedReminderScanService(
             if (logger.IsEnabled(LogLevel.Information))
             {
                 logger.LogInformation(
-                    "Not submitted reminder run reopened for obligation year {ObligationYear}",
+                    "Not submitted reminder {Campaign} run reopened for obligation year {ObligationYear}",
+                    Campaign,
                     obligationYear
                 );
             }
@@ -72,7 +77,8 @@ public sealed class NotSubmittedReminderScanService(
             )
             {
                 logger.LogWarning(
-                    "Not submitted reminder scan skipped ({ReasonCode}) for obligation year {ObligationYear}",
+                    "Not submitted reminder {Campaign} scan skipped ({ReasonCode}) for obligation year {ObligationYear}",
+                    Campaign,
                     skipReason,
                     obligationYear
                 );
@@ -107,7 +113,8 @@ public sealed class NotSubmittedReminderScanService(
             {
                 logger.LogWarning(
                     exception,
-                    "Not submitted reminder scan stopped ({ReasonCode}) for obligation year {ObligationYear}",
+                    "Not submitted reminder {Campaign} scan stopped ({ReasonCode}) for obligation year {ObligationYear}",
+                    Campaign,
                     "lease-lost",
                     obligationYear
                 );
@@ -119,7 +126,8 @@ public sealed class NotSubmittedReminderScanService(
         if (logger.IsEnabled(LogLevel.Information))
         {
             logger.LogInformation(
-                "Not submitted reminder scan completed for obligation year {ObligationYear}: {OrganisationsProcessed} organisations, {CommandsPublished} commands published, {OrganisationsSkipped} organisations skipped, {RetryableFailures} retryable failures, run {RunOutcome}",
+                "Not submitted reminder {Campaign} scan completed for obligation year {ObligationYear}: {OrganisationsProcessed} organisations, {CommandsPublished} commands published, {OrganisationsSkipped} organisations skipped, {RetryableFailures} retryable failures, run {RunOutcome}",
+                Campaign,
                 obligationYear,
                 result.OrganisationsProcessed,
                 result.CommandsPublished,
@@ -162,10 +170,21 @@ public sealed class NotSubmittedReminderScanService(
 
     private static NotSubmittedReminderScanResult Skipped(string reason) => new(0, 0, 0, 0, reason);
 
-    private static string LeaseId(int obligationYear) => $"{Campaign}:{obligationYear}";
+    private string LeaseId(int obligationYear) => $"{Campaign}:{obligationYear}";
 
     private int GetObligationYear() =>
         support.Options.Value.ObligationYearOverride ?? UkObligationYear.FromUtcNow(support.TimeProvider);
+
+    // An unknown status is retryable so the run stays open until Waste Obligations has calculated it.
+    private string? GetIneligibleReason(UnsubmittedOrganisationRow row) =>
+        !support.Campaign.RequiresRecyclingObligationsMet
+            ? null
+            : row.RecyclingObligationsMet switch
+            {
+                true => null,
+                false => ObligationsNotMetReason,
+                null => ObligationStatusUnknownReason,
+            };
 
     private async Task<NotSubmittedReminderScanResult> Scan(int obligationYear, CancellationToken cancellationToken)
     {
@@ -227,7 +246,8 @@ public sealed class NotSubmittedReminderScanService(
         if (listChanged && logger.IsEnabled(LogLevel.Warning))
         {
             logger.LogWarning(
-                "Not submitted reminder unsubmitted list changed during the scan ({ReasonCode}) for obligation year {ObligationYear}",
+                "Not submitted reminder {Campaign} unsubmitted list changed during the scan ({ReasonCode}) for obligation year {ObligationYear}",
+                Campaign,
                 "unsubmitted-list-changed",
                 obligationYear
             );
@@ -243,22 +263,71 @@ public sealed class NotSubmittedReminderScanService(
         CancellationToken cancellationToken
     )
     {
+        var ineligibleReason = GetIneligibleReason(row);
+        if (ineligibleReason is not null)
+        {
+            LogSkipped(row.OrganisationId, ineligibleReason);
+
+            return (0, ineligibleReason == ObligationStatusUnknownReason ? 1 : 0);
+        }
+
         var (normalisedCountry, regulatorEmail, usedDefaultCountry) = RegulatorEmailResolver.Resolve(
             row.BusinessCountry
         );
         if (usedDefaultCountry && logger.IsEnabled(LogLevel.Information))
         {
             logger.LogInformation(
-                "Not submitted reminder defaulted business country ({ReasonCode}) for organisation {OrganisationId}",
+                "Not submitted reminder {Campaign} defaulted business country ({ReasonCode}) for organisation {OrganisationId}",
+                Campaign,
                 "default-business-country",
                 row.OrganisationId
             );
         }
 
+        var recipients = await ReadRecipients(row.OrganisationId, cancellationToken);
+        if (recipients is null)
+            return (0, 1);
+
+        if (recipients.Length == 0)
+        {
+            LogSkipped(row.OrganisationId, "no-eligible-recipient");
+
+            return (0, 0);
+        }
+
+        var published = 0;
+        var failures = 0;
+        foreach (var recipient in recipients)
+        {
+            var message = support.Presentation.Create(recipient, obligationYear, normalisedCountry, regulatorEmail);
+            var command = NotSubmittedReminderCommandFactory.Create(
+                support.Campaign,
+                obligationYear,
+                row.OrganisationId,
+                actionOccurredAtUtc,
+                message,
+                recipient.Email
+            );
+
+            if (await TryPublish(command, row.OrganisationId, cancellationToken))
+                published++;
+            else
+                failures++;
+        }
+
+        return (published, failures);
+    }
+
+    // Returns null when the Account read is unavailable so the scan counts a retryable failure.
+    private async Task<NotSubmittedReminderRecipient[]?> ReadRecipients(
+        Guid organisationId,
+        CancellationToken cancellationToken
+    )
+    {
         OrganisationWithPersons? organisation;
         try
         {
-            organisation = await accounts.ReadOrganisationWithPersons(row.OrganisationId, cancellationToken);
+            organisation = await accounts.ReadOrganisationWithPersons(organisationId, cancellationToken);
         }
         catch (Exception exception)
             when (exception is HttpRequestException or TaskCanceledException
@@ -269,57 +338,30 @@ public sealed class NotSubmittedReminderScanService(
             {
                 logger.LogWarning(
                     exception,
-                    "Not submitted reminder skipped organisation {OrganisationId} ({ReasonCode})",
-                    row.OrganisationId,
+                    "Not submitted reminder {Campaign} skipped organisation {OrganisationId} ({ReasonCode})",
+                    Campaign,
+                    organisationId,
                     "account-read-unavailable"
                 );
             }
 
-            return (0, 1);
+            return null;
         }
 
-        var recipients = NotSubmittedReminderRecipientResolver.Resolve(organisation?.Persons ?? []);
-        if (recipients.Length == 0)
+        return NotSubmittedReminderRecipientResolver.Resolve(organisation?.Persons ?? []);
+    }
+
+    private void LogSkipped(Guid organisationId, string reasonCode)
+    {
+        if (logger.IsEnabled(LogLevel.Information))
         {
-            if (logger.IsEnabled(LogLevel.Information))
-            {
-                logger.LogInformation(
-                    "Not submitted reminder skipped organisation {OrganisationId} ({ReasonCode})",
-                    row.OrganisationId,
-                    "no-eligible-recipient"
-                );
-            }
-
-            return (0, 0);
-        }
-
-        var published = 0;
-        var failures = 0;
-        foreach (var recipient in recipients)
-        {
-            var (notificationType, templateId, personalisation) = support.Presentation.Create(
-                recipient,
-                obligationYear,
-                normalisedCountry,
-                regulatorEmail
+            logger.LogInformation(
+                "Not submitted reminder {Campaign} skipped organisation {OrganisationId} ({ReasonCode})",
+                Campaign,
+                organisationId,
+                reasonCode
             );
-            var command = NotSubmittedReminderCommandFactory.Create(
-                obligationYear,
-                row.OrganisationId,
-                actionOccurredAtUtc,
-                notificationType,
-                templateId,
-                recipient.Email,
-                personalisation
-            );
-
-            if (await TryPublish(command, row.OrganisationId, cancellationToken))
-                published++;
-            else
-                failures++;
         }
-
-        return (published, failures);
     }
 
     private async Task<bool> TryPublish(
@@ -340,7 +382,8 @@ public sealed class NotSubmittedReminderScanService(
             {
                 logger.LogWarning(
                     exception,
-                    "Not submitted reminder failed to publish for organisation {OrganisationId} ({ReasonCode})",
+                    "Not submitted reminder {Campaign} failed to publish for organisation {OrganisationId} ({ReasonCode})",
+                    Campaign,
                     organisationId,
                     "command-publish-failed"
                 );
