@@ -29,12 +29,19 @@ public sealed class NotSubmittedReminderScanService(
         if (skipReason is not null)
             return skipReason;
 
-        if (await leases.IsHeld(LeaseId(obligationYear), cancellationToken))
+        var settings = support.Options.Value;
+        await using var lease = await leases.TryHold(
+            LeaseId(obligationYear),
+            settings.ScanLease,
+            settings.ScanLeaseRenewalInterval,
+            cancellationToken
+        );
+        if (lease is null)
             return ScanInProgressReason;
 
         if (reopen)
         {
-            await runs.Reopen(Campaign, obligationYear, cancellationToken);
+            await runs.Reopen(Campaign, obligationYear, lease.Token);
             if (logger.IsEnabled(LogLevel.Information))
             {
                 logger.LogInformation(
@@ -46,7 +53,7 @@ public sealed class NotSubmittedReminderScanService(
             return null;
         }
 
-        var run = await runs.Read(Campaign, obligationYear, cancellationToken);
+        var run = await runs.Read(Campaign, obligationYear, lease.Token);
 
         return run?.Status == ScheduledCampaignRunStatus.Completed ? CompletedReason : null;
     }

@@ -74,9 +74,10 @@ publication) completes the run, and later scheduled or requested scans skip
 until an administrator reopens it. Scans with retryable failures leave the run
 open and are retried on the next interval within the send window.
 
-Manual scan requests return `409 Conflict` while an active scan lease is held,
-so operators retry once the current scan finishes rather than accepting a
-request that would be dropped or race with the in-flight work.
+Manual scan requests acquire the same campaign lease before reopening or reading
+the run and release it once that update is complete. If the lease is held, by
+this host or another, the request returns `409 Conflict` so operators retry once
+the current scan finishes; a scan cannot start between the check and the reopen.
 
 Completion records publication of every eligible command, not Notify acceptance;
 use delivery records for send outcomes. Reopening republishes eligible commands

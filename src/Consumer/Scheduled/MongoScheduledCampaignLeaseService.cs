@@ -21,9 +21,10 @@ public sealed class MongoScheduledCampaignLeaseService(Func<IMongoDatabase> data
     public async Task<bool> TryAcquire(string leaseId, TimeSpan leaseDuration, CancellationToken cancellationToken)
     {
         var utcNow = timeProvider.GetUtcNow().UtcDateTime;
+        // Not re-entrant: the worker and admin requests share this instance, so a held lease must reject both.
         var filter = s_filter.And(
             s_filter.Eq(lease => lease.Id, leaseId),
-            s_filter.Or(s_filter.Lte(lease => lease.ExpiresAt, utcNow), s_filter.Eq(lease => lease.Owner, _instanceId))
+            s_filter.Lte(lease => lease.ExpiresAt, utcNow)
         );
         var update = Builders<ScheduledCampaignLease>
             .Update.Set(lease => lease.Owner, _instanceId)
@@ -70,12 +71,4 @@ public sealed class MongoScheduledCampaignLeaseService(Func<IMongoDatabase> data
             s_filter.And(s_filter.Eq(lease => lease.Id, leaseId), s_filter.Eq(lease => lease.Owner, _instanceId)),
             cancellationToken
         );
-
-    public async Task<bool> IsHeld(string leaseId, CancellationToken cancellationToken)
-    {
-        var utcNow = timeProvider.GetUtcNow().UtcDateTime;
-        var lease = await Leases.Find(s_filter.Eq(lease => lease.Id, leaseId)).FirstOrDefaultAsync(cancellationToken);
-
-        return lease is not null && lease.ExpiresAt > utcNow;
-    }
 }

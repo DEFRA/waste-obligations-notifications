@@ -7,6 +7,4 @@ public interface IScheduledCampaignLeaseService
     Task<bool> TryRenew(string leaseId, TimeSpan leaseDuration, CancellationToken cancellationToken);
 
     Task Release(string leaseId, CancellationToken cancellationToken);
-
-    Task<bool> IsHeld(string leaseId, CancellationToken cancellationToken);
 }
