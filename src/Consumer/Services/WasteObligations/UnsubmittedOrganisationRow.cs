@@ -8,5 +8,6 @@ public sealed record UnsubmittedOrganisationRow(
     [property: JsonPropertyName("registrationType")] string RegistrationType,
     [property: JsonPropertyName("businessCountry")] string? BusinessCountry,
     [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("referenceNumber")] string ReferenceNumber
+    [property: JsonPropertyName("referenceNumber")] string ReferenceNumber,
+    [property: JsonPropertyName("recyclingObligationsMet")] bool? RecyclingObligationsMet = null
 );
