@@ -4,9 +4,13 @@ using Microsoft.Extensions.Options;
 
 namespace Defra.WasteObligations.Consumer.Scheduled;
 
-public sealed class NotSubmittedReminderPresentation(IOptions<NotificationDefinitionsOptions> options)
+public sealed class NotSubmittedReminderPresentation(
+    NotSubmittedReminderCampaign campaign,
+    IOptions<NotSubmittedReminderOptions> reminderOptions,
+    IOptions<NotificationDefinitionsOptions> options
+)
 {
-    public (string NotificationType, string TemplateId, JsonElement Personalisation) Create(
+    public NotSubmittedReminderMessage Create(
         NotSubmittedReminderRecipient recipient,
         int obligationYear,
         string normalisedBusinessCountry,
@@ -14,26 +18,25 @@ public sealed class NotSubmittedReminderPresentation(IOptions<NotificationDefini
     )
     {
         var welsh = WelshOrganisation.IsWelsh(normalisedBusinessCountry);
-        var notificationType = welsh
-            ? "declaration-not-submitted-reminder-cy"
-            : "declaration-not-submitted-reminder-en";
+        var notificationType = $"{campaign.NotificationTypePrefix}-{(welsh ? "cy" : "en")}";
         var templateKey = welsh
             ? DeclarationNotificationTemplates.NotSubmittedReminder.WelshTemplateId
             : DeclarationNotificationTemplates.NotSubmittedReminder.EnglishTemplateId;
-        var templateId = options.Value.GetTemplate(
-            NotificationDefinitionsOptions.DeclarationNotSubmittedReminder,
-            templateKey
-        );
-        var personalisation = JsonSerializer.SerializeToElement(
-            new Dictionary<string, object?>
-            {
-                ["firstName"] = recipient.FirstName,
-                ["lastName"] = recipient.LastName,
-                ["year"] = checked(obligationYear + 1),
-                ["regulatorEmail"] = regulatorEmail,
-            }
-        );
+        var templateId = options.Value.GetTemplate(campaign.NotificationDefinition, templateKey);
 
-        return (notificationType, templateId, personalisation);
+        var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["firstName"] = recipient.FirstName,
+            ["lastName"] = recipient.LastName,
+            ["regulatorEmail"] = regulatorEmail,
+        };
+        foreach (var (key, value) in campaign.YearPersonalisation(obligationYear))
+            values[key] = value;
+        foreach (var (key, value) in reminderOptions.Value.Personalisation)
+            values.TryAdd(key, value);
+
+        var personalisation = JsonSerializer.SerializeToElement(values);
+
+        return new NotSubmittedReminderMessage(notificationType, templateId, personalisation);
     }
 }

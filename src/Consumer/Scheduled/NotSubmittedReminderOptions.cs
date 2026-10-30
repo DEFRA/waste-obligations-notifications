@@ -4,8 +4,6 @@ namespace Defra.WasteObligations.Consumer.Scheduled;
 
 public sealed record NotSubmittedReminderOptions
 {
-    public const string SectionName = "NotSubmittedReminder";
-
     public bool Enabled { get; init; }
 
     [Range(1, 12)]
@@ -40,6 +38,8 @@ public sealed record NotSubmittedReminderOptions
 
     [Range(2023, 2050)]
     public int? ObligationYearOverride { get; init; }
+
+    public Dictionary<string, string> Personalisation { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
     public bool HasValidSchedule =>
         Month is >= 1 and <= 12

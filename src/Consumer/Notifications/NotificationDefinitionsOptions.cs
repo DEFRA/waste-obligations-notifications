@@ -11,6 +11,7 @@ public sealed class NotificationDefinitionsOptions
     public const string DeclarationSubmitted = "DeclarationSubmitted";
     public const string DeclarationCancelled = "DeclarationCancelled";
     public const string DeclarationNotSubmittedReminder = "DeclarationNotSubmittedReminder";
+    public const string DeclarationNotSubmittedReminder2 = "DeclarationNotSubmittedReminder2";
 
     public Dictionary<string, NotificationDefinition> Definitions { get; init; } = CreateDefaults();
 
@@ -74,6 +75,16 @@ public sealed class NotificationDefinitionsOptions
                         "54acaa9f-93c4-4052-bd0d-f5bc9e122ce6",
                     [DeclarationNotificationTemplates.NotSubmittedReminder.WelshTemplateId] =
                         "156214dd-3735-4ed0-bb8d-c955facc7dd0",
+                },
+            },
+            [DeclarationNotSubmittedReminder2] = new()
+            {
+                Templates = new(StringComparer.OrdinalIgnoreCase)
+                {
+                    [DeclarationNotificationTemplates.NotSubmittedReminder.EnglishTemplateId] =
+                        "458cd86f-861b-46ad-b67f-560a3c78ee94",
+                    [DeclarationNotificationTemplates.NotSubmittedReminder.WelshTemplateId] =
+                        "5f9e4390-41d6-418a-99bd-d0035ba39bc2",
                 },
             },
         };
