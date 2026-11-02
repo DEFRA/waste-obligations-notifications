@@ -7,14 +7,53 @@ public static class NotSubmittedReminderEndpoints
 {
     public static void MapNotSubmittedReminderEndpoints(this IEndpointRouteBuilder builder)
     {
-        builder.MapPost("/not-submitted-reminder/scan", TriggerScan).ExcludeFromDescription();
-        builder.MapGet("/not-submitted-reminder/status", GetStatus).ExcludeFromDescription();
+        builder
+            .MapPost(
+                "/not-submitted-reminder/scan",
+                (
+                    [FromKeyedServices(NotSubmittedReminderCampaign.Email1Id)] NotSubmittedReminderScanTrigger trigger,
+                    CancellationToken cancellationToken,
+                    [FromQuery] bool reopen = false
+                ) => TriggerScan(trigger, reopen, cancellationToken)
+            )
+            .ExcludeFromDescription();
+        builder
+            .MapGet(
+                "/not-submitted-reminder/status",
+                (
+                    [FromKeyedServices(NotSubmittedReminderCampaign.Email1Id)]
+                        INotSubmittedReminderScanService scanService,
+                    CancellationToken cancellationToken
+                ) => GetStatus(scanService, cancellationToken)
+            )
+            .ExcludeFromDescription();
+
+        builder
+            .MapPost(
+                "/not-submitted-reminder-2/scan",
+                (
+                    [FromKeyedServices(NotSubmittedReminderCampaign.Email2Id)] NotSubmittedReminderScanTrigger trigger,
+                    CancellationToken cancellationToken,
+                    [FromQuery] bool reopen = false
+                ) => TriggerScan(trigger, reopen, cancellationToken)
+            )
+            .ExcludeFromDescription();
+        builder
+            .MapGet(
+                "/not-submitted-reminder-2/status",
+                (
+                    [FromKeyedServices(NotSubmittedReminderCampaign.Email2Id)]
+                        INotSubmittedReminderScanService scanService,
+                    CancellationToken cancellationToken
+                ) => GetStatus(scanService, cancellationToken)
+            )
+            .ExcludeFromDescription();
     }
 
     private static async Task<IResult> TriggerScan(
-        [FromServices] NotSubmittedReminderScanTrigger trigger,
-        CancellationToken cancellationToken,
-        [FromQuery] bool reopen = false
+        NotSubmittedReminderScanTrigger trigger,
+        bool reopen,
+        CancellationToken cancellationToken
     )
     {
         var skipReason = await trigger.Request(reopen, cancellationToken);
@@ -30,7 +69,7 @@ public static class NotSubmittedReminderEndpoints
     }
 
     private static async Task<IResult> GetStatus(
-        [FromServices] INotSubmittedReminderScanService scanService,
+        INotSubmittedReminderScanService scanService,
         CancellationToken cancellationToken
     ) => Results.Ok(await scanService.GetRunStatus(cancellationToken));
 }

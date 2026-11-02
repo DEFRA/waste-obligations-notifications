@@ -107,7 +107,7 @@ class NotifyPreviewEvidenceTests(unittest.TestCase):
             "ProducerRequestedEnglish_ShouldRenderCancellation",
             "ProducerRequestedWelsh_ShouldRenderCancellation"]
     ] + [
-        ("NotifyReminderPreviewTests", name) for name in [
+        (family, name) for family in ["NotifyReminderPreviewTests", "NotifyReminder2PreviewTests"] for name in [
             "EnglishEnvironmentAgency_ShouldRenderReminder", "EnglishSepa_ShouldRenderReminder",
             "EnglishNrw_ShouldRenderReminder", "EnglishNiea_ShouldRenderReminder",
             "WelshBilingual_ShouldRenderReminder"]
@@ -142,7 +142,7 @@ class NotifyPreviewEvidenceTests(unittest.TestCase):
     def test_all_unique_passed_cases_are_accepted(self):
         root, _, _, _ = self.report()
         ET.ElementTree(root).write(self.path)
-        self.assertIn("all 17 cases executed and passed", self.invoke())
+        self.assertIn("all 22 cases executed and passed", self.invoke())
 
     def test_failed_skipped_duplicate_unexpected_and_unmatched_cases_are_rejected(self):
         for kind in ["failed", "skipped", "duplicate", "wrong-class", "wrong-family", "unknown-id",
@@ -174,7 +174,8 @@ class NotifyPreviewEvidenceTests(unittest.TestCase):
                     self.invoke()
 
     def test_neither_family_alone_satisfies_the_gate(self):
-        for family in ("NotifySubmissionPreviewTests", "NotifyCancellationPreviewTests", "NotifyReminderPreviewTests"):
+        for family in ("NotifySubmissionPreviewTests", "NotifyCancellationPreviewTests", "NotifyReminderPreviewTests",
+                       "NotifyReminder2PreviewTests"):
             with self.subTest(family=family):
                 root, _, definitions, results = self.report()
                 for index in reversed(range(len(self.CASES))):

@@ -8,8 +8,9 @@ public sealed class NotSubmittedReminderOccurrence(IOptions<NotSubmittedReminder
     {
         var settings = options.Value;
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(settings.TimeZoneId);
+        // The obligation year runs from 1 February, so a January occurrence falls in the next calendar year.
         var local = new DateTime(
-            obligationYear,
+            settings.Month == 1 ? checked(obligationYear + 1) : obligationYear,
             settings.Month,
             settings.Day,
             settings.Hour,

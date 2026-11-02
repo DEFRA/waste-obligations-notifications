@@ -17,3 +17,19 @@ Authorization: Bearer {{$auth.token("service")}}
 # @no-log
 GET {{host}}/admin/not-submitted-reminder/status
 Authorization: Bearer {{$auth.token("service")}}
+
+### Request a CSoC Email 2 reminder scan
+# Same responses as the first reminder; only direct producers with met recycling obligations are sent.
+# @no-log
+POST {{host}}/admin/not-submitted-reminder-2/scan
+Authorization: Bearer {{$auth.token("service")}}
+
+### Reopen a completed CSoC Email 2 reminder run and request a scan
+# @no-log
+POST {{host}}/admin/not-submitted-reminder-2/scan?reopen=true
+Authorization: Bearer {{$auth.token("service")}}
+
+### Read the CSoC Email 2 reminder run status
+# @no-log
+GET {{host}}/admin/not-submitted-reminder-2/status
+Authorization: Bearer {{$auth.token("service")}}

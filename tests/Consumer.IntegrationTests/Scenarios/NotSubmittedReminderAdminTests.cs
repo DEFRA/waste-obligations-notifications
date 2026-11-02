@@ -25,6 +25,8 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
 {
     private const string ScanRoute = "/admin/not-submitted-reminder/scan";
     private const string StatusRoute = "/admin/not-submitted-reminder/status";
+    private const string SecondScanRoute = "/admin/not-submitted-reminder-2/scan";
+    private const string SecondStatusRoute = "/admin/not-submitted-reminder-2/status";
     private const string Secret = "local-test-admin:secret";
     private static readonly string[] ExpectedRecipientEmails = ["approved@example.test", "delegated@example.test"];
 
@@ -44,7 +46,7 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
         var status = await statusTask;
 
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
-        Assert.Equal(NotSubmittedReminderScanService.Campaign, status.GetProperty("campaign").GetString());
+        Assert.Equal(NotSubmittedReminderCampaign.Email1.Name, status.GetProperty("campaign").GetString());
         Assert.Equal(host.State.ObligationYear, status.GetProperty("obligationYear").GetInt32());
         Assert.Equal(1, status.GetProperty("scanCount").GetInt32());
         Assert.Equal(0, status.GetProperty("organisationsProcessed").GetInt32());
@@ -125,6 +127,35 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
         Assert.Empty(host.Sqs.Confirmed);
     }
 
+    [Fact]
+    public async Task WhenSecondReminderIsDisabled_ShouldRejectScanAndReportItsOwnRun()
+    {
+        await using var host = await ReminderAdminHost.Start(TimeSpan.Zero);
+        using var client = await host.CreateReadyClient();
+        await WaitForCompletedStatus(client);
+
+        var anonymousTask = client.SendAsync(
+            Request(HttpMethod.Post, SecondScanRoute, null),
+            TestContext.Current.CancellationToken
+        );
+        var rejectedTask = client.SendAsync(
+            Request(HttpMethod.Post, SecondScanRoute + "?reopen=true", Secret),
+            TestContext.Current.CancellationToken
+        );
+        await Task.WhenAll(anonymousTask, rejectedTask);
+        using var anonymous = await anonymousTask;
+        using var rejected = await rejectedTask;
+        var rejectedBody = await rejected.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var status = await ReadStatus(client, SecondStatusRoute);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        Assert.Contains(NotSubmittedReminderCutoverGuard.DisabledReason, rejectedBody, StringComparison.Ordinal);
+        Assert.Equal(NotSubmittedReminderCampaign.Email2.Name, status.GetProperty("campaign").GetString());
+        Assert.Equal("not-started", status.GetProperty("status").GetString());
+        Assert.Equal(1, host.State.UnsubmittedReads);
+    }
+
     private static async Task<JsonElement> WaitForCompletedStatus(HttpClient client)
     {
         var status = default(JsonElement);
@@ -137,10 +168,10 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
         return status;
     }
 
-    private static async Task<JsonElement> ReadStatus(HttpClient client)
+    private static async Task<JsonElement> ReadStatus(HttpClient client, string route = StatusRoute)
     {
         using var response = await client.SendAsync(
-            Request(HttpMethod.Get, StatusRoute, Secret),
+            Request(HttpMethod.Get, route, Secret),
             TestContext.Current.CancellationToken
         );
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -185,7 +216,8 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
                 TimeZoneInfo.FindSystemTimeZoneById("Europe/London")
             );
             var scheduled = londonNow.Add(scheduleOffset);
-            var host = new ReminderAdminHost(londonNow.Year);
+            var obligationYear = scheduled.Month == 1 ? scheduled.Year - 1 : scheduled.Year;
+            var host = new ReminderAdminHost(obligationYear);
             try
             {
                 host.Sqs.CommandUrl = (
@@ -225,7 +257,7 @@ public sealed class NotSubmittedReminderAdminTests : IntegrationTestBase
                         ["AccountBackend:ClientSecret"] = "synthetic-read-secret",
                         ["NotSubmittedReminder:Month"] = scheduled.Month.ToString(CultureInfo.InvariantCulture),
                         ["NotSubmittedReminder:Day"] = scheduled.Day.ToString(CultureInfo.InvariantCulture),
-                        ["NotSubmittedReminder:ObligationYearOverride"] = londonNow.Year.ToString(
+                        ["NotSubmittedReminder:ObligationYearOverride"] = obligationYear.ToString(
                             CultureInfo.InvariantCulture
                         ),
                     }

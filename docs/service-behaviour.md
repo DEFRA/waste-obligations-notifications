@@ -9,8 +9,8 @@ response shapes; ADRs retain why those decisions were made. Use
 ## Current scope
 
 Analytics produces commands for compliance-declaration submission and cancellation;
-a scheduled producer can publish CSoC Email 1 reminder commands for unsubmitted
-direct producers when enabled. Other valid analytics events retain their existing
+a scheduled producer can publish CSoC Email 1 and Email 2 reminder commands for
+unsubmitted direct producers when enabled. Other valid analytics events retain their existing
 acknowledgement behaviour.
 Analytics does not send email or persist event data. Source-independent command
 delivery owns cutover, durable evidence and Notify requests. Authenticated
@@ -26,7 +26,7 @@ administration supports inspection and recovery without changing business data.
 | Declaration reads and deleted-record fallback | [Waste Obligations client](../src/Consumer/Services/WasteObligations), [shared reader and validation](../src/Consumer/Submission/SubmittedEmailProducer.cs), [submission regressions](../tests/Consumer.Tests/Consumers/SubmittedEmailConsumerTests.cs), [cancellation and replay scenarios](../tests/Consumer.IntegrationTests/Scenarios/CancellationEmailSendTests.cs) |
 | Cancellation organisation and Account enrichment | [organisation client](../src/Consumer/Services/WasteOrganisations), [Account client](../src/Consumer/Services/AccountBackend), [cancellation producer](../src/Consumer/Cancellation/CancellationEmailProducer.cs) |
 | Analytics receive/enrichment/publication budget | [options](../src/Consumer/Consumers/AnalyticsEventConsumerOptions.cs), [consumer](../src/Consumer/Consumers/AnalyticsEventConsumer.cs) |
-| Not submitted reminder producer | [scan service](../src/Consumer/Scheduled/NotSubmittedReminderScanService.cs), [worker](../src/Consumer/Scheduled/NotSubmittedReminderWorker.cs), [run store](../src/Consumer/Scheduled/MongoScheduledCampaignRunStore.cs), [lease hold](../src/Consumer/Scheduled/ScheduledCampaignLeaseHold.cs), [admin endpoints](../src/Consumer/Endpoints/Admin/NotSubmittedReminderEndpoints.cs), [unit tests](../tests/Consumer.Tests/Scheduled/), [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/NotSubmittedReminderSendTests.cs) |
+| Not submitted reminder producer | [campaign definitions](../src/Consumer/Scheduled/NotSubmittedReminderCampaign.cs), [scan service](../src/Consumer/Scheduled/NotSubmittedReminderScanService.cs), [worker](../src/Consumer/Scheduled/NotSubmittedReminderWorker.cs), [run store](../src/Consumer/Scheduled/MongoScheduledCampaignRunStore.cs), [lease hold](../src/Consumer/Scheduled/ScheduledCampaignLeaseHold.cs), [admin endpoints](../src/Consumer/Endpoints/Admin/NotSubmittedReminderEndpoints.cs), [unit tests](../tests/Consumer.Tests/Scheduled/), [hosted scenarios](../tests/Consumer.IntegrationTests/Scenarios/NotSubmittedReminderSendTests.cs), [Email 2 scenarios](../tests/Consumer.IntegrationTests/Scenarios/NotSubmittedReminder2SendTests.cs) |
 
 Required publication must be confirmed before acknowledging its source. A valid
 no-email outcome can acknowledge without publication; validation/dependency or
@@ -58,6 +58,15 @@ and resend can change later delivery order.
 
 ## Scheduled reminder runs
 
+Each reminder campaign has its own configuration section, schedule, run record,
+lease, idempotency-key prefix, admin routes and notification types, so Email 1
+and Email 2 never suppress each other. Email 2 sends only when Waste Obligations
+reports recycling obligations as met; an unknown status counts as a retryable
+failure so the run stays open until it is calculated. A January schedule falls
+after the obligation year it reminds about. Campaign `Personalisation` entries
+add per-environment template values, such as Email 2's account link, and cannot
+replace computed values.
+
 Each campaign and obligation year has one `ScheduledCampaignRun` record. Scan
 leases are kept separately in `_scheduled_campaign_leases`, so concurrent hosts
 skip rather than duplicate upstream reads and command publication. The scanning
@@ -69,8 +78,8 @@ the same idempotency keys. A crashed host's lease expires after `ScanLease`.
 A scan reads every page of unsubmitted organisations before publishing. Paging
 is not a snapshot: if the total changes or organisations repeat across pages,
 the scan still publishes what it read but counts a retryable failure. A scan
-with no retryable failures (unsubmitted list change, Account read or command
-publication) completes the run, and later scheduled or requested scans skip
+with no retryable failures (unsubmitted list change, unknown obligation status,
+Account read or command publication) completes the run, and later scheduled or requested scans skip
 until an administrator reopens it. Scans with retryable failures leave the run
 open and are retried on the next interval within the send window.
 

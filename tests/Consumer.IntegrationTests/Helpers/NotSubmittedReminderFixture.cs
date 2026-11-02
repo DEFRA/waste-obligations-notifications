@@ -32,9 +32,14 @@ public sealed class NotSubmittedReminderFixture : IAsyncDisposable
     public NotSubmittedReminderHttpState State { get; }
     private INotificationCommandDigest Digest => _host!.Services.GetRequiredService<INotificationCommandDigest>();
 
+    public const string ReportPackagingDataAccountUrl = "https://report-data.example.test/report-data";
+
     private NotSubmittedReminderFixture(DateTimeOffset londonNow)
     {
-        State = new NotSubmittedReminderHttpState { ObligationYear = londonNow.Year };
+        State = new NotSubmittedReminderHttpState
+        {
+            ObligationYear = londonNow.Month == 1 ? londonNow.Year - 1 : londonNow.Year,
+        };
     }
 
     public static async Task<NotSubmittedReminderFixture> Create()
@@ -80,21 +85,15 @@ public sealed class NotSubmittedReminderFixture : IAsyncDisposable
                 ["NotificationCommandDelivery:RecipientLaneSecret"] = "isolated-reminder-lane-secret",
                 ["NotificationCommandDelivery:WaitTimeSeconds"] = "0",
                 ["NotificationCommandDelivery:PollIntervalSeconds"] = "1",
-                ["NotSubmittedReminder:Enabled"] = "true",
-                ["NotSubmittedReminder:Month"] = londonNow.Month.ToString(CultureInfo.InvariantCulture),
-                ["NotSubmittedReminder:Day"] = londonNow.Day.ToString(CultureInfo.InvariantCulture),
-                ["NotSubmittedReminder:Hour"] = "0",
-                ["NotSubmittedReminder:Minute"] = "0",
-                ["NotSubmittedReminder:SendWindow"] = "2.00:00:00",
-                ["NotSubmittedReminder:PageSize"] = "1",
-                ["NotSubmittedReminder:ScanLease"] = "00:01:00",
-                ["NotSubmittedReminder:ScanLeaseRenewalInterval"] = "00:00:01",
-                ["NotSubmittedReminder:ObligationYearOverride"] = londonNow.Year.ToString(CultureInfo.InvariantCulture),
+                [$"{NotSubmittedReminderCampaign.Email2.SectionName}:Personalisation:reportPackagingDataAccountUrl"] =
+                    ReportPackagingDataAccountUrl,
                 ["Mongo:DatabaseUri"] = "mongodb://localhost:27017",
                 ["Mongo:DatabaseName"] = fixture._database,
                 ["Notify:ApiKey"] = await fixture._notify.GetStringAsync("/test/api-key", token),
                 ["Notify:BaseAddress"] = "http://localhost:8086",
             };
+            foreach (var campaign in NotSubmittedReminderCampaign.All)
+                AddCampaignSettings(values, campaign.SectionName, londonNow, fixture.State.ObligationYear);
             var builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -103,9 +102,14 @@ public sealed class NotSubmittedReminderFixture : IAsyncDisposable
             builder.Services.AddNotificationDefinitions(builder.Configuration);
             builder.Services.AddNotificationCommandDelivery(builder.Configuration);
             builder.Services.AddNotSubmittedReminderProducer(builder.Configuration);
-            builder.Services.Remove(
-                builder.Services.Single(service => service.ImplementationType == typeof(NotSubmittedReminderWorker))
-            );
+            foreach (
+                var worker in builder
+                    .Services.Where(service =>
+                        service.ImplementationFactory?.Method.ReturnType == typeof(NotSubmittedReminderWorker)
+                    )
+                    .ToArray()
+            )
+                builder.Services.Remove(worker);
             builder.Services.AddSingleton<IAmazonSQS>(fixture.Sqs);
             builder.Services.AddSingleton<IMongoClient>(fixture._mongo);
             builder.Services.AddHealth();
@@ -124,16 +128,37 @@ public sealed class NotSubmittedReminderFixture : IAsyncDisposable
         }
     }
 
-    public Task<NotSubmittedReminderScanResult> Scan() =>
-        ScanService.RunFullScan(TestContext.Current.CancellationToken);
+    public Task<NotSubmittedReminderScanResult> Scan(NotSubmittedReminderCampaign? campaign = null) =>
+        ScanService(campaign).RunFullScan(TestContext.Current.CancellationToken);
 
-    public Task<string?> Reopen() => ScanService.PrepareRequestedScan(true, TestContext.Current.CancellationToken);
+    public Task<string?> Reopen() => ScanService().PrepareRequestedScan(true, TestContext.Current.CancellationToken);
 
-    public Task<NotSubmittedReminderRunStatus> RunStatus() =>
-        ScanService.GetRunStatus(TestContext.Current.CancellationToken);
+    public Task<NotSubmittedReminderRunStatus> RunStatus(NotSubmittedReminderCampaign? campaign = null) =>
+        ScanService(campaign).GetRunStatus(TestContext.Current.CancellationToken);
 
-    private INotSubmittedReminderScanService ScanService =>
-        _host!.Services.GetRequiredService<INotSubmittedReminderScanService>();
+    private INotSubmittedReminderScanService ScanService(NotSubmittedReminderCampaign? campaign = null) =>
+        _host!.Services.GetRequiredKeyedService<INotSubmittedReminderScanService>(
+            (campaign ?? NotSubmittedReminderCampaign.Email1).Id
+        );
+
+    private static void AddCampaignSettings(
+        Dictionary<string, string?> values,
+        string section,
+        DateTimeOffset londonNow,
+        int obligationYear
+    )
+    {
+        values[$"{section}:Enabled"] = "true";
+        values[$"{section}:Month"] = londonNow.Month.ToString(CultureInfo.InvariantCulture);
+        values[$"{section}:Day"] = londonNow.Day.ToString(CultureInfo.InvariantCulture);
+        values[$"{section}:Hour"] = "0";
+        values[$"{section}:Minute"] = "0";
+        values[$"{section}:SendWindow"] = "2.00:00:00";
+        values[$"{section}:PageSize"] = "1";
+        values[$"{section}:ScanLease"] = "00:01:00";
+        values[$"{section}:ScanLeaseRenewalInterval"] = "00:00:01";
+        values[$"{section}:ObligationYearOverride"] = obligationYear.ToString(CultureInfo.InvariantCulture);
+    }
 
     public async Task<JsonElement[]> NotifyRequests()
     {
@@ -194,7 +219,7 @@ public sealed class NotSubmittedReminderFixture : IAsyncDisposable
     public Task<bool> CanAnotherHostAcquireScanLease() =>
         OtherHostLeases().TryAcquire(ScanLeaseId, TimeSpan.FromMinutes(10), TestContext.Current.CancellationToken);
 
-    private string ScanLeaseId => $"{NotSubmittedReminderScanService.Campaign}:{State.ObligationYear}";
+    private string ScanLeaseId => $"{NotSubmittedReminderCampaign.Email1.Name}:{State.ObligationYear}";
 
     private MongoScheduledCampaignLeaseService OtherHostLeases() =>
         new(() => _mongo.GetDatabase(_database), TimeProvider.System);

@@ -29,6 +29,13 @@ EXPECTED = {
         "EnglishNiea_ShouldRenderReminder",
         "WelshBilingual_ShouldRenderReminder",
     },
+    "NotifyReminder2PreviewTests": {
+        "EnglishEnvironmentAgency_ShouldRenderReminder",
+        "EnglishSepa_ShouldRenderReminder",
+        "EnglishNrw_ShouldRenderReminder",
+        "EnglishNiea_ShouldRenderReminder",
+        "WelshBilingual_ShouldRenderReminder",
+    },
 }
 
 

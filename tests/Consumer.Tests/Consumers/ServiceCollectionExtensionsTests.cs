@@ -72,7 +72,7 @@ public class ServiceCollectionExtensionsTests
             template,
             options.GetTemplate(NotificationDefinitionsOptions.DeclarationSubmitted, "DirectEnglishTemplateId")
         );
-        Assert.Equal(3, options.Definitions.Count);
+        Assert.Equal(4, options.Definitions.Count);
         Assert.Equal(4, options.Definitions[NotificationDefinitionsOptions.DeclarationSubmitted].Templates.Count);
     }
 
@@ -98,9 +98,7 @@ public class ServiceCollectionExtensionsTests
         var options = new NotificationDefinitionsOptions();
         if (settingsFile is not null)
         {
-            var configuration = new ConfigurationBuilder()
-                .AddJsonFile(Path.Combine(RepositoryRoot(), "src", "Consumer", settingsFile))
-                .Build();
+            var configuration = LoadCheckedInConfiguration(settingsFile);
             options = configuration
                 .GetSection(NotificationDefinitionsOptions.SectionName)
                 .Get<NotificationDefinitionsOptions>()!;
@@ -133,9 +131,7 @@ public class ServiceCollectionExtensionsTests
         var options = new NotificationDefinitionsOptions();
         if (settingsFile is not null)
         {
-            var configuration = new ConfigurationBuilder()
-                .AddJsonFile(Path.Combine(RepositoryRoot(), "src", "Consumer", settingsFile))
-                .Build();
+            var configuration = LoadCheckedInConfiguration(settingsFile);
             options = configuration
                 .GetSection(NotificationDefinitionsOptions.SectionName)
                 .Get<NotificationDefinitionsOptions>()!;
@@ -196,9 +192,7 @@ public class ServiceCollectionExtensionsTests
         var options = new AnalyticsEventConsumerOptions { QueueUrl = "http://localhost/analytics" };
         if (settingsFile is not null)
         {
-            var configuration = new ConfigurationBuilder()
-                .AddJsonFile(Path.Combine(RepositoryRoot(), "src", "Consumer", settingsFile))
-                .Build();
+            var configuration = LoadCheckedInConfiguration(settingsFile);
             options = configuration
                 .GetSection(AnalyticsEventConsumerOptions.SectionName)
                 .Get<AnalyticsEventConsumerOptions>()!;
@@ -552,6 +546,16 @@ public class ServiceCollectionExtensionsTests
             if (exception is not null)
                 exceptions.Add((category, exception));
         }
+    }
+
+    private static IConfiguration LoadCheckedInConfiguration(string settingsFile)
+    {
+        var consumerDirectory = Path.Combine(RepositoryRoot(), "src", "Consumer");
+        var builder = new ConfigurationBuilder().AddJsonFile(Path.Combine(consumerDirectory, "appsettings.json"));
+        if (settingsFile == "appsettings.Development.json")
+            builder.AddJsonFile(Path.Combine(consumerDirectory, settingsFile));
+
+        return builder.Build();
     }
 
     private static string RepositoryRoot()
