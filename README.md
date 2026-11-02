@@ -143,7 +143,7 @@ are disabled by default; see the
 [campaign definitions](src/Consumer/Scheduled/NotSubmittedReminderCampaign.cs) and
 [options](src/Consumer/Scheduled/NotSubmittedReminderOptions.cs). Email 2 requires
 `NotSubmittedReminder2__Personalisation__reportPackagingDataAccountUrl`; the
-checked-in value targets development, so set each environment's Report packaging
+checked-in value is a placeholder, so set each environment's Report packaging
 data URL before enabling it.
 
 ### Mongo, metrics and health

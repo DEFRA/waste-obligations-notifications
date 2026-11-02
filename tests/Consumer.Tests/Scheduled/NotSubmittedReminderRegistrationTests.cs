@@ -18,9 +18,7 @@ public sealed class NotSubmittedReminderRegistrationTests
     [InlineData("appsettings.Development.json")]
     public void WhenCheckedInSettingsAreBound_ShouldKeepFirstReminderAndScheduleSecondInJanuary(string settingsFile)
     {
-        var configuration = new ConfigurationBuilder()
-            .AddJsonFile(Path.Combine(RepositoryRoot(), "src", "Consumer", settingsFile))
-            .Build();
+        var configuration = LoadCheckedInConfiguration(settingsFile);
         using var provider = CreateProvider(configuration);
         var monitor = provider.GetRequiredService<IOptionsMonitor<NotSubmittedReminderOptions>>();
 
@@ -31,7 +29,7 @@ public sealed class NotSubmittedReminderRegistrationTests
         Assert.Empty(first.Personalisation);
         Assert.Equal((false, 1, 1, 10), (second.Enabled, second.Month, second.Day, second.Hour));
         Assert.Equal(
-            "https://rwd-dev9.azure.defra.cloud/report-data",
+            "https://report-data.example.test/report-data",
             second.Personalisation["reportPackagingDataAccountUrl"]
         );
 
@@ -66,7 +64,7 @@ public sealed class NotSubmittedReminderRegistrationTests
                 new()
                 {
                     [$"{SecondSection}:Enabled"] = "true",
-                    [ReportUrlKey] = "https://rwd-dev9.azure.defra.cloud/report-data",
+                    [ReportUrlKey] = "https://report-data.example.test/report-data",
                 },
                 new() { [ReportUrlKey] = "https://report-packaging-data.example.test/report-data" }
             )
@@ -144,6 +142,16 @@ public sealed class NotSubmittedReminderRegistrationTests
         Dictionary<string, string?> values,
         Dictionary<string, string?>? overrides = null
     ) => new ConfigurationBuilder().AddInMemoryCollection(values).AddInMemoryCollection(overrides ?? []).Build();
+
+    private static IConfiguration LoadCheckedInConfiguration(string settingsFile)
+    {
+        var consumerDirectory = Path.Combine(RepositoryRoot(), "src", "Consumer");
+        var builder = new ConfigurationBuilder().AddJsonFile(Path.Combine(consumerDirectory, "appsettings.json"));
+        if (settingsFile == "appsettings.Development.json")
+            builder.AddJsonFile(Path.Combine(consumerDirectory, settingsFile));
+
+        return builder.Build();
+    }
 
     private static string RepositoryRoot()
     {
